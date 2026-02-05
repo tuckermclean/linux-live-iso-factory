@@ -1,0 +1,132 @@
+#!/bin/sh
+#
+# udhcpc script - handles DHCP events
+#
+# This script is called by udhcpc when it receives DHCP responses.
+# It configures the network interface based on the DHCP lease.
+#
+# Environment variables set by udhcpc:
+#   $interface  - the interface being configured
+#   $ip         - the IP address assigned
+#   $subnet     - the subnet mask (may be in CIDR notation)
+#   $broadcast  - the broadcast address
+#   $router     - default gateway(s), space-separated
+#   $dns        - DNS server(s), space-separated
+#   $domain     - DNS domain name
+#   $hostname   - hostname to set
+#   $lease      - lease time in seconds
+
+RESOLV_CONF="/etc/resolv.conf"
+
+log() {
+    echo "[udhcpc] $*"
+}
+
+# Calculate CIDR prefix from dotted-quad netmask
+mask2cidr() {
+    local mask="$1"
+    local nbits=0
+    local IFS=.
+    for octet in $mask; do
+        case $octet in
+            255) nbits=$((nbits + 8)) ;;
+            254) nbits=$((nbits + 7)) ;;
+            252) nbits=$((nbits + 6)) ;;
+            248) nbits=$((nbits + 5)) ;;
+            240) nbits=$((nbits + 4)) ;;
+            224) nbits=$((nbits + 3)) ;;
+            192) nbits=$((nbits + 2)) ;;
+            128) nbits=$((nbits + 1)) ;;
+            0) ;;
+            *) log "Warning: invalid netmask octet $octet" ;;
+        esac
+    done
+    echo $nbits
+}
+
+case "$1" in
+    deconfig)
+        # Interface is being deconfigured
+        log "Deconfiguring $interface"
+        ip addr flush dev "$interface"
+        ip link set "$interface" up
+        ;;
+
+    renew|bound)
+        # We got a lease
+        log "Configuring $interface: $ip"
+
+        # Remove old addresses
+        ip addr flush dev "$interface"
+
+        # Calculate CIDR prefix
+        if [ -n "$subnet" ]; then
+            # Check if it's already CIDR notation
+            case "$subnet" in
+                */*) prefix="${subnet#*/}" ;;
+                *)   prefix=$(mask2cidr "$subnet") ;;
+            esac
+        else
+            prefix=24  # default to /24 if no subnet provided
+        fi
+
+        # Add IP address
+        if [ -n "$broadcast" ]; then
+            ip addr add "$ip/$prefix" broadcast "$broadcast" dev "$interface"
+        else
+            ip addr add "$ip/$prefix" dev "$interface"
+        fi
+
+        # Bring interface up
+        ip link set "$interface" up
+
+        # Add default route(s)
+        if [ -n "$router" ]; then
+            # Remove old default routes
+            while ip route del default 2>/dev/null; do :; done
+
+            # Add new default route(s)
+            for gw in $router; do
+                log "Adding default route via $gw"
+                ip route add default via "$gw" dev "$interface"
+            done
+        fi
+
+        # Configure DNS
+        if [ -n "$dns" ] || [ -n "$domain" ]; then
+            log "Configuring DNS"
+            : > "$RESOLV_CONF"
+
+            if [ -n "$domain" ]; then
+                echo "search $domain" >> "$RESOLV_CONF"
+            fi
+
+            for server in $dns; do
+                echo "nameserver $server" >> "$RESOLV_CONF"
+            done
+        fi
+
+        # Set hostname if provided
+        if [ -n "$hostname" ]; then
+            log "Setting hostname to $hostname"
+            hostname "$hostname"
+        fi
+
+        log "Interface $interface configured successfully"
+        log "  IP: $ip/$prefix"
+        [ -n "$router" ] && log "  Gateway: $router"
+        [ -n "$dns" ] && log "  DNS: $dns"
+        ;;
+
+    leasefail|nak)
+        # DHCP failed
+        log "DHCP lease failed for $interface"
+        ;;
+
+    *)
+        log "Unknown udhcpc action: $1"
+        exit 1
+        ;;
+esac
+
+exit 0

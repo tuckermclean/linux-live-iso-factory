@@ -1,0 +1,340 @@
+#!/bin/sh
+#
+# /init - Initramfs init script for Minimal i486 Linux
+#
+# This script runs as PID 1 in the initramfs and:
+# 1. Mounts essential filesystems (/proc, /sys, /dev)
+# 2. Finds and mounts the boot media (CD-ROM)
+# 3. Mounts SquashFS root with tmpfs overlay for read-write
+# 4. Pivots to the overlay root and executes /sbin/init
+#
+# Kernel parameters:
+#   root=/dev/xxx   - Override: mount this device as root instead of squashfs
+#   rootfstype=xxx  - Root filesystem type (default: auto)
+#   rootflags=xxx   - Root filesystem mount options
+#   init=/path      - Init program on real root (default: /sbin/init)
+#   debug           - Enable verbose output
+#   rescue          - Force rescue shell
+#   toram           - Copy squashfs to RAM (uses more memory, allows ejecting CD)
+
+# Enable job control (needed for proper shell behavior)
+set -m
+
+# ============================================================================
+# Helper functions
+# ============================================================================
+
+msg() {
+    echo "[init] $*"
+}
+
+err() {
+    echo "[init] ERROR: $*" >&2
+}
+
+dbg() {
+    [ "$DEBUG" = "1" ] && echo "[init] DEBUG: $*"
+}
+
+# Parse kernel command line parameter
+cmdline_get() {
+    local param="$1"
+    local default="$2"
+    local value
+
+    if [ -r /proc/cmdline ]; then
+        for arg in $(cat /proc/cmdline); do
+            case "$arg" in
+                ${param}=*)
+                    value="${arg#*=}"
+                    ;;
+            esac
+        done
+    fi
+
+    echo "${value:-$default}"
+}
+
+# Check if parameter exists in cmdline
+cmdline_has() {
+    local param="$1"
+
+    if [ -r /proc/cmdline ]; then
+        grep -qw "$param" /proc/cmdline
+        return $?
+    fi
+    return 1
+}
+
+# Wait for a device to appear
+wait_for_device() {
+    local device="$1"
+    local timeout="${2:-10}"
+    local count=0
+
+    msg "Waiting for device $device..."
+
+    while [ ! -e "$device" ] && [ $count -lt $timeout ]; do
+        sleep 1
+        count=$((count + 1))
+        dbg "Waiting... ($count/$timeout)"
+    done
+
+    [ -e "$device" ]
+}
+
+# Drop to rescue shell
+rescue_shell() {
+    err "Dropping to rescue shell"
+    err "Type 'exit' to continue booting (if possible)"
+    echo
+    echo "=========================================="
+    echo "  Minimal i486 Linux - Rescue Shell"
+    echo "=========================================="
+    echo
+    echo "Available commands: $(busybox --list | tr '\n' ' ' | head -c 60)..."
+    echo
+    echo "Useful commands:"
+    echo "  cat /proc/cmdline    - Show kernel parameters"
+    echo "  cat /proc/partitions - Show available partitions"
+    echo "  ls /media            - Show boot media contents"
+    echo "  mount /dev/xxx /mnt  - Mount a filesystem"
+    echo
+    exec /bin/sh
+}
+
+# ============================================================================
+# Main init sequence
+# ============================================================================
+
+msg "Starting init..."
+
+if [ $$ -ne 1 ]; then
+    err "This script must run as PID 1"
+    exit 1
+fi
+
+# ============================================================================
+# Mount essential filesystems
+# ============================================================================
+
+msg "Mounting essential filesystems..."
+
+mount -t proc proc /proc || { err "Failed to mount /proc"; rescue_shell; }
+mount -t sysfs sysfs /sys || { err "Failed to mount /sys"; rescue_shell; }
+
+if ! mount -t devtmpfs devtmpfs /dev; then
+    msg "devtmpfs not available, using tmpfs"
+    mount -t tmpfs tmpfs /dev || { err "Failed to mount /dev"; rescue_shell; }
+    mknod /dev/console c 5 1
+    mknod /dev/null c 1 3
+    mknod /dev/zero c 1 5
+    mknod /dev/tty c 5 0
+fi
+
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+
+# ============================================================================
+# Parse kernel command line
+# ============================================================================
+
+msg "Parsing kernel command line..."
+dbg "cmdline: $(cat /proc/cmdline)"
+
+cmdline_has debug && DEBUG=1 && msg "Debug mode enabled"
+cmdline_has rescue && { msg "Rescue mode requested"; rescue_shell; }
+
+ROOT_DEV=$(cmdline_get root "")
+ROOT_TYPE=$(cmdline_get rootfstype "auto")
+ROOT_FLAGS=$(cmdline_get rootflags "ro")
+INIT_PROG=$(cmdline_get init "/sbin/init")
+TORAM=$(cmdline_has toram && echo 1 || echo 0)
+
+dbg "ROOT_DEV=$ROOT_DEV ROOT_TYPE=$ROOT_TYPE INIT_PROG=$INIT_PROG TORAM=$TORAM"
+
+# ============================================================================
+# If root= specified, use traditional mount (no overlay)
+# ============================================================================
+
+if [ -n "$ROOT_DEV" ]; then
+    msg "Using traditional root mount: $ROOT_DEV"
+
+    wait_for_device "$ROOT_DEV" 30 || {
+        err "Root device $ROOT_DEV not found"
+        cat /proc/partitions
+        rescue_shell
+    }
+
+    mkdir -p /newroot
+    mount -t "$ROOT_TYPE" -o "$ROOT_FLAGS" "$ROOT_DEV" /newroot || {
+        err "Failed to mount $ROOT_DEV"
+        rescue_shell
+    }
+
+    # Skip to pivot_root section
+    OVERLAY_MODE=0
+else
+    OVERLAY_MODE=1
+fi
+
+# ============================================================================
+# SquashFS + Overlay mode (default when no root= specified)
+# ============================================================================
+
+if [ "$OVERLAY_MODE" = "1" ]; then
+    msg "Setting up SquashFS with overlay..."
+
+    # Create mount points
+    mkdir -p /media /squashfs /overlay /overlay/upper /overlay/work /newroot
+
+    # Find and mount boot media
+    msg "Searching for boot media..."
+    BOOT_MEDIA=""
+
+    # Wait for CD-ROM devices to appear
+    sleep 2
+
+    # Try common CD-ROM devices
+    for dev in /dev/sr0 /dev/sr1 /dev/cdrom /dev/hdc /dev/hdd; do
+        [ -e "$dev" ] || continue
+        dbg "Trying $dev..."
+        if mount -t iso9660 -o ro "$dev" /media 2>/dev/null; then
+            if [ -f /media/rootfs.squashfs ]; then
+                BOOT_MEDIA="$dev"
+                msg "Found boot media at $dev"
+                break
+            fi
+            umount /media
+        fi
+    done
+
+    # Also try looking in /dev/disk/by-label if available
+    if [ -z "$BOOT_MEDIA" ] && [ -d /dev/disk/by-label ]; then
+        for label in MINLINUX LIVECD; do
+            dev="/dev/disk/by-label/$label"
+            [ -e "$dev" ] || continue
+            dbg "Trying label $label..."
+            if mount -t iso9660 -o ro "$dev" /media 2>/dev/null; then
+                if [ -f /media/rootfs.squashfs ]; then
+                    BOOT_MEDIA="$dev"
+                    msg "Found boot media at $label"
+                    break
+                fi
+                umount /media
+            fi
+        done
+    fi
+
+    if [ -z "$BOOT_MEDIA" ]; then
+        err "Could not find boot media with rootfs.squashfs"
+        msg "Available block devices:"
+        cat /proc/partitions
+        rescue_shell
+    fi
+
+    # Optionally copy squashfs to RAM
+    SQUASHFS_PATH="/media/rootfs.squashfs"
+    if [ "$TORAM" = "1" ]; then
+        msg "Copying rootfs to RAM (this may take a moment)..."
+        mkdir -p /ram
+        mount -t tmpfs -o size=80% tmpfs /ram
+        cp /media/rootfs.squashfs /ram/rootfs.squashfs || {
+            err "Failed to copy squashfs to RAM (not enough memory?)"
+            umount /ram
+            TORAM=0
+        }
+        if [ "$TORAM" = "1" ]; then
+            SQUASHFS_PATH="/ram/rootfs.squashfs"
+            umount /media
+            msg "Boot media can now be ejected"
+        fi
+    fi
+
+    # Mount the SquashFS
+    msg "Mounting SquashFS root..."
+    if ! mount -t squashfs -o ro "$SQUASHFS_PATH" /squashfs; then
+        err "Failed to mount SquashFS"
+        rescue_shell
+    fi
+
+    # Create tmpfs for overlay upper/work
+    msg "Creating tmpfs overlay..."
+    mount -t tmpfs -o size=50% tmpfs /overlay || {
+        err "Failed to mount overlay tmpfs"
+        rescue_shell
+    }
+    mkdir -p /overlay/upper /overlay/work
+
+    # Mount overlayfs
+    msg "Mounting overlay filesystem..."
+    if ! mount -t overlay -o lowerdir=/squashfs,upperdir=/overlay/upper,workdir=/overlay/work overlay /newroot; then
+        err "Failed to mount overlayfs"
+        rescue_shell
+    fi
+
+    # Create mount points in new root for our special filesystems
+    mkdir -p /newroot/media /newroot/squashfs /newroot/overlay
+
+    # Move our mounts into the new root so they persist
+    mount --move /squashfs /newroot/squashfs 2>/dev/null || mount --bind /squashfs /newroot/squashfs
+    mount --move /overlay /newroot/overlay 2>/dev/null || mount --bind /overlay /newroot/overlay
+    [ "$TORAM" != "1" ] && (mount --move /media /newroot/media 2>/dev/null || mount --bind /media /newroot/media)
+    [ "$TORAM" = "1" ] && [ -d /ram ] && (mkdir -p /newroot/ram && mount --move /ram /newroot/ram 2>/dev/null || true)
+
+    msg "Overlay root ready"
+fi
+
+# ============================================================================
+# Verify init exists
+# ============================================================================
+
+if [ ! -x "/newroot${INIT_PROG}" ]; then
+    # Try common alternatives
+    for alt in /sbin/init /bin/sh; do
+        if [ -x "/newroot${alt}" ]; then
+            msg "Using alternate init: $alt"
+            INIT_PROG="$alt"
+            break
+        fi
+    done
+fi
+
+if [ ! -x "/newroot${INIT_PROG}" ]; then
+    err "Init program not found: /newroot${INIT_PROG}"
+    ls -la /newroot/
+    rescue_shell
+fi
+
+# ============================================================================
+# Pivot to real root
+# ============================================================================
+
+msg "Pivoting to real root..."
+
+mkdir -p /newroot/proc /newroot/sys /newroot/dev
+
+mount --move /proc /newroot/proc 2>/dev/null || true
+mount --move /sys /newroot/sys 2>/dev/null || true
+mount --move /dev /newroot/dev 2>/dev/null || true
+
+cd /newroot
+mkdir -p mnt/initramfs
+
+if ! pivot_root . mnt/initramfs; then
+    err "pivot_root failed, trying switch_root"
+    exec switch_root /newroot "$INIT_PROG"
+fi
+
+# Clean up initramfs (optional - keeps it for debugging)
+# umount -l /mnt/initramfs 2>/dev/null || true
+
+# ============================================================================
+# Execute real init
+# ============================================================================
+
+msg "Executing $INIT_PROG..."
+exec chroot . "$INIT_PROG" "$@"
+
+err "Failed to execute $INIT_PROG"
+rescue_shell

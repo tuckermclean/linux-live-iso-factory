@@ -1,0 +1,11 @@
+# Build output
+output/
+build/
+
+# Temporary files
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
