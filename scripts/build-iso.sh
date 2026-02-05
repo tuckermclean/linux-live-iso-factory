@@ -124,23 +124,48 @@ SAY   Minimal i486 Linux
 SAY =========================================
 SAY
 SAY Press ENTER to boot, or type a label:
-SAY   linux     - Normal boot (drops to shell)
-SAY   serial    - Boot with serial console
-SAY
-SAY Append root=/dev/xxx to boot from disk.
+SAY   linux     - Normal boot (text console)
+SAY   fb        - Framebuffer 1024x768
+SAY   fb800     - Framebuffer 800x600
+SAY   serial    - Serial console
+SAY   vga=ask   - Choose video mode
 SAY
 
-# Main boot entry
+# Main boot entry (text mode)
 LABEL linux
-    MENU LABEL Boot Minimal Linux
+    MENU LABEL Boot Minimal Linux (text)
     KERNEL /boot/vmlinuz
     APPEND initrd=/boot/initrd.img quiet
+
+# Framebuffer 1024x768x16
+LABEL fb
+    MENU LABEL Boot with Framebuffer (1024x768)
+    KERNEL /boot/vmlinuz
+    APPEND initrd=/boot/initrd.img quiet vga=791
+
+# Framebuffer 800x600x16 (safer for old hardware)
+LABEL fb800
+    MENU LABEL Boot with Framebuffer (800x600)
+    KERNEL /boot/vmlinuz
+    APPEND initrd=/boot/initrd.img quiet vga=788
+
+# Framebuffer 640x480x16 (safest)
+LABEL fb640
+    MENU LABEL Boot with Framebuffer (640x480)
+    KERNEL /boot/vmlinuz
+    APPEND initrd=/boot/initrd.img quiet vga=785
+
+# Ask for video mode
+LABEL vga
+    MENU LABEL Boot (choose video mode)
+    KERNEL /boot/vmlinuz
+    APPEND initrd=/boot/initrd.img vga=ask
 
 # Serial console boot (useful for headless machines or QEMU -nographic)
 LABEL serial
     MENU LABEL Boot with Serial Console
     KERNEL /boot/vmlinuz
-    APPEND initrd=/boot/initrd.img console=ttyS0,9600n8
+    APPEND initrd=/boot/initrd.img console=ttyS0,115200n8
 
 # Debug boot with verbose output
 LABEL debug
