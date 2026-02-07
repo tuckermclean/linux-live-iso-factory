@@ -25,15 +25,55 @@ mkdir -p "${SYSROOT_DIR}"/{bin,sbin,usr/bin,usr/sbin,lib,usr/lib,etc}
 
 # Find all binary packages
 # Support both GPKG (.gpkg.tar) and legacy TBZ2 (.tbz2) formats
-GPKG_FILES=$(find "${BINPKG_DIR}" -name "*.gpkg.tar" -type f 2>/dev/null || true)
+ALL_GPKG_FILES=$(find "${BINPKG_DIR}" -name "*.gpkg.tar" -type f 2>/dev/null || true)
 TBZ2_FILES=$(find "${BINPKG_DIR}" -name "*.tbz2" -type f 2>/dev/null || true)
 
-TOTAL_GPKG=$(echo "${GPKG_FILES}" | grep -c . 2>/dev/null || true)
-TOTAL_TBZ2=$(echo "${TBZ2_FILES}" | grep -c . 2>/dev/null || true)
-TOTAL_GPKG=${TOTAL_GPKG:-0}
-TOTAL_TBZ2=${TOTAL_TBZ2:-0}
+# Deduplicate GPKG packages: when multiple revisions exist (e.g. foo-1.0-1.gpkg.tar,
+# foo-1.0-2.gpkg.tar), keep only the highest revision for each base package.
+declare -A BEST_GPKG
+for f in ${ALL_GPKG_FILES}; do
+    [ -z "$f" ] && continue
+    base=$(basename "$f" .gpkg.tar)
+    # Strip trailing -N revision suffix (e.g. "bash-5.3_p9-2" -> "bash-5.3_p9")
+    if [[ "$base" =~ ^(.*)-([0-9]+)$ ]]; then
+        key="${BASH_REMATCH[1]}"
+        rev="${BASH_REMATCH[2]}"
+    else
+        key="$base"
+        rev=0
+    fi
+    prev_rev="${BEST_GPKG[$key]##*|}"
+    if [ -z "$prev_rev" ] || [ "$rev" -gt "$prev_rev" ]; then
+        BEST_GPKG[$key]="$f|$rev"
+    fi
+done
 
-echo "==> Found ${TOTAL_GPKG} GPKG packages, ${TOTAL_TBZ2} TBZ2 packages"
+# Build deduplicated file list
+GPKG_FILES=""
+for key in "${!BEST_GPKG[@]}"; do
+    GPKG_FILES+="${BEST_GPKG[$key]%%|*}"$'\n'
+done
+GPKG_FILES=$(echo "$GPKG_FILES" | sed '/^$/d')
+
+# Count packages (wc -l on empty string gives 0; wc -w would miscount filenames with spaces)
+if [ -n "${GPKG_FILES}" ]; then
+    TOTAL_GPKG=$(echo "${GPKG_FILES}" | wc -l)
+else
+    TOTAL_GPKG=0
+fi
+if [ -n "${TBZ2_FILES}" ]; then
+    TOTAL_TBZ2=$(echo "${TBZ2_FILES}" | wc -l)
+else
+    TOTAL_TBZ2=0
+fi
+
+TOTAL_ALL_GPKG=$(echo "${ALL_GPKG_FILES}" | sed '/^$/d' | wc -l)
+TOTAL_ALL_GPKG=${TOTAL_ALL_GPKG##* }
+if [ "${TOTAL_ALL_GPKG}" -gt "${TOTAL_GPKG}" ]; then
+    echo "==> Found ${TOTAL_ALL_GPKG} GPKG files, deduplicated to ${TOTAL_GPKG} unique packages"
+else
+    echo "==> Found ${TOTAL_GPKG} GPKG packages, ${TOTAL_TBZ2} TBZ2 packages"
+fi
 
 if [ "${TOTAL_GPKG}" -eq 0 ] && [ "${TOTAL_TBZ2}" -eq 0 ]; then
     echo "WARNING: No binary packages found in ${BINPKG_DIR}"
