@@ -1,0 +1,215 @@
+#!/bin/bash
+#
+# build-packages.sh - Cross-compile packages from the world file
+#
+# Continues on failure, logging errors for later review.
+# Supports --resume to skip already-built packages.
+
+set -o pipefail
+
+CROSS_TARGET="${CROSS_TARGET:-i486-linux-musl}"
+CONFIGS_DIR="${CONFIGS_DIR:-/etc/portage-cross}"
+OUTPUT_DIR="${OUTPUT_DIR:-/output}"
+
+# Parallelism settings (can be overridden via environment)
+JOBS="${JOBS:-$(nproc)}"
+LOAD_AVG="${LOAD_AVG:-$(nproc)}"
+
+WORLD_FILE="${CONFIGS_DIR}/world"
+VERSIONS_FILE="${CONFIGS_DIR}/versions.lock"
+LOGS_DIR="${OUTPUT_DIR}/logs"
+BINPKG_DIR="${OUTPUT_DIR}/packages"
+FAILED_FILE="${OUTPUT_DIR}/.failed-packages"
+BUILT_FILE="${OUTPUT_DIR}/.built-packages"
+
+# Parse arguments
+RESUME=0
+VERBOSE=0
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --resume)
+            RESUME=1
+            shift
+            ;;
+        --verbose|-v)
+            VERBOSE=1
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--resume] [--verbose]"
+            exit 1
+            ;;
+    esac
+done
+
+# Create directories
+mkdir -p "${LOGS_DIR}" "${BINPKG_DIR}"
+
+# Initialize tracking files
+if [ $RESUME -eq 0 ]; then
+    > "${FAILED_FILE}"
+    > "${BUILT_FILE}"
+fi
+
+echo "==> Building packages for ${CROSS_TARGET}"
+echo "    World file: ${WORLD_FILE}"
+echo "    Logs: ${LOGS_DIR}"
+echo "    Parallel jobs: ${JOBS}"
+echo "    Load average limit: ${LOAD_AVG}"
+echo "    Resume mode: $([ $RESUME -eq 1 ] && echo 'yes' || echo 'no')"
+echo ""
+
+# Verify toolchain exists
+if ! command -v "${CROSS_TARGET}-gcc" &>/dev/null; then
+    echo "ERROR: Toolchain not found. Rebuild the image with 'make build-image'."
+    exit 1
+fi
+
+# Read packages from world file
+if [ ! -f "${WORLD_FILE}" ]; then
+    echo "ERROR: World file not found: ${WORLD_FILE}"
+    exit 1
+fi
+
+# Parse world file, skip comments and blank lines
+mapfile -t PACKAGES < <(grep -v '^#' "${WORLD_FILE}" | grep -v '^$')
+
+if [ ${#PACKAGES[@]} -eq 0 ]; then
+    echo "WARNING: No packages in world file"
+    exit 0
+fi
+
+echo "==> Found ${#PACKAGES[@]} packages to build"
+
+# Function to get pinned version for a package
+get_pinned_version() {
+    local pkg="$1"
+    if [ -f "${VERSIONS_FILE}" ]; then
+        # Format: category/package:version:slot
+        grep "^${pkg}:" "${VERSIONS_FILE}" 2>/dev/null | cut -d: -f2 | head -1
+    fi
+}
+
+# Function to check if package was already built
+is_built() {
+    local pkg="$1"
+    if [ $RESUME -eq 1 ] && [ -f "${BUILT_FILE}" ]; then
+        grep -q "^${pkg}$" "${BUILT_FILE}" 2>/dev/null
+        return $?
+    fi
+    return 1
+}
+
+# Build atoms list, respecting version pins and resume mode
+ATOMS=()
+SKIP_COUNT=0
+
+for pkg in "${PACKAGES[@]}"; do
+    # Skip if already built in resume mode
+    if is_built "${pkg}"; then
+        echo "[SKIP] ${pkg} (already built)"
+        ((SKIP_COUNT++))
+        continue
+    fi
+
+    # Get pinned version if available
+    VERSION=$(get_pinned_version "${pkg}")
+    if [ -n "${VERSION}" ]; then
+        ATOMS+=("=${pkg}-${VERSION}")
+        echo "[QUEUE] ${pkg} (pinned: ${VERSION})"
+    else
+        ATOMS+=("${pkg}")
+        echo "[QUEUE] ${pkg} (latest)"
+    fi
+done
+
+# Exit early if nothing to build
+if [ ${#ATOMS[@]} -eq 0 ]; then
+    echo ""
+    echo "==> Nothing to build (all packages skipped)"
+    exit 0
+fi
+
+echo ""
+echo "==> Building ${#ATOMS[@]} packages with ${JOBS} parallel jobs"
+
+# Uses the cross-emerge wrapper created by crossdev
+EMERGE_CMD="${CROSS_TARGET}-emerge"
+
+# Combined log for the parallel build
+LOGFILE="${LOGS_DIR}/emerge-parallel.log"
+
+if [ $VERBOSE -eq 1 ]; then
+    echo "  Running: ${EMERGE_CMD} --jobs=${JOBS} --load-average=${LOAD_AVG} --keep-going --buildpkg --usepkg ${ATOMS[*]}"
+fi
+
+# Build all packages in one emerge call with parallel jobs
+# --jobs: build N packages in parallel (Portage handles dependency ordering)
+# --load-average: cap system load to prevent oversubscription
+# --keep-going: continue building other packages when one fails
+if ${EMERGE_CMD} \
+    --jobs=${JOBS} \
+    --load-average=${LOAD_AVG} \
+    --keep-going \
+    --buildpkg \
+    --usepkg \
+    --verbose \
+    "${ATOMS[@]}" \
+    > "${LOGFILE}" 2>&1; then
+
+    # All packages succeeded
+    SUCCESS_COUNT=${#ATOMS[@]}
+    FAIL_COUNT=0
+    for pkg in "${PACKAGES[@]}"; do
+        if ! is_built "${pkg}"; then
+            echo "${pkg}" >> "${BUILT_FILE}"
+        fi
+    done
+else
+    # Some packages may have failed; parse the log to determine which
+    # Portage logs failures with "emerge: there are remaining packages"
+    # and lists failed packages. We'll mark all as potentially failed
+    # and let the user check the log.
+    echo ""
+    echo "==> Some packages failed to build"
+
+    # Count successes and failures from emerge output
+    # Portage shows ">>> Emerging (N of M)" for each package
+    SUCCESS_COUNT=0
+    FAIL_COUNT=0
+
+    # Check each package for a successful binpkg
+    for pkg in "${PACKAGES[@]}"; do
+        if is_built "${pkg}"; then
+            continue
+        fi
+
+        # Check if package has a binpkg (indicates success)
+        PKG_NAME=$(basename "${pkg}")
+        if ls /usr/${CROSS_TARGET}/packages/${pkg%/*}/${PKG_NAME}*.tbz2 2>/dev/null | head -1 | grep -q .; then
+            echo "${pkg}" >> "${BUILT_FILE}"
+            ((SUCCESS_COUNT++))
+        else
+            echo "${pkg}" >> "${FAILED_FILE}"
+            ((FAIL_COUNT++))
+        fi
+    done
+fi
+
+echo ""
+echo "==> Build complete"
+echo "    Success: ${SUCCESS_COUNT}"
+echo "    Failed: ${FAIL_COUNT}"
+echo "    Skipped: ${SKIP_COUNT}"
+
+if [ ${FAIL_COUNT} -gt 0 ]; then
+    echo ""
+    echo "==> Failed packages:"
+    cat "${FAILED_FILE}"
+    echo ""
+    echo "    Check logs in: ${LOGS_DIR}/"
+fi
+
+# Exit with error if any packages failed
+[ ${FAIL_COUNT} -eq 0 ]

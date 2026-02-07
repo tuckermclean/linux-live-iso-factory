@@ -1,0 +1,15 @@
+# Mask problematic package versions
+#
+# Some versions may have issues with cross-compilation,
+# static linking, or musl compatibility.
+# Add them here to prevent emerge from selecting them.
+
+# Example:
+# Block specific broken versions
+# =net-misc/curl-8.0.0
+# =app-shells/bash-5.2_p15
+
+# Block entire version ranges
+# >=dev-lang/lua-5.5
+
+# Currently no masked versions - add as issues are discovered

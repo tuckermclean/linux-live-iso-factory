@@ -1,0 +1,32 @@
+# Force static linking for all packages
+#
+# These USE flags ensure packages are built as static binaries
+
+# Global static flags (applied via make.conf, but can be overridden here)
+*/* static static-libs
+
+# Bash - minimal static build
+app-shells/bash static -net -plugins readline
+
+# Dropbear - minimal SSH server/client
+net-misc/dropbear static minimal -pam -shadow -syslog multicall
+
+# Curl - static with minimal features
+net-misc/curl static static-libs ssl -gnutls -nss openssl -ldap -rtmp -ssh -telnet
+
+# Nano - minimal editor
+app-editors/nano static minimal -magic -spell -ncurses unicode
+
+# Compression tools - static only
+app-arch/xz-utils static -nls
+app-arch/bzip2 static static-libs
+app-arch/gzip static
+
+# Lua - minimal static interpreter
+dev-lang/lua static -readline
+
+# File - static file type detection
+sys-apps/file static static-libs -python -seccomp
+
+# Less - minimal pager
+app-misc/less static -pcre

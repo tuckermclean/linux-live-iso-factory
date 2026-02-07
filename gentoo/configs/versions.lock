@@ -1,0 +1,13 @@
+# Pinned package versions for reproducible builds
+#
+# Format: category/package:version:slot
+# Leave empty or comment out to use latest available version
+#
+# Use 'make check-updates' to see available updates
+# Use 'make update-versions' to regenerate this file
+#
+# Example entries:
+# app-shells/bash:5.2_p26:0
+# net-misc/dropbear:2024.85:0
+#
+# Currently unpinned - will use latest versions

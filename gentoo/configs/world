@@ -1,0 +1,30 @@
+# Gentoo world file for i486-linux-musl cross-compiled packages
+#
+# Standard Gentoo format: one atom per line
+# These packages will be built statically for the minimal Linux system
+#
+# Add packages here and run: make build-packages
+
+# Shell - real bash instead of busybox sh
+app-shells/bash
+
+# Remote access
+net-misc/dropbear
+
+# Network utilities
+net-misc/curl
+
+# Text editors
+app-editors/nano
+
+# Compression utilities (real implementations vs busybox)
+app-arch/xz-utils
+app-arch/bzip2
+app-arch/gzip
+
+# Scripting language - lightweight and embeddable
+dev-lang/lua
+
+# File utilities
+sys-apps/file
+app-misc/less

@@ -1,0 +1,13 @@
+# Per-package environment overrides for cross-compilation
+#
+# Format: category/package environment-file.conf
+#
+# Environment files are stored in /etc/portage-cross/env/
+
+# Disable PIE for packages that have issues with it
+# (PIE can cause problems with static linking on some packages)
+app-shells/bash no-pie.conf
+net-misc/dropbear no-pie.conf
+
+# Some packages may need special handling
+# dev-lang/lua no-pie.conf
