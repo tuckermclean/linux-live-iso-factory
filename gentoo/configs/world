@@ -27,4 +27,4 @@ dev-lang/lua
 
 # File utilities
 sys-apps/file
-app-misc/less
+sys-apps/less

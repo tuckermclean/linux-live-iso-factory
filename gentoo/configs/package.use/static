@@ -5,6 +5,10 @@
 # Global static flags (applied via make.conf, but can be overridden here)
 */* static static-libs
 
+# app-alternatives packages need an explicit implementation choice since
+# our global USE="-*" strips their defaults.
+app-alternatives/* reference
+
 # Bash - minimal static build
 app-shells/bash static -net -plugins readline
 
@@ -12,7 +16,7 @@ app-shells/bash static -net -plugins readline
 net-misc/dropbear static minimal -pam -shadow -syslog multicall
 
 # Curl - static with minimal features
-net-misc/curl static static-libs ssl -gnutls -nss openssl -ldap -rtmp -ssh -telnet
+net-misc/curl static static-libs ssl openssl curl_ssl_openssl -gnutls -nss -ldap -rtmp -ssh -telnet
 
 # Nano - minimal editor
 app-editors/nano static minimal -magic -spell -ncurses unicode
@@ -29,4 +33,4 @@ dev-lang/lua static -readline
 sys-apps/file static static-libs -python -seccomp
 
 # Less - minimal pager
-app-misc/less static -pcre
+sys-apps/less static -pcre

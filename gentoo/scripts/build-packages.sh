@@ -12,8 +12,9 @@ CONFIGS_DIR="${CONFIGS_DIR:-/etc/portage-cross}"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 
 # Parallelism settings (can be overridden via environment)
-JOBS="${JOBS:-$(nproc)}"
-LOAD_AVG="${LOAD_AVG:-$(nproc)}"
+# Exported so Portage can use ${JOBS} in make.conf MAKEOPTS
+export JOBS="${JOBS:-$(nproc)}"
+export LOAD_AVG="${LOAD_AVG:-$(nproc)}"
 
 WORLD_FILE="${CONFIGS_DIR}/world"
 VERSIONS_FILE="${CONFIGS_DIR}/versions.lock"

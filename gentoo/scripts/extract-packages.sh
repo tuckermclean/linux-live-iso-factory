@@ -28,8 +28,10 @@ mkdir -p "${SYSROOT_DIR}"/{bin,sbin,usr/bin,usr/sbin,lib,usr/lib,etc}
 GPKG_FILES=$(find "${BINPKG_DIR}" -name "*.gpkg.tar" -type f 2>/dev/null || true)
 TBZ2_FILES=$(find "${BINPKG_DIR}" -name "*.tbz2" -type f 2>/dev/null || true)
 
-TOTAL_GPKG=$(echo "${GPKG_FILES}" | grep -c . 2>/dev/null || echo 0)
-TOTAL_TBZ2=$(echo "${TBZ2_FILES}" | grep -c . 2>/dev/null || echo 0)
+TOTAL_GPKG=$(echo "${GPKG_FILES}" | grep -c . 2>/dev/null || true)
+TOTAL_TBZ2=$(echo "${TBZ2_FILES}" | grep -c . 2>/dev/null || true)
+TOTAL_GPKG=${TOTAL_GPKG:-0}
+TOTAL_TBZ2=${TOTAL_TBZ2:-0}
 
 echo "==> Found ${TOTAL_GPKG} GPKG packages, ${TOTAL_TBZ2} TBZ2 packages"
 
