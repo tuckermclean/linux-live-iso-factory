@@ -98,7 +98,7 @@ for pkg in ${GPKG_FILES}; do
     # Find and extract the image tarball
     IMAGE_TAR=$(find "${TMPDIR}" -name "image.tar*" -type f | head -1)
     if [ -n "${IMAGE_TAR}" ]; then
-        tar -xf "${IMAGE_TAR}" -C "${SYSROOT_DIR}"
+        tar -xf "${IMAGE_TAR}" -C "${SYSROOT_DIR}" --strip-components=1
     else
         echo "    WARNING: No image.tar found in ${PKG_NAME}"
     fi

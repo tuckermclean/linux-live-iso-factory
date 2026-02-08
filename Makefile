@@ -21,13 +21,14 @@ PROJECT_DIR := $(shell pwd)
 # Mount points
 CONFIGS_MOUNT := -v $(PROJECT_DIR)/configs:/configs
 OUTPUT_MOUNT := -v $(PROJECT_DIR)/output:/output
-BUILD_MOUNT := -v $(PROJECT_DIR)/build:/build
+BUILD_MOUNT := -v i486-linux-build:/build
 ROOTFS_MOUNT := -v $(PROJECT_DIR)/rootfs:/rootfs
 SCRIPTS_MOUNT := -v $(PROJECT_DIR)/scripts:/scripts
+SYSROOT_MOUNT := -v i486-linux-sysroot:/sysroot:ro
 
 # Common docker run options (build mount enables incremental compilation)
-DOCKER_RUN := docker run --rm $(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(BUILD_MOUNT) $(ROOTFS_MOUNT) $(SCRIPTS_MOUNT)
-DOCKER_RUN_IT := docker run --rm -it $(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(BUILD_MOUNT) $(ROOTFS_MOUNT) $(SCRIPTS_MOUNT)
+DOCKER_RUN := docker run --rm $(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(BUILD_MOUNT) $(ROOTFS_MOUNT) $(SCRIPTS_MOUNT) $(SYSROOT_MOUNT)
+DOCKER_RUN_IT := docker run --rm -it $(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(BUILD_MOUNT) $(ROOTFS_MOUNT) $(SCRIPTS_MOUNT) $(SYSROOT_MOUNT)
 
 .PHONY: help build-image menuconfig-kernel menuconfig-busybox build rootfs iso all \
         clean clean-kernel clean-busybox clean-build clean-all test shell copy-default-configs
@@ -78,44 +79,44 @@ build-image:
 # Copy default configs to host
 copy-default-configs:
 	@echo "==> Copying default configs to ./configs/"
-	@mkdir -p $(PROJECT_DIR)/configs $(PROJECT_DIR)/build
+	@mkdir -p $(PROJECT_DIR)/configs
 	$(DOCKER_RUN) $(IMAGE_NAME) make copy-default-configs
 
 # Interactive kernel configuration
 # Requires -it for interactive terminal
 menuconfig-kernel:
 	@echo "==> Running kernel menuconfig"
-	@mkdir -p $(PROJECT_DIR)/configs $(PROJECT_DIR)/build
+	@mkdir -p $(PROJECT_DIR)/configs
 	$(DOCKER_RUN_IT) $(IMAGE_NAME) make menuconfig-kernel
 
 # Interactive busybox configuration
 menuconfig-busybox:
 	@echo "==> Running busybox menuconfig"
-	@mkdir -p $(PROJECT_DIR)/configs $(PROJECT_DIR)/build
+	@mkdir -p $(PROJECT_DIR)/configs
 	$(DOCKER_RUN_IT) $(IMAGE_NAME) make menuconfig-busybox
 
 # Build kernel and busybox
 build:
 	@echo "==> Building kernel and busybox"
-	@mkdir -p $(PROJECT_DIR)/output $(PROJECT_DIR)/build
+	@mkdir -p $(PROJECT_DIR)/output
 	$(DOCKER_RUN) $(IMAGE_NAME) make build
 
 # Build root filesystem (squashfs)
 rootfs:
 	@echo "==> Building root filesystem"
-	@mkdir -p $(PROJECT_DIR)/output $(PROJECT_DIR)/build
+	@mkdir -p $(PROJECT_DIR)/output
 	$(DOCKER_RUN) $(IMAGE_NAME) make rootfs
 
 # Create bootable ISO
 iso:
 	@echo "==> Creating bootable ISO"
-	@mkdir -p $(PROJECT_DIR)/output $(PROJECT_DIR)/build
+	@mkdir -p $(PROJECT_DIR)/output
 	$(DOCKER_RUN) $(IMAGE_NAME) make iso
 
 # Build everything
 all:
 	@echo "==> Building everything"
-	@mkdir -p $(PROJECT_DIR)/configs $(PROJECT_DIR)/output $(PROJECT_DIR)/build
+	@mkdir -p $(PROJECT_DIR)/configs $(PROJECT_DIR)/output
 	$(DOCKER_RUN) $(IMAGE_NAME) make all
 
 # Test ISO in QEMU (on host)
@@ -151,13 +152,11 @@ shell:
 # Clean kernel build artifacts (for full kernel rebuild)
 clean-kernel:
 	@echo "==> Cleaning kernel build artifacts"
-	@mkdir -p $(PROJECT_DIR)/build
 	$(DOCKER_RUN) $(IMAGE_NAME) make clean-kernel
 
 # Clean busybox build artifacts (for full busybox rebuild)
 clean-busybox:
 	@echo "==> Cleaning busybox build artifacts"
-	@mkdir -p $(PROJECT_DIR)/build
 	$(DOCKER_RUN) $(IMAGE_NAME) make clean-busybox
 
 # Clean output directory only
@@ -169,7 +168,7 @@ clean:
 clean-build:
 	@echo "==> Cleaning all build artifacts"
 	rm -rf $(PROJECT_DIR)/output/*
-	rm -rf $(PROJECT_DIR)/build/*
+	docker volume rm i486-linux-build 2>/dev/null || true
 
 # Clean everything including Docker image
 clean-all: clean-build
