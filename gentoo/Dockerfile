@@ -76,6 +76,7 @@ RUN emerge --sync 2>/dev/null || emerge-webrsync && \
 COPY scripts/ ${SCRIPTS_DIR}/
 RUN chmod +x ${SCRIPTS_DIR}/*.sh
 COPY configs/make.conf ${CONFIGS_DIR}/
+COPY configs/bashrc ${CONFIGS_DIR}/
 COPY configs/world ${CONFIGS_DIR}/
 COPY configs/versions.lock ${CONFIGS_DIR}/
 COPY configs/package.use/ ${CONFIGS_DIR}/package.use/
@@ -89,6 +90,7 @@ RUN SYSROOT="/usr/${CROSS_TARGET}" && \
     CROSS_PORTAGE="${SYSROOT}/etc/portage" && \
     mkdir -p "${CROSS_PORTAGE}"/{package.use,package.accept_keywords,package.mask,package.env,env} && \
     cp "${CONFIGS_DIR}/make.conf" "${CROSS_PORTAGE}/make.conf" && \
+    cp "${CONFIGS_DIR}/bashrc" "${CROSS_PORTAGE}/bashrc" 2>/dev/null || true && \
     for dir in package.use package.accept_keywords package.mask package.env; do \
         cp -r "${CONFIGS_DIR}/${dir}"/* "${CROSS_PORTAGE}/${dir}/" 2>/dev/null || true; \
     done && \

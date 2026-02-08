@@ -47,6 +47,29 @@ done
 # Create directories
 mkdir -p "${LOGS_DIR}" "${BINPKG_DIR}"
 
+# Sync runtime-mounted configs into the sysroot's portage directory.
+# The crossdev emerge wrapper reads from /usr/${CROSS_TARGET}/etc/portage/
+# (via PORTAGE_CONFIGROOT), but the runtime -v mount only updates
+# /etc/portage-cross/. Without this sync, config changes made after
+# 'make build-image' (or mounted at runtime) would be invisible to emerge.
+SYSROOT_PORTAGE="/usr/${CROSS_TARGET}/etc/portage"
+if [ -d "${CONFIGS_DIR}" ] && [ -d "${SYSROOT_PORTAGE}" ]; then
+    echo "==> Syncing configs from ${CONFIGS_DIR} to ${SYSROOT_PORTAGE}"
+    cp "${CONFIGS_DIR}/make.conf" "${SYSROOT_PORTAGE}/make.conf" 2>/dev/null || true
+    cp "${CONFIGS_DIR}/bashrc" "${SYSROOT_PORTAGE}/bashrc" 2>/dev/null || true
+    for dir in package.use package.accept_keywords package.mask package.env env; do
+        if [ -d "${CONFIGS_DIR}/${dir}" ]; then
+            mkdir -p "${SYSROOT_PORTAGE}/${dir}"
+            cp -r "${CONFIGS_DIR}/${dir}"/* "${SYSROOT_PORTAGE}/${dir}/" 2>/dev/null || true
+        fi
+    done
+fi
+
+# Regenerate binpkg index so it matches whatever .gpkg.tar files actually
+# exist on disk. Prevents "non-existent binary" errors after partial cleanup.
+echo "==> Regenerating binpkg index"
+PKGDIR="${BINPKG_DIR}" emaint binhost --fix
+
 # Initialize tracking files
 if [ $RESUME -eq 0 ]; then
     > "${FAILED_FILE}"
@@ -188,7 +211,7 @@ else
 
         # Check if package has a binpkg (indicates success)
         PKG_NAME=$(basename "${pkg}")
-        if ls /usr/${CROSS_TARGET}/packages/${pkg%/*}/${PKG_NAME}*.tbz2 2>/dev/null | head -1 | grep -q .; then
+        if ls "${BINPKG_DIR}"/${pkg%/*}/${PKG_NAME}*.gpkg.tar 2>/dev/null | head -1 | grep -q .; then
             echo "${pkg}" >> "${BUILT_FILE}"
             ((SUCCESS_COUNT++))
         else

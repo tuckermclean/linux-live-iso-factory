@@ -1,0 +1,26 @@
+# Portage bashrc for cross-compilation environment
+#
+# Sourced by Portage at the start of each ebuild phase.
+# $EBUILD_PHASE contains the current phase name.
+
+# Fix libtool stripping -static from LDFLAGS.
+#
+# Libtool intercepts -static and "prefers" static archives but does NOT
+# pass -static to the compiler — so the binary still uses the dynamic CRT
+# and interpreter. The -all-static flag does pass -static, but it's a
+# libtool-only flag that breaks configure tests if placed in LDFLAGS.
+#
+# Solution: after configure generates the libtool script, sed-patch it so
+# the -static handler also passes $link_static_flag to the compiler
+# (matching -all-static behavior). Only runs for packages that set
+# STATIC_PATCH_LIBTOOL=1 in their env file.
+if [[ ${EBUILD_PHASE} == "configure" ]]; then
+	post_src_configure() {
+		[[ ${STATIC_PATCH_LIBTOOL} == 1 ]] || return 0
+		local lt
+		while IFS= read -r -d '' lt; do
+			einfo "Patching libtool for full static linking: ${lt}"
+			sed -i 's/prefer_static_libs=built/prefer_static_libs=built\n\tcompile_command="$compile_command $link_static_flag"\n\tfinalize_command="$finalize_command $link_static_flag"/' "${lt}"
+		done < <(find "${WORKDIR}" -name libtool -type f -print0 2>/dev/null)
+	}
+fi

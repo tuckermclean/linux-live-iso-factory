@@ -4,10 +4,18 @@
 #
 # Environment files are stored in /etc/portage-cross/env/
 
-# Disable PIE for packages that have issues with it
-# (PIE can cause problems with static linking on some packages)
-app-shells/bash no-pie.conf
-net-misc/dropbear no-pie.conf
+# Force static, non-PIE linking for all leaf binaries.
+# static.conf adds -static to LDFLAGS, disables PIE (which conflicts with
+# static linking on i486/musl), and passes --disable-shared to libtool.
 
-# Some packages may need special handling
-# dev-lang/lua no-pie.conf
+app-shells/bash       static.conf
+net-misc/dropbear     static.conf
+net-misc/curl         static.conf
+app-editors/nano      static.conf
+app-arch/xz-utils     static.conf
+app-arch/bzip2        static.conf
+app-arch/gzip         static.conf
+dev-lang/lua          static.conf
+dev-libs/openssl      static.conf
+sys-apps/file         static.conf
+sys-apps/less         static.conf

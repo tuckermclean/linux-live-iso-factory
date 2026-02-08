@@ -24,6 +24,7 @@ CONFIGS_MOUNT := -v $(PROJECT_DIR)/configs:/etc/portage-cross:ro
 OUTPUT_MOUNT := -v $(PROJECT_DIR)/output:/output
 PATCHES_MOUNT := -v $(PROJECT_DIR)/patches:/patches:ro
 LOGS_MOUNT := -v $(PROJECT_DIR)/output/portage-logs:/var/log/portage
+SCRIPTS_MOUNT := -v $(PROJECT_DIR)/scripts:/scripts:ro
 
 # Portage cache volume (persistent across runs)
 PORTAGE_CACHE := -v $(PORTAGE_VOLUME):/var/db/repos/gentoo
@@ -34,7 +35,7 @@ LOAD_AVG ?= $(shell nproc)
 PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG)
 
 # Common docker run options
-DOCKER_RUN := docker run --rm $(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(PATCHES_MOUNT) $(LOGS_MOUNT) $(PORTAGE_CACHE)
+DOCKER_RUN := docker run --rm $(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(PATCHES_MOUNT) $(LOGS_MOUNT) $(PORTAGE_CACHE) $(SCRIPTS_MOUNT)
 
 .PHONY: help build-image build-packages build-packages-resume extract \
         check-updates update-versions validate-versions shell clean clean-all \
