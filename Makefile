@@ -31,7 +31,8 @@ DOCKER_RUN := docker run --rm $(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(BUILD_MOUNT) $(
 DOCKER_RUN_IT := docker run --rm -it $(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(BUILD_MOUNT) $(ROOTFS_MOUNT) $(SCRIPTS_MOUNT) $(SYSROOT_MOUNT)
 
 .PHONY: help build-image menuconfig-kernel menuconfig-busybox build rootfs iso all \
-        clean clean-kernel clean-busybox clean-build clean-all test shell copy-default-configs
+        clean clean-kernel clean-busybox clean-build clean-all test shell copy-default-configs \
+        import-sysroot
 
 help:
 	@echo "=========================================="
@@ -49,6 +50,7 @@ help:
 	@echo ""
 	@echo "Building:"
 	@echo "  build              - Build kernel + busybox"
+	@echo "  import-sysroot     - Import Gentoo sysroot into build volume"
 	@echo "  iso                - Create bootable ISO"
 	@echo "  all                - Build everything"
 	@echo ""
@@ -68,8 +70,9 @@ help:
 	@echo "  2. make copy-default-configs  (optional: use defaults)"
 	@echo "  3. make menuconfig-kernel     (optional: customize)"
 	@echo "  4. make menuconfig-busybox    (optional: customize)"
-	@echo "  5. make iso"
-	@echo "  6. make test"
+	@echo "  5. make import-sysroot        (optional: add Gentoo packages)"
+	@echo "  6. make iso"
+	@echo "  7. make test"
 
 # Build the Docker image
 build-image:
@@ -149,6 +152,14 @@ shell:
 	@echo "==> Dropping into container shell"
 	$(DOCKER_RUN_IT) $(IMAGE_NAME) /bin/bash
 
+# Import Gentoo sysroot into named volume for rootfs overlay
+import-sysroot:
+	@echo "==> Importing Gentoo sysroot into build volume"
+	docker run --rm \
+		-v $(PROJECT_DIR)/gentoo/output/sysroot:/src:ro \
+		-v i486-linux-sysroot:/dst \
+		$(IMAGE_NAME) rsync -a --delete /src/ /dst/
+
 # Clean kernel build artifacts (for full kernel rebuild)
 clean-kernel:
 	@echo "==> Cleaning kernel build artifacts"
@@ -169,6 +180,7 @@ clean-build:
 	@echo "==> Cleaning all build artifacts"
 	rm -rf $(PROJECT_DIR)/output/*
 	docker volume rm i486-linux-build 2>/dev/null || true
+	docker volume rm i486-linux-sysroot 2>/dev/null || true
 
 # Clean everything including Docker image
 clean-all: clean-build

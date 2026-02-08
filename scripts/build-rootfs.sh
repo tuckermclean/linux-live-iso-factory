@@ -133,6 +133,23 @@ install_busybox() {
 }
 
 #
+# Install Gentoo sysroot packages (overlay on top of BusyBox)
+#
+install_sysroot() {
+    if [ -d /sysroot ] && [ "$(ls -A /sysroot 2>/dev/null)" ]; then
+        log_info "Installing Gentoo sysroot packages..."
+        rsync -a /sysroot/ "$ROOTFS_DIR/"
+        local sysroot_files=$(find /sysroot -type f | wc -l)
+        log_info "Sysroot overlay applied (${sysroot_files} files)"
+
+        # Copy bash skel files to root home (sourced by login/subshells)
+        cp -a "$ROOTFS_DIR"/etc/skel/.bash* "$ROOTFS_DIR"/root/ 2>/dev/null || true
+    else
+        log_warn "No sysroot found at /sysroot, skipping (BusyBox-only build)"
+    fi
+}
+
+#
 # Create /etc configuration files
 #
 create_etc_files() {
@@ -140,7 +157,7 @@ create_etc_files() {
 
     # /etc/passwd
     cat > "$ROOTFS_DIR/etc/passwd" << 'EOF'
-root:x:0:0:root:/root:/bin/sh
+root:x:0:0:root:/root:/bin/bash
 nobody:x:65534:65534:nobody:/nonexistent:/bin/false
 EOF
 
@@ -190,17 +207,15 @@ export TERM="${TERM:-linux}"
 export PAGER="less"
 export EDITOR="vi"
 
-# Set prompt
-if [ "$(id -u)" -eq 0 ]; then
-    PS1='\h:\w# '
-else
-    PS1='\u@\h:\w$ '
+# Source profile.d drop-ins
+if [ -d /etc/profile.d ]; then
+    for f in /etc/profile.d/*.sh; do
+        [ -f "$f" ] && . "$f"
+    done
 fi
 
-# Aliases
-alias ll='ls -la'
-alias la='ls -A'
-alias l='ls -CF'
+# Source Gentoo bash configuration (colors, prompt, aliases)
+[ -f /etc/bash/bashrc ] && . /etc/bash/bashrc
 
 # Source local profile if it exists
 [ -f /etc/profile.local ] && . /etc/profile.local
@@ -210,6 +225,7 @@ EOF
     cat > "$ROOTFS_DIR/etc/shells" << 'EOF'
 /bin/sh
 /bin/ash
+/bin/bash
 EOF
 
     # /etc/inittab for BusyBox init
@@ -220,14 +236,14 @@ EOF
 ::sysinit:/etc/init.d/rcS
 
 # Main console
-::respawn:-/bin/sh
+::respawn:-/bin/bash
 
 # Additional consoles (if available)
-tty2::respawn:-/bin/sh
-tty3::respawn:-/bin/sh
+tty2::respawn:-/bin/bash
+tty3::respawn:-/bin/bash
 
 # Serial console (if kernel console=ttyS0)
-ttyS0::respawn:-/bin/sh
+ttyS0::respawn:-/bin/bash
 
 # Graceful shutdown
 ::shutdown:/etc/init.d/rcK
@@ -406,6 +422,11 @@ EOF
 create_squashfs() {
     log_info "Creating SquashFS image..."
 
+    if [ -x "$ROOTFS_DIR/bin/bash" ] ; then
+        rm -f "$ROOTFS_DIR/bin/sh"
+	ln -s bash "$ROOTFS_DIR/bin/sh"
+    fi
+
     # Calculate uncompressed size
     local size_kb=$(du -sk "$ROOTFS_DIR" | cut -f1)
     log_info "Uncompressed rootfs size: ${size_kb} KB"
@@ -438,6 +459,7 @@ main() {
     build_busybox_full
     create_rootfs
     install_busybox
+    install_sysroot
     create_etc_files
     create_squashfs
 
