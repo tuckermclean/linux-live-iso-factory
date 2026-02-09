@@ -4,7 +4,7 @@
 #
 # Commands:
 #   check    - Show available updates vs pinned versions
-#   update   - Query eix and write new versions.lock
+#   update   - Query portageq and write new versions.lock
 #   validate - Check versions.lock format
 
 set -e
@@ -19,37 +19,40 @@ usage() {
     echo ""
     echo "Commands:"
     echo "  check     Show available updates vs pinned versions"
-    echo "  update    Query eix and write new versions.lock"
+    echo "  update    Query portageq and write new versions.lock"
     echo "  validate  Check versions.lock format"
     exit 1
 }
 
-# Ensure eix database is current
-ensure_eix() {
-    if ! command -v eix &>/dev/null; then
-        echo "ERROR: eix not found. Install app-portage/eix"
-        exit 1
-    fi
-
-    # Update eix database if needed
-    if [ ! -f /var/cache/eix/portage.eix ] || \
-       [ /var/db/repos/gentoo -nt /var/cache/eix/portage.eix ]; then
-        echo "Updating eix database..."
-        eix-update
+# Temporarily fix accept_keywords so portageq excludes 9999 live ebuilds.
+# The Dockerfile sets */* ** (double star = accept everything including live),
+# but cross target uses ACCEPT_KEYWORDS="*" (single star = no live ebuilds).
+CROSSDEV_KEYWORDS="/etc/portage/package.accept_keywords/crossdev-all"
+setup_keywords() {
+    if [ -f "${CROSSDEV_KEYWORDS}" ] && grep -qF '**' "${CROSSDEV_KEYWORDS}" 2>/dev/null; then
+        ORIG_KEYWORDS=$(cat "${CROSSDEV_KEYWORDS}")
+        echo '*/* *' > "${CROSSDEV_KEYWORDS}"
+        trap 'echo "${ORIG_KEYWORDS}" > "${CROSSDEV_KEYWORDS}"' EXIT
     fi
 }
 
 # Get best available version for a package
 get_best_version() {
     local pkg="$1"
-    # Use eix to find the best visible version
-    eix --pure-packages --format '<bestversion:VERSION>' --exact "${pkg}" 2>/dev/null | head -1
+    local cpv
+    cpv=$(portageq best_visible / "${pkg}" 2>/dev/null) || return
+    # Strip category/name- prefix to get version
+    echo "${cpv#"${pkg}-"}"
 }
 
 # Get slot for a package version
 get_slot() {
     local pkg="$1"
-    eix --pure-packages --format '<bestversion:SLOT>' --exact "${pkg}" 2>/dev/null | head -1
+    local cpv slot
+    cpv=$(portageq best_visible / "${pkg}" 2>/dev/null) || return
+    slot=$(portageq metadata / ebuild "${cpv}" SLOT 2>/dev/null) || return
+    # Strip subslot (e.g., 0/5.2 -> 0)
+    echo "${slot%%/*}"
 }
 
 # Read world file
@@ -63,7 +66,7 @@ read_world() {
 
 # Command: check
 cmd_check() {
-    ensure_eix
+    setup_keywords
 
     echo "==> Checking package versions"
     echo ""
@@ -101,7 +104,7 @@ cmd_check() {
 
 # Command: update
 cmd_update() {
-    ensure_eix
+    setup_keywords
 
     echo "==> Updating versions.lock"
 
