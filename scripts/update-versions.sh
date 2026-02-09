@@ -9,9 +9,10 @@
 
 set -e
 
-CONFIGS_DIR="${CONFIGS_DIR:-/etc/portage-cross}"
-WORLD_FILE="${CONFIGS_DIR}/world"
-VERSIONS_FILE="${CONFIGS_DIR}/versions.lock"
+CONFIGS_DIR="${CONFIGS_DIR:-/configs}"
+PORTAGE_DIR="${CONFIGS_DIR}/portage"
+WORLD_FILE="${PORTAGE_DIR}/world"
+VERSIONS_FILE="${PORTAGE_DIR}/versions.lock"
 
 usage() {
     echo "Usage: $0 <command>"

@@ -3,7 +3,7 @@
 # build-iso.sh - Create bootable ISO image
 #
 # This script creates a BIOS-bootable ISO using ISOLINUX.
-# It also includes UEFI boot support via a FAT filesystem image.
+# A stub EFI partition creates a hybrid MBR+GPT layout for Hyper-V compatibility.
 #
 # The ISO can be tested with:
 #   qemu-system-i386 -cdrom boot.iso -m 64M
@@ -25,11 +25,28 @@ SQUASHFS_IMAGE="${OUTPUT_DIR}/rootfs.squashfs"
 # Output file
 ISO_IMAGE="${OUTPUT_DIR}/boot.iso"
 
-# ISOLINUX files (from syslinux package)
-ISOLINUX_BIN="/usr/lib/ISOLINUX/isolinux.bin"
-LDLINUX_C32="/usr/lib/syslinux/modules/bios/ldlinux.c32"
-LIBUTIL_C32="/usr/lib/syslinux/modules/bios/libutil.c32"
-LIBCOM32_C32="/usr/lib/syslinux/modules/bios/libcom32.c32"
+# ISOLINUX files - auto-detect Gentoo vs Debian layout
+# Gentoo: /usr/share/syslinux/
+# Debian: /usr/lib/ISOLINUX/ and /usr/lib/syslinux/modules/bios/
+if [ -f /usr/share/syslinux/isolinux.bin ]; then
+    # Gentoo layout
+    SYSLINUX_DIR="/usr/share/syslinux"
+    ISOLINUX_BIN="${SYSLINUX_DIR}/isolinux.bin"
+    LDLINUX_C32="${SYSLINUX_DIR}/ldlinux.c32"
+    LIBUTIL_C32="${SYSLINUX_DIR}/libutil.c32"
+    LIBCOM32_C32="${SYSLINUX_DIR}/libcom32.c32"
+    ISOHDPFX_BIN="${SYSLINUX_DIR}/isohdpfx.bin"
+elif [ -f /usr/lib/ISOLINUX/isolinux.bin ]; then
+    # Debian layout
+    ISOLINUX_BIN="/usr/lib/ISOLINUX/isolinux.bin"
+    LDLINUX_C32="/usr/lib/syslinux/modules/bios/ldlinux.c32"
+    LIBUTIL_C32="/usr/lib/syslinux/modules/bios/libutil.c32"
+    LIBCOM32_C32="/usr/lib/syslinux/modules/bios/libcom32.c32"
+    ISOHDPFX_BIN="/usr/lib/ISOLINUX/isohdpfx.bin"
+else
+    log_error "syslinux/isolinux not found"
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -180,46 +197,14 @@ LABEL rescue
     APPEND initrd=/boot/initrd.img
 EOF
 
-# Create EFI boot support
-log_info "Creating UEFI boot support..."
-
-# Check if we have the UEFI syslinux files
-SYSLINUX_EFI32="/usr/lib/SYSLINUX.EFI/efi32/syslinux.efi"
-LDLINUX_EFI32="/usr/lib/syslinux/modules/efi32/ldlinux.e32"
-
-if [ -f "$SYSLINUX_EFI32" ] && [ -f "$LDLINUX_EFI32" ]; then
-    # Create EFI system partition image
-    EFI_IMG="${ISO_DIR}/boot/efi.img"
-    EFI_SIZE=8192  # 8MB for EFI partition (needs to fit kernel + initrd)
-
-    log_info "Creating EFI boot image..."
-    dd if=/dev/zero of="$EFI_IMG" bs=1K count=$EFI_SIZE 2>/dev/null
-    mkfs.vfat -F 12 "$EFI_IMG" >/dev/null
-
-    # Create temporary mount point
-    EFI_MNT="/tmp/efi_mnt"
-    mkdir -p "$EFI_MNT"
-
-    # Mount and populate EFI image using mtools (no root required)
-    mmd -i "$EFI_IMG" ::/EFI
-    mmd -i "$EFI_IMG" ::/EFI/BOOT
-    mcopy -i "$EFI_IMG" "$SYSLINUX_EFI32" ::/EFI/BOOT/BOOTIA32.EFI
-    mcopy -i "$EFI_IMG" "$LDLINUX_EFI32" ::/EFI/BOOT/
-
-    # Copy syslinux config for EFI
-    mcopy -i "$EFI_IMG" "${ISO_DIR}/isolinux/isolinux.cfg" ::/EFI/BOOT/syslinux.cfg
-
-    # Copy kernel and initrd to EFI image
-    mmd -i "$EFI_IMG" ::/boot
-    mcopy -i "$EFI_IMG" "$KERNEL_IMAGE" ::/boot/vmlinuz
-    mcopy -i "$EFI_IMG" "$INITRD_IMAGE" ::/boot/initrd.img
-
-    log_info "UEFI boot support added (32-bit EFI)"
-    HAS_EFI=true
-else
-    log_warn "UEFI syslinux files not found, creating BIOS-only ISO"
-    HAS_EFI=false
-fi
+# Create stub EFI partition image for GPT hybrid structure.
+# Hyper-V Gen 1 (BIOS mode) needs a GPT partition table in the ISO to boot.
+# A minimal empty FAT image triggers xorriso's hybrid MBR+GPT layout via
+# -isohybrid-gpt-basdat. The EFI partition is non-functional — boot is BIOS only.
+log_info "Creating stub EFI partition for GPT hybrid layout..."
+EFI_IMG="${ISO_DIR}/boot/efi.img"
+dd if=/dev/zero of="$EFI_IMG" bs=1K count=512 2>/dev/null
+mkfs.vfat -F 12 "$EFI_IMG" >/dev/null
 
 # Show ISO directory structure
 log_info "ISO directory structure:"
@@ -236,10 +221,15 @@ log_info "Initrd size: ${INITRD_SIZE_KB} KB"
 # Create the ISO image
 log_info "Creating ISO image..."
 
+# Write to a temp file first, then move to output.
+# xorriso/libburn can fail on bind-mounted filesystems (e.g. WSL2 + Docker).
+ISO_TMP=$(mktemp /tmp/boot.iso.XXXXXX)
+trap "rm -f '$ISO_TMP'" EXIT
+
 # Build xorriso command
 XORRISO_CMD=(
     xorriso -as mkisofs
-    -o "$ISO_IMAGE"
+    -o "$ISO_TMP"
     -R -J                           # Rock Ridge + Joliet extensions
     -V "MINLINUX"                   # Volume ID
     -b isolinux/isolinux.bin        # BIOS boot image
@@ -247,24 +237,26 @@ XORRISO_CMD=(
     -no-emul-boot                   # No floppy emulation
     -boot-load-size 4               # Load 4 sectors
     -boot-info-table                # Patch boot image with info table
-    -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin  # Make ISO hybrid (USB bootable)
+    -isohybrid-mbr "$ISOHDPFX_BIN"  # Make ISO hybrid (USB bootable)
+    -iso_mbr_part_type 0x00         # Type 0x00 for Hyper-V BIOS compat
 )
 
-# Add EFI boot if available
-if [ "$HAS_EFI" = true ]; then
-    XORRISO_CMD+=(
-        -eltorito-alt-boot
-        -e boot/efi.img
-        -no-emul-boot
-        -isohybrid-gpt-basdat
-    )
-fi
+# EFI alt-boot entry triggers GPT hybrid layout (Hyper-V Gen 1 compat)
+XORRISO_CMD+=(
+    -eltorito-alt-boot
+    -e boot/efi.img
+    -no-emul-boot
+    -isohybrid-gpt-basdat
+)
 
 # Add the ISO directory
 XORRISO_CMD+=("$ISO_DIR")
 
 # Run xorriso
-"${XORRISO_CMD[@]}" 2>/dev/null
+"${XORRISO_CMD[@]}"
+
+# Move to final output location
+mv "$ISO_TMP" "$ISO_IMAGE"
 
 # Show final ISO size
 ISO_SIZE=$(stat -c%s "$ISO_IMAGE")
@@ -279,11 +271,7 @@ log_info "Size: ${ISO_SIZE_KB} KB (${ISO_SIZE_MB} MB)"
 log_info ""
 log_info "Boot support:"
 log_info "  - BIOS (ISOLINUX): Yes"
-if [ "$HAS_EFI" = true ]; then
-    log_info "  - UEFI (32-bit):   Yes"
-else
-    log_info "  - UEFI (32-bit):   No (syslinux-efi not found)"
-fi
+log_info "  - GPT hybrid:      Yes (Hyper-V Gen 1 compatible)"
 log_info "  - USB hybrid:      Yes"
 log_info ""
 log_info "Test with QEMU:"

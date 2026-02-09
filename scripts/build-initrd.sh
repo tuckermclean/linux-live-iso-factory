@@ -11,7 +11,7 @@
 # The initramfs is compressed with XZ for minimal size (important for
 # floppy-era machines and slow CD-ROM drives).
 
-set -e
+set -eo pipefail
 
 # Configuration
 INITRD_DIR="${INITRD_DIR:-/initrd}"
@@ -182,10 +182,10 @@ echo "..."
 UNCOMPRESSED_SIZE=$(du -sk "${INITRD_DIR}" | cut -f1)
 log_info "Uncompressed initramfs size: ${UNCOMPRESSED_SIZE} KB"
 
-# Create the cpio archive and compress with gzip (low memory decompression for i486)
+# Create the cpio archive and compress with XZ (kernel has CONFIG_RD_XZ=y)
 log_info "Creating compressed initramfs image..."
 cd "${INITRD_DIR}"
-find . -print0 | cpio --null -o -H newc 2>/dev/null | gzip -9 > "${INITRD_IMAGE}"
+find . -print0 | cpio --null -o -H newc | xz --check=crc32 -6 > "${INITRD_IMAGE}"
 
 # Show final size
 COMPRESSED_SIZE=$(stat -c%s "${INITRD_IMAGE}")

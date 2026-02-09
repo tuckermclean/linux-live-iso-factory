@@ -51,6 +51,19 @@ log_error() {
 # Ensure we're in the kernel directory
 cd "$KERNEL_DIR"
 
+# Apply kernel patches (idempotent: -N skips already-applied)
+if [ -d /patches ]; then
+    for p in /patches/linux-*.patch; do
+        [ -f "$p" ] || continue
+        if patch -p1 -N --dry-run < "$p" >/dev/null 2>&1; then
+            log_info "Applying patch: $(basename "$p")"
+            patch -p1 -N < "$p"
+        else
+            log_info "Patch already applied: $(basename "$p")"
+        fi
+    done
+fi
+
 # Function to load or create config
 load_config() {
     if [ -f "$KERNEL_CONFIG" ]; then

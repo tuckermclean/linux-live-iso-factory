@@ -8,7 +8,8 @@
 set -o pipefail
 
 CROSS_TARGET="${CROSS_TARGET:-i486-linux-musl}"
-CONFIGS_DIR="${CONFIGS_DIR:-/etc/portage-cross}"
+CONFIGS_DIR="${CONFIGS_DIR:-/configs}"
+PORTAGE_DIR="${CONFIGS_DIR}/portage"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 
 # Parallelism settings (can be overridden via environment)
@@ -16,8 +17,8 @@ OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 export JOBS="${JOBS:-$(nproc)}"
 export LOAD_AVG="${LOAD_AVG:-$(nproc)}"
 
-WORLD_FILE="${CONFIGS_DIR}/world"
-VERSIONS_FILE="${CONFIGS_DIR}/versions.lock"
+WORLD_FILE="${PORTAGE_DIR}/world"
+VERSIONS_FILE="${PORTAGE_DIR}/versions.lock"
 LOGS_DIR="${OUTPUT_DIR}/logs"
 BINPKG_DIR="${OUTPUT_DIR}/packages"
 FAILED_FILE="${OUTPUT_DIR}/.failed-packages"
@@ -50,17 +51,17 @@ mkdir -p "${LOGS_DIR}" "${BINPKG_DIR}"
 # Sync runtime-mounted configs into the sysroot's portage directory.
 # The crossdev emerge wrapper reads from /usr/${CROSS_TARGET}/etc/portage/
 # (via PORTAGE_CONFIGROOT), but the runtime -v mount only updates
-# /etc/portage-cross/. Without this sync, config changes made after
+# /configs/portage/. Without this sync, config changes made after
 # 'make build-image' (or mounted at runtime) would be invisible to emerge.
 SYSROOT_PORTAGE="/usr/${CROSS_TARGET}/etc/portage"
-if [ -d "${CONFIGS_DIR}" ] && [ -d "${SYSROOT_PORTAGE}" ]; then
-    echo "==> Syncing configs from ${CONFIGS_DIR} to ${SYSROOT_PORTAGE}"
-    cp "${CONFIGS_DIR}/make.conf" "${SYSROOT_PORTAGE}/make.conf" 2>/dev/null || true
-    cp "${CONFIGS_DIR}/bashrc" "${SYSROOT_PORTAGE}/bashrc" 2>/dev/null || true
+if [ -d "${PORTAGE_DIR}" ] && [ -d "${SYSROOT_PORTAGE}" ]; then
+    echo "==> Syncing configs from ${PORTAGE_DIR} to ${SYSROOT_PORTAGE}"
+    cp "${PORTAGE_DIR}/make.conf" "${SYSROOT_PORTAGE}/make.conf" 2>/dev/null || true
+    cp "${PORTAGE_DIR}/bashrc" "${SYSROOT_PORTAGE}/bashrc" 2>/dev/null || true
     for dir in package.use package.accept_keywords package.mask package.env env; do
-        if [ -d "${CONFIGS_DIR}/${dir}" ]; then
+        if [ -d "${PORTAGE_DIR}/${dir}" ]; then
             mkdir -p "${SYSROOT_PORTAGE}/${dir}"
-            cp -r "${CONFIGS_DIR}/${dir}"/* "${SYSROOT_PORTAGE}/${dir}/" 2>/dev/null || true
+            cp -r "${PORTAGE_DIR}/${dir}"/* "${SYSROOT_PORTAGE}/${dir}/" 2>/dev/null || true
         fi
     done
 fi
@@ -172,6 +173,10 @@ fi
 # --jobs: build N packages in parallel (Portage handles dependency ordering)
 # --load-average: cap system load to prevent oversubscription
 # --keep-going: continue building other packages when one fails
+# Unset BUILD_DIR: Portage's multilib-minimal.eclass uses it internally to
+# construct per-ABI build paths. If set (e.g. from Dockerfile ENV), it creates
+# invalid paths like /build-abi_x86_64.amd64 that the sandbox blocks.
+unset BUILD_DIR
 if ${EMERGE_CMD} \
     --jobs=${JOBS} \
     --load-average=${LOAD_AVG} \
@@ -180,7 +185,7 @@ if ${EMERGE_CMD} \
     --usepkg \
     --verbose \
     "${ATOMS[@]}" \
-    > "${LOGFILE}" 2>&1; then
+    2>&1 | tee "${LOGFILE}"; then
 
     # All packages succeeded
     SUCCESS_COUNT=${#ATOMS[@]}

@@ -2,7 +2,7 @@
 #
 # Format: category/package environment-file.conf
 #
-# Environment files are stored in /etc/portage-cross/env/
+# Environment files are stored in the portage env/ directory
 
 # Force static, non-PIE linking for all leaf binaries.
 # static.conf adds -static to LDFLAGS, disables PIE (which conflicts with

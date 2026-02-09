@@ -1,0 +1,26 @@
+From: Nathan Chancellor <nathan@kernel.org>
+Subject: x86/boot: Add '-std=gnu11' to decompressor and EFI stub Makefiles
+Date: 2025-01-22
+
+Backport of upstream fix for GCC 15 (C23 default) breaking Linux < 6.13.
+The decompressor and EFI stub Makefiles reset KBUILD_CFLAGS without
+carrying over '-std=gnu11', causing conflicts with C23 keywords (bool,
+false, true) that the kernel defines itself.
+
+--- a/arch/x86/boot/compressed/Makefile
++++ b/arch/x86/boot/compressed/Makefile
+@@ -26,4 +26,5 @@
+ # be valid.
+ KBUILD_CFLAGS := -m$(BITS) -O2 $(CLANG_FLAGS)
++KBUILD_CFLAGS += -std=gnu11
+ KBUILD_CFLAGS += -fno-strict-aliasing -fPIE
+ KBUILD_CFLAGS += -Wundef
+--- a/drivers/firmware/efi/libstub/Makefile
++++ b/drivers/firmware/efi/libstub/Makefile
+@@ -37,5 +37,6 @@
+ KBUILD_CFLAGS			:= $(subst $(CC_FLAGS_FTRACE),,$(cflags-y)) \
+ 				   -Os -DDISABLE_BRANCH_PROFILING \
++				   -std=gnu11 \
+ 				   -include $(srctree)/include/linux/hidden.h \
+ 				   -D__NO_FORTIFY \
+ 				   -ffreestanding \

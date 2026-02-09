@@ -1,15 +1,10 @@
 # Container-side Makefile for building minimal i486 Linux
 # This runs INSIDE the Docker container
 #
-# Usage:
-#   make help              - Show available targets
-#   make menuconfig-kernel - Configure kernel interactively
-#   make menuconfig-busybox - Configure busybox interactively
-#   make build             - Build kernel + busybox
-#   make initrd            - Build initramfs
-#   make iso               - Create bootable ISO
-#   make all               - Build everything
-#   make test              - Test ISO in QEMU
+# Targets:
+#   Kernel/BusyBox: build, build-kernel, build-busybox, menuconfig-kernel, menuconfig-busybox
+#   Packages:       sync-portage-configs (called automatically by build-packages.sh)
+#   ISO pipeline:   initrd, rootfs, iso, all
 
 SHELL := /bin/bash
 
@@ -43,11 +38,12 @@ SQUASHFS_IMAGE := $(OUTPUT_DIR)/rootfs.squashfs
 ISO_IMAGE := $(OUTPUT_DIR)/boot.iso
 
 .PHONY: help menuconfig-kernel menuconfig-busybox build build-kernel build-busybox \
-        initrd rootfs iso all clean clean-kernel clean-busybox test copy-default-configs sync-sources
+        initrd rootfs iso all clean clean-kernel clean-busybox copy-default-configs \
+        sync-sources sync-portage-configs
 
 help:
 	@echo "=========================================="
-	@echo "  Minimal i486 Linux Build System"
+	@echo "  i486 Linux Build System (container)"
 	@echo "=========================================="
 	@echo ""
 	@echo "Configuration:"
@@ -60,11 +56,12 @@ help:
 	@echo "  build-kernel       - Build kernel only"
 	@echo "  build-busybox      - Build busybox only"
 	@echo "  initrd             - Create initramfs image"
-	@echo "  iso                - Create bootable ISO"
-	@echo "  all                - Build everything (kernel + busybox + initrd + iso)"
+	@echo "  rootfs             - Create SquashFS rootfs"
+	@echo "  iso                - Create bootable ISO (full pipeline)"
+	@echo "  all                - Alias for iso"
 	@echo ""
-	@echo "Testing:"
-	@echo "  test               - Boot ISO in QEMU"
+	@echo "Portage:"
+	@echo "  sync-portage-configs - Sync /configs/portage to sysroot portage dir"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  clean              - Clean all build artifacts"
@@ -90,7 +87,7 @@ copy-default-configs:
 		echo "Warning: No default busybox config found"; \
 	fi
 
-# Sync sources from /src (in image) to /build (bind-mounted volume) if not present
+# Sync sources from /src (in image) to /build (volume) if not present
 # This enables incremental builds - object files persist between container runs
 sync-sources:
 	@if [ ! -d "$(KERNEL_DIR)" ]; then \
@@ -102,15 +99,30 @@ sync-sources:
 		rsync -a $(BUSYBOX_SRC)/ $(BUSYBOX_DIR)/; \
 	fi
 
+# Sync runtime-mounted portage configs into the sysroot's portage directory
+sync-portage-configs:
+	@echo "==> Syncing portage configs to sysroot"
+	@SYSROOT_PORTAGE="/usr/$(CROSS_TARGET)/etc/portage"; \
+	if [ -d "$(CONFIGS_DIR)/portage" ] && [ -d "$$SYSROOT_PORTAGE" ]; then \
+		cp "$(CONFIGS_DIR)/portage/make.conf" "$$SYSROOT_PORTAGE/make.conf" 2>/dev/null || true; \
+		cp "$(CONFIGS_DIR)/portage/bashrc" "$$SYSROOT_PORTAGE/bashrc" 2>/dev/null || true; \
+		for dir in package.use package.accept_keywords package.mask package.env env; do \
+			if [ -d "$(CONFIGS_DIR)/portage/$$dir" ]; then \
+				mkdir -p "$$SYSROOT_PORTAGE/$$dir"; \
+				cp -r "$(CONFIGS_DIR)/portage/$$dir"/* "$$SYSROOT_PORTAGE/$$dir/" 2>/dev/null || true; \
+			fi; \
+		done; \
+	fi
+
 # Interactive kernel configuration
 menuconfig-kernel: sync-sources
 	@echo "==> Running kernel menuconfig"
-	@/scripts/build-kernel.sh menuconfig
+	/scripts/build-kernel.sh menuconfig
 
 # Interactive busybox configuration
 menuconfig-busybox: sync-sources
 	@echo "==> Running busybox menuconfig"
-	@/scripts/build-busybox.sh menuconfig
+	/scripts/build-busybox.sh menuconfig
 
 # Build both kernel and busybox
 build: build-kernel build-busybox
@@ -119,27 +131,27 @@ build: build-kernel build-busybox
 # Build kernel
 build-kernel: sync-sources
 	@echo "==> Building Linux kernel $(KERNEL_VERSION)"
-	@/scripts/build-kernel.sh build
+	/scripts/build-kernel.sh build
 
 # Build busybox
 build-busybox: sync-sources
 	@echo "==> Building BusyBox $(BUSYBOX_VERSION)"
-	@/scripts/build-busybox.sh build
+	/scripts/build-busybox.sh build
 
 # Create initramfs
 initrd: build-busybox
 	@echo "==> Creating initramfs"
-	@/scripts/build-initrd.sh
+	/scripts/build-initrd.sh
 
 # Build root filesystem (squashfs)
 rootfs: sync-sources
 	@echo "==> Building root filesystem"
-	@/scripts/build-rootfs.sh
+	/scripts/build-rootfs.sh
 
-# Create bootable ISO
+# Create bootable ISO (full pipeline)
 iso: build initrd rootfs
 	@echo "==> Creating bootable ISO"
-	@/scripts/build-iso.sh
+	/scripts/build-iso.sh
 
 # Build everything
 all: iso
@@ -152,21 +164,6 @@ all: iso
 	@echo "  ISO:     $(ISO_IMAGE)"
 	@echo ""
 	@echo "Test with: qemu-system-i386 -cdrom $(ISO_IMAGE)"
-
-# Test in QEMU
-test:
-	@if [ ! -f "$(ISO_IMAGE)" ]; then \
-		echo "Error: $(ISO_IMAGE) not found. Run 'make iso' first."; \
-		exit 1; \
-	fi
-	@echo "==> Booting ISO in QEMU (Ctrl+A X to exit)"
-	qemu-system-i386 \
-		-cdrom $(ISO_IMAGE) \
-		-m 64M \
-		-cpu 486 \
-		-nographic \
-		-serial mon:stdio \
-		-append "console=ttyS0"
 
 # Clean kernel build artifacts only
 clean-kernel:

@@ -136,16 +136,19 @@ install_busybox() {
 # Install Gentoo sysroot packages (overlay on top of BusyBox)
 #
 install_sysroot() {
-    if [ -d /sysroot ] && [ "$(ls -A /sysroot 2>/dev/null)" ]; then
+    local sysroot="${OUTPUT_DIR}/sysroot"
+    if [ -d "$sysroot" ] && [ "$(ls -A "$sysroot" 2>/dev/null)" ]; then
         log_info "Installing Gentoo sysroot packages..."
-        rsync -a /sysroot/ "$ROOTFS_DIR/"
-        local sysroot_files=$(find /sysroot -type f | wc -l)
+        rsync -a "$sysroot/" "$ROOTFS_DIR/"
+        local sysroot_files=$(find "$sysroot" -type f | wc -l)
         log_info "Sysroot overlay applied (${sysroot_files} files)"
 
         # Copy bash skel files to root home (sourced by login/subshells)
         cp -a "$ROOTFS_DIR"/etc/skel/.bash* "$ROOTFS_DIR"/root/ 2>/dev/null || true
     else
-        log_warn "No sysroot found at /sysroot, skipping (BusyBox-only build)"
+        log_error "No sysroot found at ${sysroot}"
+        log_error "Run 'make build-packages && make extract' first"
+        exit 1
     fi
 }
 
