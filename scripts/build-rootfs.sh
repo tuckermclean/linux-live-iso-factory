@@ -416,6 +416,31 @@ exit 0
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/S40network"
 
+    # Dropbear SSH host key generation (runs before network)
+    cat > "$ROOTFS_DIR/etc/init.d/S20keygen" << 'EOF'
+#!/bin/sh
+#
+# S20keygen - Generate Dropbear SSH host keys if missing
+#
+
+case "$1" in
+    start)
+        mkdir -p /etc/dropbear
+        if [ ! -f /etc/dropbear/dropbear_rsa_host_key ]; then
+            echo "Generating RSA host key..."
+            dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key > /dev/null 2>&1
+        fi
+        if [ ! -f /etc/dropbear/dropbear_ecdsa_host_key ]; then
+            echo "Generating ECDSA host key..."
+            dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key > /dev/null 2>&1
+        fi
+        ;;
+esac
+
+exit 0
+EOF
+    chmod 755 "$ROOTFS_DIR/etc/init.d/S20keygen"
+
     log_info "/etc configuration files created"
 }
 

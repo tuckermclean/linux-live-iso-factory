@@ -143,4 +143,4 @@ sudo dd if=output/boot.iso of=/dev/sdX bs=4M status=progress
 
 ## License
 
-Public domain - do what you want.
+MIT License. See [LICENSE](LICENSE) for details.

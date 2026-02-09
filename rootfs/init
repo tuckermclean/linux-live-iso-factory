@@ -226,6 +226,32 @@ if [ "$OVERLAY_MODE" = "1" ]; then
         done
     fi
 
+    # Fallback: scan all block devices (catches USB sticks, etc.)
+    if [ -z "$BOOT_MEDIA" ]; then
+        dbg "Scanning all block devices..."
+        for sysdev in /sys/block/*; do
+            [ -z "$BOOT_MEDIA" ] || break
+            devname=$(basename "$sysdev")
+            # Skip loop and ram devices
+            case "$devname" in
+                loop*|ram*) continue ;;
+            esac
+            # Try the device itself, then its partitions
+            for dev in "/dev/$devname" "/dev/${devname}"[0-9]*; do
+                [ -b "$dev" ] || continue
+                dbg "Trying block device $dev..."
+                if mount -o ro "$dev" /media 2>/dev/null; then
+                    if [ -f /media/rootfs.squashfs ]; then
+                        BOOT_MEDIA="$dev"
+                        msg "Found boot media at $dev"
+                        break
+                    fi
+                    umount /media
+                fi
+            done
+        done
+    fi
+
     if [ -z "$BOOT_MEDIA" ]; then
         err "Could not find boot media with rootfs.squashfs"
         msg "Available block devices:"
