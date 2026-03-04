@@ -190,11 +190,11 @@ LABEL debug
     KERNEL /boot/vmlinuz
     APPEND initrd=/boot/initrd.img debug
 
-# Rescue shell (same as default, but explicit)
+# Rescue shell — passes 'rescue' to kernel so init drops to a shell
 LABEL rescue
     MENU LABEL Rescue Shell
     KERNEL /boot/vmlinuz
-    APPEND initrd=/boot/initrd.img
+    APPEND initrd=/boot/initrd.img rescue
 EOF
 
 # Create stub EFI partition image for GPT hybrid structure.

@@ -59,7 +59,7 @@ Run `make help` for the full list. Summary:
 
 **Kernel/BusyBox:** `build`, `build-kernel`, `build-busybox`, `menuconfig-kernel`, `menuconfig-busybox`
 
-**ISO:** `iso`, `all`
+**ISO:** `iso`, `rootfs`, `all`
 
 **Testing:** `test`
 
@@ -79,7 +79,7 @@ make menuconfig-kernel
 make menuconfig-busybox
 ```
 
-Two BusyBox configs are provided: `busybox.config` (minimal, for initrd) and `busybox-full.config` (full-featured, for rootfs).
+Two BusyBox configs are provided: `busybox.config` (minimal, for initrd) and `busybox-full.config` (full-featured, for rootfs). `make menuconfig-busybox` edits the initrd config only. To modify the rootfs BusyBox config, edit `configs/busybox-full.config` directly or use `make shell` and run menuconfig manually.
 
 ## Boot Options
 
@@ -94,7 +94,8 @@ The ISO presents a boot menu via ISOLINUX. You can type a label at the `boot:` p
 | `vga` | Choose video mode interactively |
 | `serial` | Serial console (115200n8) |
 | `debug` | Verbose boot output |
-| `rescue` | Rescue shell |
+| `rescue` | Drop to rescue shell (passes `rescue` to kernel) |
+| `toram` | Copy rootfs to RAM before boot (allows media removal) |
 
 To boot from a real root filesystem, append `root=`:
 
@@ -103,6 +104,7 @@ linux root=/dev/sda1              # SATA/SCSI disk
 linux root=/dev/hda1              # IDE disk
 serial root=/dev/sda1             # Serial console
 debug root=/dev/sda1              # Verbose boot
+linux toram                       # Load rootfs into RAM
 ```
 
 ## Supported Network Hardware
@@ -126,7 +128,7 @@ BusyBox provides networking utilities in the initrd:
 - `udhcpc` - DHCP client
 - `ping`, `traceroute`, `netstat`, `arp`, `arping`
 - `nc` (netcat), `wget`, `telnet`
-- `slattach` - SLIP/PPP attachment for serial
+- `slattach` - SLIP attachment for serial lines
 
 `curl` is available in the rootfs for HTTPS transfers.
 
@@ -148,12 +150,12 @@ udhcpc -i eth0
 ip addr add 192.168.1.100/24 dev eth0
 ip route add default via 192.168.1.1
 
-# For PPP/modem (serial)
-slattach -p ppp /dev/ttyS0
-# Then configure pppd as needed
+# For SLIP over serial
+slattach -l -p slip /dev/ttyS0
+# Note: pppd is not included; full PPP requires adding it to the build
 ```
 
-Dropbear SSH is available — start it with `dropbear` after configuring networking.
+Dropbear SSH is available — start it with `dropbear` after configuring networking. SSH host keys (RSA and ECDSA) are auto-generated on first boot by `/etc/init.d/S20keygen`.
 
 ## File Structure
 
@@ -194,7 +196,8 @@ Dropbear SSH is available — start it with `dropbear` after configuring network
     ├── rootfs.squashfs
     ├── boot.iso
     ├── packages/                 # Binary packages (.gpkg.tar)
-    └── sysroot/                  # Extracted packages
+    ├── sysroot/                  # Extracted packages
+    └── portage-logs/             # Portage build logs (mounted into container)
 ```
 
 ## Requirements

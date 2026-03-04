@@ -2,6 +2,9 @@
 output/
 build/
 
+# Claude Code project settings
+.claude/
+
 # Temporary files
 *.swp
 *.swo

@@ -1,6 +1,6 @@
 # Release Readiness Report
 
-Audit date: 2026-02-08
+Audit date: 2026-03-04 (original: 2026-02-08)
 
 ## Project Summary
 
@@ -10,34 +10,30 @@ A Gentoo crossdev-based Docker build system that cross-compiles a minimal Linux 
 
 ---
 
-## Must Fix
+## Open Issues
 
-### 1. Missing LICENSE file
-- README says "Public domain" but there's no `LICENSE` or `UNLICENSE` file
-- Anyone evaluating the repo can't confidently determine the license
-- **Fix:** Add an `UNLICENSE` file (or `LICENSE` with CC0/MIT/etc.)
+### Should Fix
 
-### 2. USB boot media detection is limited
-- `rootfs/init` only scans CD-ROM devices: `/dev/sr0`, `/dev/sr1`, `/dev/cdrom`, `/dev/hdc`, `/dev/hdd`
-- Also checks `/dev/disk/by-label/MINLINUX` and `LIVECD`
-- No scanning of `/dev/sd*` or `/dev/vd*` for USB stick boot
-- The ISO is hybrid (USB-bootable via isohybrid), but the init script won't find the rootfs on USB
-- **Fix:** Add USB device scanning to init (`/dev/sda*`, `/dev/sdb*`, etc.) or scan all block devices
+### 1. Root login with no password
+- `/etc/shadow` is created by `build-rootfs.sh`, but root has no password set
+- Anyone booting the ISO has passwordless root
+- For a live ISO this may be intentional, but should be explicitly documented
+- **Fix:** At least add a warning banner on the login console, or a first-boot password prompt. Document the decision either way.
 
-### 3. No SSH host key generation
-- Dropbear is installed but no host keys are pre-generated or generated on first boot
-- Dropbear will fail to start without host keys
-- **Fix:** Add host key generation to the init/startup scripts (`dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key`)
+### 2. `rescue` boot label was broken (fixed in `build-iso.sh`)
+- The `LABEL rescue` entry in the generated `isolinux.cfg` was not passing `rescue` to the kernel
+- The init script parses a `rescue` kernel parameter to drop to a shell — without it, the rescue label just booted silently without `quiet`, not to a rescue shell
+- **Fixed:** `APPEND initrd=/boot/initrd.img rescue` now correctly passes the parameter
 
----
+### 3. README PPP example referenced `pppd`, which is not installed
+- The Networking Quick Start section showed `slattach -p ppp /dev/ttyS0` followed by "Then configure pppd as needed"
+- `pppd` is not in the world file and is not built into the image; `slattach` provides SLIP line attachment only
+- **Fixed:** README example updated to SLIP and notes that pppd is not included
 
-## Should Fix
-
-### 4. SquashFS uses gzip, not xz
-- `build-rootfs.sh` uses default mksquashfs compression (gzip)
-- Kernel has `CONFIG_SQUASHFS_XZ=y` enabled
-- XZ would save ~30-40% on the 18 MB rootfs
-- **Fix:** Add `-comp xz` to the mksquashfs command (or document the gzip choice if intentional for speed on i486)
+### 4. `toram` kernel parameter is undocumented
+- The init script supports `toram`, which copies the SquashFS rootfs entirely into RAM before mounting
+- This allows the boot media (CD/USB) to be removed after boot — a significant usability feature for live systems
+- **Fix:** Document `toram` in README boot options (now done) and consider adding it as an explicit ISOLINUX label
 
 ### 5. No clean shutdown sequence
 - BusyBox init with a basic `/etc/inittab`
@@ -45,55 +41,49 @@ A Gentoo crossdev-based Docker build system that cross-compiles a minimal Linux 
 - No service management, no shutdown scripts, no `rc.K` (kill script)
 - **Fix:** Add a shutdown/reboot script that kills processes, syncs filesystems, and unmounts cleanly
 
-### 6. Root login with no password
-- `/etc/passwd` sets root with no password
-- `/etc/shadow` not created
-- Anyone booting the ISO has passwordless root
-- For a live ISO this may be intentional, but should be explicitly documented
-- **Fix:** At least add a warning banner on the login console, or a first-boot password prompt. Document the decision either way.
-
-### 7. Incomplete .gitignore
-- Current `.gitignore` covers `output/` and `build/` but misses `.claude/` (Claude Code project settings)
-- **Fix:** Add `.claude/` entry
+### 6. Incomplete `.gitignore`
+- `.gitignore` was missing `.claude/` (Claude Code project settings directory)
+- **Fixed:** `.claude/` entry added
 
 ---
 
 ## Nice to Have
 
-### 8. Hardcoded versions with no update mechanism
-- Kernel 6.12.11, BusyBox 1.36.1, SYSLINUX 6.03 are hardcoded in Dockerfile ENV vars
-- `update-versions.sh` handles Portage package versions but NOT kernel/BusyBox/SYSLINUX
-- **Fix:** Either document the manual update process or extend `update-versions.sh` to cover these
+### 7. Hardcoded kernel/BusyBox/SYSLINUX versions with no update mechanism
+- Kernel 6.12.11, BusyBox 1.36.1 are hardcoded in Dockerfile `ENV` vars
+- `update-versions.sh` handles Portage package versions but NOT kernel/BusyBox
+- SYSLINUX is installed via `emerge sys-boot/syslinux` with no version pin; the `ENV SYSLINUX_VERSION=6.03` in the Dockerfile is purely informational — it doesn't actually constrain what emerge installs, so it could silently become wrong
+- **Fix:** Either document the manual update process or extend `update-versions.sh` to cover these; replace `ENV SYSLINUX_VERSION` with a comment
 
-### 9. No EFI boot support (BIOS only)
+### 8. No EFI boot support (BIOS only)
 - Build creates a stub EFI partition (empty FAT12, for Hyper-V Gen 1 GPT hybrid only)
 - No actual EFI bootloader (no GRUB EFI, no systemd-boot, no EFI shell)
 - Modern hardware (post-2012) increasingly drops BIOS/CSM support
 - **Fix:** Add a minimal GRUB EFI or systemd-boot stub for UEFI machines
 - May be intentional given the i486 target audience — worth documenting either way
 
-### 10. No persistence support
+### 9. No persistence support
 - System uses tmpfs overlay over SquashFS — all changes lost on reboot
 - No option to save session to USB or partition
 - **Fix:** Add a `persist` kernel parameter that looks for a labeled partition to use as the overlay upper dir
 
-### 11. No CI/CD
+### 10. No CI/CD
 - No `.github/workflows/`, `.gitlab-ci.yml`, or equivalent
 - The build requires Docker and takes significant time, but at minimum a smoke test that the Dockerfile builds would catch regressions
 - **Fix:** A GitHub Actions workflow that runs `make build-image` on push
 
-### 12. QEMU test target is minimal
+### 11. QEMU test target is minimal
 - `make test` just launches QEMU with the ISO — no automated validation
 - No check that the system boots successfully, network comes up, or SSH is reachable
 - **Fix:** A QEMU + expect/pexpect script that validates boot-to-login
 
-### 13. No CONTRIBUTING or developer onboarding docs
+### 12. No CONTRIBUTING or developer onboarding docs
 - The README exists and is decent, but there's no:
   - Architecture overview for contributors
   - Troubleshooting guide (cross-compilation is notoriously finicky)
   - Explanation of the weird workarounds (BUILD_DIR unsetting, libtool patching, etc.)
 
-### 14. No kernel module support
+### 13. No kernel module support
 - All drivers built-in, no loadable module support
 - Fine for current minimal use case, but limits extensibility
 - If additional hardware support is ever needed, the kernel must be recompiled
@@ -109,6 +99,24 @@ A Gentoo crossdev-based Docker build system that cross-compiles a minimal Linux 
 - **Large Docker image (~1.5-2 GB)** — unavoidable with Gentoo stage3 + crossdev toolchain
 - **No kernel modules** — intentional, everything built-in for simplicity
 - **Libtool bashrc patching** — necessary workaround for static linking, properly implemented
+- **initrd uses XZ, rootfs SquashFS uses gzip** — intentional asymmetry: the initrd is small and xz decompresses once at boot; the SquashFS is decompressed continuously at runtime so gzip is faster and less memory-intensive on i486 hardware
+- **SquashFS uses gzip, not xz** — kernel has `CONFIG_SQUASHFS_XZ=y` but mksquashfs uses `-comp gzip` explicitly; xz would save ~30% space but gzip is faster to decompress on memory-constrained i486 machines; this is a deliberate trade-off
+
+---
+
+## Resolved Issues (from original 2026-02-08 audit)
+
+### R1. Missing LICENSE file — RESOLVED
+- Original finding: no LICENSE file; README incorrectly said "Public domain"
+- **Fixed:** MIT License added; README updated to say "MIT License"
+
+### R2. USB boot media detection was limited — RESOLVED
+- Original finding: `rootfs/init` only scanned CD-ROM devices and disk-by-label paths; no scanning of `/dev/sd*` or `/dev/vd*`
+- **Fixed:** init now falls back to iterating `/sys/block/*`, trying every block device and its partitions
+
+### R3. No SSH host key generation — RESOLVED
+- Original finding: Dropbear installed but no host key generation; dropbear would fail to start
+- **Fixed:** `build-rootfs.sh` creates `/etc/init.d/S20keygen` which generates RSA and ECDSA host keys on first boot if missing
 
 ---
 
@@ -116,17 +124,16 @@ A Gentoo crossdev-based Docker build system that cross-compiles a minimal Linux 
 
 | Priority | # | Item | Effort |
 |----------|---|------|--------|
-| Must-fix | 1 | LICENSE file | 5 min |
-| Must-fix | 2 | USB boot detection in init | 30 min |
-| Must-fix | 3 | Dropbear host key generation | 15 min |
-| Should-fix | 4 | SquashFS xz compression | 5 min |
+| Should-fix | 1 | Document/handle root password | 15 min |
+| Should-fix | 2 | rescue label bug | fixed |
+| Should-fix | 3 | README PPP example | fixed |
+| Should-fix | 4 | Document toram | fixed |
 | Should-fix | 5 | Clean shutdown sequence | 30 min |
-| Should-fix | 6 | Document/handle root password | 15 min |
-| Should-fix | 7 | .gitignore cleanup | 5 min |
-| Nice-to-have | 8 | Version update docs/tooling | 1 hr |
-| Nice-to-have | 9 | EFI boot support | 2-4 hr |
-| Nice-to-have | 10 | Persistence support | 2-3 hr |
-| Nice-to-have | 11 | CI/CD pipeline | 1-2 hr |
-| Nice-to-have | 12 | Automated boot testing | 2-3 hr |
-| Nice-to-have | 13 | Developer docs | 1-2 hr |
-| Nice-to-have | 14 | Kernel module support | 1+ hr |
+| Should-fix | 6 | .gitignore cleanup | fixed |
+| Nice-to-have | 7 | Version update docs/tooling + SYSLINUX_VERSION | 1 hr |
+| Nice-to-have | 8 | EFI boot support | 2-4 hr |
+| Nice-to-have | 9 | Persistence support | 2-3 hr |
+| Nice-to-have | 10 | CI/CD pipeline | 1-2 hr |
+| Nice-to-have | 11 | Automated boot testing | 2-3 hr |
+| Nice-to-have | 12 | Developer docs | 1-2 hr |
+| Nice-to-have | 13 | Kernel module support | 1+ hr |
