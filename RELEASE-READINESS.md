@@ -2,6 +2,76 @@
 
 Audit date: 2026-03-04 (original: 2026-02-08)
 
+---
+
+## Package Build Status (2026-03-04)
+
+### Build system fix
+`build-packages.sh` was reporting all 54 successfully-built packages as failures. GPKG format
+stores binpkgs in `PKGDIR/CATEGORY/PKGNAME/PKGNAME-VERSION.gpkg.tar` — an extra directory vs.
+the old XPAK format — and the success check was looking one level too shallow. Fixed.
+Individual per-package build logs are now copied to `output/logs/*.build.log` on failure.
+
+### Man pages restored
+Removed `noman noinfo nodoc` from `FEATURES` in `make.conf`. Man pages are now installed for
+all packages. `app-text/mandoc` postinst (`makewhatis`) will succeed now that there are pages
+to index.
+
+### Dropped packages (build failures, not worth fixing now)
+
+| Package | Failure | Replacement |
+|---------|---------|-------------|
+| `dev-debug/gdb` | Compile fails — native i486+musl GDB cross-compile is a significant undertaking | `dev-debug/strace` |
+| `www-client/w3m` | econf fails — dependency/configure issue | `www-client/lynx` |
+| `sys-process/dcron` | `emake install` fails — Makefile hardcodes or uid/gid issues in cross env | None currently |
+
+### Pending: fortune-mod
+
+`games-misc/fortune-mod-3.24.0` — cmake configure fails. fortune-mod is the only cmake-based C
+program in the world file (htop uses autoconf, glib uses meson), so cmake cross-compilation for
+plain C is untested in our setup.
+
+**To debug**: Next build will save `output/logs/games-misc_fortune-mod-3.24.0.build.log`.
+Check for "CMake Error" lines — likely causes:
+- cmake toolchain file not setting `CMAKE_SYSTEM_NAME=Linux` and `CMAKE_SYSTEM_PROCESSOR=i486`
+- `try_compile()` failing due to CFLAGS interaction (`-march=i486 -Os`)
+- cmake cross-compilation regression in current cmake.eclass
+
+**Fix strategy**: A `cmake-cross.conf` package env override with explicit cmake toolchain
+variables, or a targeted USE/CFLAGS tweak after inspecting the log.
+
+### Pending: nethack
+
+`games-roguelike/nethack-3.6.7` — compile phase fails. Root cause: nethack's build system
+compiles intermediate tools (`util/makedefs`, `util/dgn_comp`, `util/lev_comp`, `util/dlb`)
+targeting i486, then immediately **runs** them on the x86_64 build host to generate source
+files and dungeon data. Classic cross-compilation "build tool" problem.
+
+**Fix strategy A — CC_FOR_BUILD patch** (no Docker changes required):
+
+1. Write `patches/nethack-3.6.7-cc-for-build.patch` that modifies `sys/unix/Makefile.top`:
+   - Add `CC_FOR_BUILD ?= gcc` and `CFLAGS_FOR_BUILD ?=` at the top
+   - Change the compilation rules for `makedefs`, `dgn_comp`, `lev_comp`, `dlb` to use
+     `$(CC_FOR_BUILD) $(CFLAGS_FOR_BUILD)` instead of `$(CC) $(CFLAGS)`
+   - Keep separate object directories for build-host tools vs. target game code
+2. Apply via Portage user-patches: place patch in
+   `/usr/i486-linux-musl/etc/portage/patches/games-roguelike/nethack-3.6.7/`
+   (the `build-packages.sh` config sync already covers `package.env`/`env`/`package.use`;
+   extend it to sync `patches/` if using this approach)
+
+**Fix strategy B — QEMU user-mode emulation** (transparent, no Makefile surgery):
+
+Add to Dockerfile:
+```dockerfile
+RUN emerge --noreplace app-emulation/qemu  # with QEMU_SOFTMMU_TARGETS="" QEMU_USER_TARGETS="i386"
+```
+Then register `qemu-i386-static` as the binfmt handler for i386 ELF in the build container
+startup. Requires `docker run --privileged` (or `--security-opt seccomp=unconfined` +
+`SYS_ADMIN` capability) to write `/proc/sys/fs/binfmt_misc/register`.
+With binfmt registered, nethack's i486 `makedefs` binary runs transparently via QEMU.
+
+---
+
 ## Project Summary
 
 A Gentoo crossdev-based Docker build system that cross-compiles a Linux live ISO targeting i486 (Pentium-class) hardware. The pipeline goes: Docker image build -> Portage cross-compile -> kernel build -> initramfs -> SquashFS rootfs -> ISOLINUX ISO.

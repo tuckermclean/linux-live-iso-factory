@@ -203,6 +203,18 @@ else
     echo ""
     echo "==> Some packages failed to build"
 
+    # Save individual build logs for failed packages before they disappear
+    # with the ephemeral container. Portage stores them at:
+    #   /var/tmp/portage/category/name-version/temp/build.log
+    echo "==> Saving failed package build logs to ${LOGS_DIR}/"
+    for build_log in /var/tmp/portage/*/*/temp/build.log; do
+        [ -f "${build_log}" ] || continue
+        # Extract category/name-version from path
+        pkg_ver=$(echo "${build_log}" | sed 's|/var/tmp/portage/\(.*\)/temp/build.log|\1|')
+        pkg_slug=$(echo "${pkg_ver}" | tr '/' '_')
+        cp "${build_log}" "${LOGS_DIR}/${pkg_slug}.build.log" 2>/dev/null || true
+    done
+
     # Count successes and failures from emerge output
     # Portage shows ">>> Emerging (N of M)" for each package
     SUCCESS_COUNT=0
@@ -215,8 +227,9 @@ else
         fi
 
         # Check if package has a binpkg (indicates success)
+        # GPKG format: PKGDIR/CATEGORY/PKGNAME/PKGNAME-VERSION-BUILDID.gpkg.tar
         PKG_NAME=$(basename "${pkg}")
-        if ls "${BINPKG_DIR}"/${pkg%/*}/${PKG_NAME}*.gpkg.tar 2>/dev/null | head -1 | grep -q .; then
+        if compgen -G "${BINPKG_DIR}/${pkg%/*}/${PKG_NAME}/${PKG_NAME}-*.gpkg.tar" >/dev/null 2>&1; then
             echo "${pkg}" >> "${BUILT_FILE}"
             ((SUCCESS_COUNT++))
         else

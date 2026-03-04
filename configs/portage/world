@@ -45,7 +45,6 @@ app-text/mandoc
 # Development tools
 sys-devel/binutils
 dev-build/make
-dev-debug/gdb
 dev-debug/strace
 sys-devel/patch
 
@@ -75,7 +74,6 @@ net-analyzer/traceroute
 
 # Network clients
 www-client/lynx
-www-client/w3m
 mail-client/mutt
 net-irc/irssi
 
@@ -86,7 +84,6 @@ app-misc/tmux
 sys-process/procps
 sys-process/htop
 sys-process/lsof
-sys-process/dcron
 app-admin/sysklogd
 
 # Filesystem tools
