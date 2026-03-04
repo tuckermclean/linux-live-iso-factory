@@ -3,7 +3,8 @@
 # build-rootfs.sh - Build the SquashFS root filesystem
 #
 # This script creates a full root filesystem with:
-# - Full-featured BusyBox (all applets)
+# - GNU coreutils, util-linux, findutils, grep, sed, gawk, tar, procps
+# - sysvinit (PID 1)
 # - Bash shell
 # - Proper /etc structure
 # - SquashFS compressed image
@@ -17,13 +18,6 @@ ROOTFS_DIR="/rootfs-build"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 CONFIGS_DIR="${CONFIGS_DIR:-/configs}"
 BUILD_DIR="${BUILD_DIR:-/build}"
-
-# Cross-compilation settings
-export CROSS_COMPILE="${CROSS_COMPILE:-i486-linux-musl-}"
-
-# BusyBox config
-BUSYBOX_FULL_CONFIG="${CONFIGS_DIR}/busybox-full.config"
-BUSYBOX_SRC="${BUILD_DIR}/busybox-${BUSYBOX_VERSION}"
 
 # Output
 SQUASHFS_IMAGE="${OUTPUT_DIR}/rootfs.squashfs"
@@ -42,43 +36,6 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 JOBS=$(nproc)
 
 #
-# Build full-featured BusyBox for rootfs
-#
-build_busybox_full() {
-    log_info "Building full-featured BusyBox for rootfs..."
-
-    # Use a separate build directory to not conflict with initrd busybox
-    local bb_build="${BUILD_DIR}/busybox-full-build"
-    rm -rf "$bb_build"
-    cp -a "$BUSYBOX_SRC" "$bb_build"
-    cd "$bb_build"
-
-    if [ -f "$BUSYBOX_FULL_CONFIG" ]; then
-        log_info "Using config from $BUSYBOX_FULL_CONFIG"
-        cp "$BUSYBOX_FULL_CONFIG" .config
-        yes "" | make CROSS_COMPILE=$CROSS_COMPILE oldconfig
-    else
-        log_info "Generating defconfig"
-        make CROSS_COMPILE=$CROSS_COMPILE defconfig
-        sed -i 's/^# CONFIG_STATIC is not set$/CONFIG_STATIC=y/' .config
-        yes "" | make CROSS_COMPILE=$CROSS_COMPILE oldconfig
-    fi
-
-    log_info "Compiling BusyBox (full)..."
-    make CROSS_COMPILE=$CROSS_COMPILE -j$JOBS
-
-    # Verify static
-    if file busybox | grep -qE "statically linked|static-pie linked"; then
-        log_info "BusyBox (full) is statically linked"
-    else
-        log_error "BusyBox (full) is NOT statically linked!"
-        exit 1
-    fi
-
-    log_info "BusyBox (full) build complete"
-}
-
-#
 # Create the root filesystem structure
 #
 create_rootfs() {
@@ -87,8 +44,12 @@ create_rootfs() {
     rm -rf "$ROOTFS_DIR"
     mkdir -p "$ROOTFS_DIR"/{bin,sbin,usr/bin,usr/sbin,lib,usr/lib}
     mkdir -p "$ROOTFS_DIR"/{etc,home,root,tmp,var,proc,sys,dev,mnt,opt,run}
-    mkdir -p "$ROOTFS_DIR"/var/{log,tmp,run,lock,spool,cache}
+    mkdir -p "$ROOTFS_DIR"/var/{log,tmp,spool,cache}
     mkdir -p "$ROOTFS_DIR"/etc/{init.d,network}
+    # /var/run and /var/lock live on the tmpfs mounted at /run so they're
+    # writable even though the squashfs base is read-only.
+    ln -sf /run     "$ROOTFS_DIR/var/run"
+    ln -sf /run/lock "$ROOTFS_DIR/var/lock"
 
     # Set permissions
     chmod 1777 "$ROOTFS_DIR"/tmp
@@ -99,41 +60,7 @@ create_rootfs() {
 }
 
 #
-# Install BusyBox into rootfs
-#
-install_busybox() {
-    log_info "Installing BusyBox into rootfs..."
-
-    local bb_build="${BUILD_DIR}/busybox-full-build"
-
-    # Copy busybox binary
-    cp "$bb_build/busybox" "$ROOTFS_DIR/bin/busybox"
-    chmod 755 "$ROOTFS_DIR/bin/busybox"
-
-    # Create symlinks for all applets
-    cd "$ROOTFS_DIR/bin"
-    for applet in $("$ROOTFS_DIR/bin/busybox" --list); do
-        [ "$applet" = "busybox" ] && continue
-        ln -sf busybox "$applet" 2>/dev/null || true
-    done
-
-    # Create symlinks in /sbin for traditional locations
-    cd "$ROOTFS_DIR/sbin"
-    for applet in init halt reboot poweroff mount umount mdev; do
-        ln -sf ../bin/busybox "$applet" 2>/dev/null || true
-    done
-
-    # Create symlinks in /usr/bin
-    cd "$ROOTFS_DIR/usr/bin"
-    for applet in env; do
-        ln -sf ../../bin/busybox "$applet" 2>/dev/null || true
-    done
-
-    log_info "BusyBox installed with $(ls "$ROOTFS_DIR/bin" | wc -l) applets"
-}
-
-#
-# Install Gentoo sysroot packages (overlay on top of BusyBox)
+# Install Gentoo sysroot packages
 #
 install_sysroot() {
     local sysroot="${OUTPUT_DIR}/sysroot"
@@ -224,33 +151,42 @@ fi
 [ -f /etc/profile.local ] && . /etc/profile.local
 EOF
 
+    # /etc/securetty - ttys on which root is allowed to log in
+    cat > "$ROOTFS_DIR/etc/securetty" << 'EOF'
+console
+tty1
+tty2
+ttyS0
+EOF
+
     # /etc/shells
     cat > "$ROOTFS_DIR/etc/shells" << 'EOF'
 /bin/sh
-/bin/ash
 /bin/bash
 EOF
 
-    # /etc/inittab for BusyBox init
+    # /etc/inittab for sysvinit
     cat > "$ROOTFS_DIR/etc/inittab" << 'EOF'
-# /etc/inittab - BusyBox init configuration
+# /etc/inittab - sysvinit configuration
+
+# Default runlevel
+id:3:initdefault:
 
 # System initialization
-::sysinit:/etc/init.d/rcS
+si::sysinit:/etc/init.d/rcS
 
-# Main console
-::respawn:-/bin/bash
+# Virtual consoles - bypass login, exec bash directly
+1:2345:respawn:/sbin/agetty -n -l /bin/bash --noclear 38400 tty1
+2:2345:respawn:/sbin/agetty -n -l /bin/bash 38400 tty2
 
-# Additional consoles (if available)
-tty2::respawn:-/bin/bash
-tty3::respawn:-/bin/bash
+# Serial console - bypass login, exec bash directly
+s0:2345:respawn:/sbin/agetty -n -l /bin/bash -L ttyS0 115200 vt100
 
-# Serial console (if kernel console=ttyS0)
-ttyS0::respawn:-/bin/bash
+# Ctrl-Alt-Del
+ca:12345:ctrlaltdel:/sbin/reboot
 
-# Graceful shutdown
-::shutdown:/etc/init.d/rcK
-::ctrlaltdel:/sbin/reboot
+# Shutdown
+l0:0:wait:/etc/init.d/rcK
 EOF
 
     # /etc/init.d/rcS - startup script
@@ -272,16 +208,14 @@ mount -t tmpfs tmpfs /dev/shm 2>/dev/null
 
 # Mount tmpfs filesystems
 mount -t tmpfs -o nosuid tmpfs /tmp
-mount -t tmpfs -o nosuid tmpfs /run
+mount -t tmpfs -o nosuid,mode=755 tmpfs /run
+
+# Create dirs/files expected under /run (= /var/run)
+mkdir -p /run/lock
+touch /run/utmp
 
 # Set hostname
-[ -f /etc/hostname ] && hostname -F /etc/hostname
-
-# Start mdev for hotplug
-if [ -x /sbin/mdev ]; then
-    echo /sbin/mdev > /proc/sys/kernel/hotplug
-    mdev -s
-fi
+[ -f /etc/hostname ] && echo "$(cat /etc/hostname)" > /proc/sys/kernel/hostname
 
 # Run init scripts
 for script in /etc/init.d/S*; do
@@ -334,43 +268,6 @@ iface lo inet loopback
 #iface eth0 inet dhcp
 EOF
 
-    # udhcpc default script
-    mkdir -p "$ROOTFS_DIR/usr/share/udhcpc"
-    cp /rootfs/usr/share/udhcpc/default.script "$ROOTFS_DIR/usr/share/udhcpc/" 2>/dev/null || \
-    cat > "$ROOTFS_DIR/usr/share/udhcpc/default.script" << 'DHCP_EOF'
-#!/bin/sh
-# udhcpc default script
-
-[ -z "$1" ] && exit 1
-
-case "$1" in
-    deconfig)
-        ip addr flush dev $interface
-        ip link set $interface up
-        ;;
-    renew|bound)
-        ip addr flush dev $interface
-        ip addr add $ip/${mask:-24} dev $interface
-
-        if [ -n "$router" ]; then
-            ip route add default via $router dev $interface
-        fi
-
-        if [ -n "$dns" ]; then
-            echo -n > /etc/resolv.conf
-            for ns in $dns; do
-                echo "nameserver $ns" >> /etc/resolv.conf
-            done
-        fi
-
-        [ -n "$domain" ] && echo "search $domain" >> /etc/resolv.conf
-        ;;
-esac
-
-exit 0
-DHCP_EOF
-    chmod 755 "$ROOTFS_DIR/usr/share/udhcpc/default.script"
-
     # /etc/init.d/S40network - network startup
     cat > "$ROOTFS_DIR/etc/init.d/S40network" << 'EOF'
 #!/bin/sh
@@ -390,15 +287,15 @@ case "$1" in
             iface=$(basename "$iface")
             echo "  Configuring $iface via DHCP..."
             ip link set "$iface" up
-            udhcpc -i "$iface" -b -q -p "/var/run/udhcpc.$iface.pid" 2>/dev/null &
+            dhcpcd -b "$iface"
         done
         ;;
     stop)
         echo "Stopping network..."
-        killall udhcpc 2>/dev/null
         for iface in /sys/class/net/eth* /sys/class/net/en*; do
             [ -e "$iface" ] || continue
             iface=$(basename "$iface")
+            dhcpcd -k "$iface" 2>/dev/null || true
             ip link set "$iface" down 2>/dev/null
         done
         ;;
@@ -484,9 +381,7 @@ main() {
     log_info "  Building Root Filesystem"
     log_info "========================================"
 
-    build_busybox_full
     create_rootfs
-    install_busybox
     install_sysroot
     create_etc_files
     create_squashfs

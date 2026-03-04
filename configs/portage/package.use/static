@@ -8,6 +8,7 @@
 # app-alternatives packages need an explicit implementation choice since
 # our global USE="-*" strips their defaults.
 app-alternatives/* reference
+app-alternatives/tar gnu
 
 # Bash - minimal static build
 app-shells/bash static -net -plugins readline
@@ -34,3 +35,39 @@ sys-apps/file static static-libs -python -seccomp
 
 # Less - minimal pager
 sys-apps/less static -pcre
+
+# sysvinit - PID 1 + killall5
+sys-apps/sysvinit static
+
+# GNU coreutils - ls, cp, mv, rm, mkdir, chmod, chown, ln, cat, etc.
+sys-apps/coreutils static -nls -xattr -acl -attr
+
+# util-linux - mount, umount, fdisk, df, agetty, mountpoint, etc.
+sys-apps/util-linux static -nls -udev
+
+# findutils - find, xargs
+sys-apps/findutils static -nls
+
+# grep - grep, egrep, fgrep
+sys-apps/grep static -nls -pcre
+
+# sed
+sys-apps/sed static -nls -acl
+
+# gawk - awk
+sys-apps/gawk static -nls -readline -mpfr
+
+# tar
+app-arch/tar static -nls -acl -xattr
+
+# procps - ps, free, top, kill
+sys-process/procps static -nls
+
+# iproute2 - ip
+sys-apps/iproute2 static -nls
+
+# iputils - ping
+net-misc/iputils static -nls
+
+# dhcpcd - DHCP client (replaces udhcpc)
+net-misc/dhcpcd static

@@ -52,9 +52,9 @@ help:
 	@echo "  copy-default-configs - Copy default configs to /configs"
 	@echo ""
 	@echo "Building:"
-	@echo "  build              - Build kernel + busybox"
+	@echo "  build              - Build kernel + busybox (initrd only)"
 	@echo "  build-kernel       - Build kernel only"
-	@echo "  build-busybox      - Build busybox only"
+	@echo "  build-busybox      - Build BusyBox (initrd only)"
 	@echo "  initrd             - Create initramfs image"
 	@echo "  rootfs             - Create SquashFS rootfs"
 	@echo "  iso                - Create bootable ISO (full pipeline)"
@@ -144,7 +144,7 @@ initrd: build-busybox
 	/scripts/build-initrd.sh
 
 # Build root filesystem (squashfs)
-rootfs: sync-sources
+rootfs:
 	@echo "==> Building root filesystem"
 	/scripts/build-rootfs.sh
 

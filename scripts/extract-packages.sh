@@ -148,6 +148,19 @@ if [ -d "${SYSROOT_DIR}/usr/sbin" ]; then
     cp -a "${SYSROOT_DIR}/usr/sbin"/* "${SYSROOT_DIR}/sbin/" 2>/dev/null || true
 fi
 
+# Copy musl dynamic linker from cross-toolchain so dynamically-linked binaries work.
+# Some packages (util-linux, iproute2, dhcpcd, etc.) don't fully honour USE=static
+# and end up as PIE/dynamic binaries referencing /lib/ld-musl-i386.so.1.
+MUSL_INTERP="/usr/${CROSS_TARGET}/lib/ld-musl-i386.so.1"
+if [ -f "${MUSL_INTERP}" ]; then
+    echo "  Copying musl dynamic linker (${MUSL_INTERP})..."
+    mkdir -p "${SYSROOT_DIR}/lib"
+    cp "${MUSL_INTERP}" "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
+else
+    echo "  WARNING: musl dynamic linker not found at ${MUSL_INTERP}"
+    echo "  Dynamically-linked binaries will fail to execute at runtime!"
+fi
+
 # Show results
 echo ""
 echo "==> Sysroot contents:"

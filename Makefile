@@ -76,7 +76,7 @@ help:
 	@echo "  extract              - Extract binpkgs to output/sysroot/"
 	@echo ""
 	@echo "Kernel/BusyBox:"
-	@echo "  build                - Build kernel + busybox"
+	@echo "  build                - Build kernel + busybox (initrd)"
 	@echo "  build-kernel         - Build kernel only"
 	@echo "  build-busybox        - Build busybox only"
 	@echo "  menuconfig-kernel    - Configure kernel interactively"

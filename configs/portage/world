@@ -28,3 +28,21 @@ dev-lang/lua
 # File utilities
 sys-apps/file
 sys-apps/less
+
+# Init system (replaces BusyBox init)
+sys-apps/sysvinit
+
+# Core GNU userland (replaces BusyBox applets)
+sys-apps/coreutils
+sys-apps/util-linux
+sys-apps/findutils
+sys-apps/grep
+sys-apps/sed
+sys-apps/gawk
+app-arch/tar
+sys-process/procps
+
+# Networking (replaces BusyBox udhcpc/ifconfig)
+sys-apps/iproute2
+net-misc/iputils
+net-misc/dhcpcd
