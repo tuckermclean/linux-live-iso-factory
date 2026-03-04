@@ -111,12 +111,18 @@ RUN wget -q "https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2" &
 RUN mkdir -p ${BUILD_DIR} ${CONFIGS_DIR} ${OUTPUT_DIR} /initrd
 
 # Copy default configs (kernel/busybox configs baked in as fallback)
-COPY configs/kernel.config configs/busybox.config configs/busybox-full.config /default-configs/
+COPY configs/kernel.config configs/busybox.config /default-configs/
 
 # The Makefile inside the container orchestrates builds
 COPY container-Makefile /Makefile
 
 WORKDIR /
+
+# Pre-install cmake on the host so BDEPEND resolution doesn't select cmake-9999
+# (the live git ebuild), which creates a circular dep via sphinx→pillow→libjpeg-turbo→cmake.
+# Must come after all crossdev steps to avoid busting the toolchain layer cache.
+RUN emerge --noreplace dev-build/cmake && \
+    rm -rf /var/cache/distfiles/*
 
 # Default command shows help
 CMD ["make", "help"]

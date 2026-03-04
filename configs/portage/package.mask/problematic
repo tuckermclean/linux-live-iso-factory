@@ -12,4 +12,9 @@
 # Block entire version ranges
 # >=dev-lang/lua-5.5
 
-# Currently no masked versions - add as issues are discovered
+# man-db pulls virtual/tmpfiles → systemd-utils[tmpfiles] which has a hard
+# REQUIRED_USE on PYTHON_SINGLE_TARGET. Mask it so virtual/man resolves to
+# app-text/mandoc instead.
+sys-apps/man-db
+
+# Currently no other masked versions - add as issues are discovered

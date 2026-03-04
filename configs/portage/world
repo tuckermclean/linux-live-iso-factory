@@ -5,29 +5,9 @@
 #
 # Add packages here and run: make build-packages
 
-# Shell - real bash instead of busybox sh
+# Shells
 app-shells/bash
-
-# Remote access
-net-misc/dropbear
-
-# Network utilities
-net-misc/curl
-
-# Text editors
-app-editors/nano
-
-# Compression utilities (real implementations vs busybox)
-app-arch/xz-utils
-app-arch/bzip2
-app-arch/gzip
-
-# Scripting language - lightweight and embeddable
-dev-lang/lua
-
-# File utilities
-sys-apps/file
-sys-apps/less
+app-shells/dash
 
 # Init system (replaces BusyBox init)
 sys-apps/sysvinit
@@ -39,10 +19,84 @@ sys-apps/findutils
 sys-apps/grep
 sys-apps/sed
 sys-apps/gawk
+sys-apps/diffutils
 app-arch/tar
-sys-process/procps
+app-text/tree
+
+# Core libraries (available for development)
+sys-libs/readline
+sys-libs/ncurses
+sys-libs/zlib
+dev-libs/libpcre2
+dev-libs/openssl
+
+# File utilities
+sys-apps/file
+sys-apps/less
+
+# Text editors
+app-editors/vim
+app-editors/nano
+
+# Man pages
+sys-apps/man-pages
+app-text/mandoc
+
+# Development tools
+sys-devel/binutils
+dev-build/make
+dev-debug/gdb
+dev-debug/strace
+sys-devel/patch
+
+# Scripting languages
+dev-lang/lua
+
+# Compression utilities
+app-arch/xz-utils
+app-arch/bzip2
+app-arch/gzip
 
 # Networking (replaces BusyBox udhcpc/ifconfig)
 sys-apps/iproute2
+sys-apps/net-tools
 net-misc/iputils
 net-misc/dhcpcd
+
+# Remote access
+net-misc/dropbear
+
+# Network utilities
+net-misc/curl
+net-misc/wget
+net-misc/whois
+net-analyzer/netcat
+net-analyzer/traceroute
+
+# Network clients
+www-client/lynx
+www-client/w3m
+mail-client/mutt
+net-irc/irssi
+
+# Terminal multiplexer
+app-misc/tmux
+
+# System utilities
+sys-process/procps
+sys-process/htop
+sys-process/lsof
+sys-process/dcron
+app-admin/sysklogd
+
+# Filesystem tools
+sys-fs/e2fsprogs
+sys-fs/dosfstools
+sys-fs/squashfs-tools
+
+# Amusements
+app-misc/figlet
+games-misc/fortune-mod
+app-misc/cmatrix
+app-misc/sl
+games-roguelike/nethack

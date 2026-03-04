@@ -4,7 +4,9 @@ Audit date: 2026-03-04 (original: 2026-02-08)
 
 ## Project Summary
 
-A Gentoo crossdev-based Docker build system that cross-compiles a minimal Linux live ISO targeting i486 (Pentium-class) hardware. The pipeline goes: Docker image build -> Portage cross-compile -> kernel/BusyBox build -> initramfs -> SquashFS rootfs -> ISOLINUX ISO. The final ISO is ~23 MB.
+A Gentoo crossdev-based Docker build system that cross-compiles a Linux live ISO targeting i486 (Pentium-class) hardware. The pipeline goes: Docker image build -> Portage cross-compile -> kernel build -> initramfs -> SquashFS rootfs -> ISOLINUX ISO.
+
+The package set has grown from a minimal BusyBox-based image to a full GNU/Linux userland with editors, development tools, network clients, filesystem utilities, and amusements (~61 world packages). The ISO size will be significantly larger than the original ~23 MB estimate; exact size TBD after the expanded build completes.
 
 **Overall assessment: The core build pipeline is complete and functional.** The gaps are mostly around release polish, not missing functionality.
 
@@ -88,6 +90,30 @@ A Gentoo crossdev-based Docker build system that cross-compiles a minimal Linux 
 - Fine for current minimal use case, but limits extensibility
 - If additional hardware support is ever needed, the kernel must be recompiled
 
+### 14. man-db replaced by mandoc
+- `sys-apps/man-db` pulls in `virtual/tmpfiles` → `sys-apps/systemd-utils[tmpfiles]`, which has a hard `REQUIRED_USE` on `PYTHON_SINGLE_TARGET` with no lightweight alternative available in the tree
+- Replaced by `app-text/mandoc`, which provides `man`, `apropos`, and `whatis` without the dependency chain
+- Man page content (`sys-apps/man-pages`) is still installed
+
+### 15. nmap not included
+- `net-analyzer/nmap` has a hard `REQUIRED_USE` constraint requiring a `PYTHON_SINGLE_TARGET` selection even when all Python-dependent features (`-nse -ndiff -zenmap`) are disabled
+- Adding Python to the cross-compilation environment is too heavy a dependency for one tool
+- **Fix:** Add `dev-lang/python` to world, then add `net-analyzer/nmap PYTHON_SINGLE_TARGET=python3_12 -nse -ndiff -zenmap` to package.use; or wait until nmap upstream decouples its Python dependency
+
+### 15. No native compiler on the live system
+- `sys-devel/gcc` was omitted to keep the ISO small (gcc adds 200-400 MB uncompressed)
+- Users cannot compile software on the running system
+- **Fix:** Add `sys-devel/gcc` to world with C/C++ only (`-ada -d -fortran -go -objc -objc++`), plus `dev-lang/perl` (required by build tooling) and optionally `games-misc/cowsay` (fun, Perl script)
+- Consider building a separate "developer" ISO variant with gcc included
+
+### 17. No graphical environment
+- Minimal X stack: xorg-server (fbdev driver) + dwm + st + dmenu + terminus-font + xinit
+- Piggybacks on the existing boot-time framebuffer — no GPU driver or udev needed
+- xf86-video-fbdev talks directly to /dev/fb0; xf86-input-evdev handles keyboard/mouse
+- dwm is ~2000 lines of C; configured by editing source and recompiling
+- May require an /etc/X11/xorg.conf.d/10-evdev.conf snippet in build-rootfs.sh
+  to declare input devices explicitly (xorg-server without udev can't auto-detect them)
+
 ---
 
 ## Issues That Looked Weird But Are Actually Fine
@@ -137,3 +163,7 @@ A Gentoo crossdev-based Docker build system that cross-compiles a minimal Linux 
 | Nice-to-have | 11 | Automated boot testing | 2-3 hr |
 | Nice-to-have | 12 | Developer docs | 1-2 hr |
 | Nice-to-have | 13 | Kernel module support | 1+ hr |
+| Nice-to-have | 14 | man-db (replaced by mandoc; man-db needs Python via tmpfiles) | 1-2 hr |
+| Nice-to-have | 15 | nmap (needs Python dep) | 1-2 hr |
+| Nice-to-have | 16 | Native compiler (gcc + perl + cowsay) | 2-4 hr |
+| Nice-to-have | 17 | Graphical environment (dwm over fbdev) | 2-4 hr |

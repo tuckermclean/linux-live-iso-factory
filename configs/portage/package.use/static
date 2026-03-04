@@ -71,3 +71,112 @@ net-misc/iputils static -nls
 
 # dhcpcd - DHCP client (replaces udhcpc)
 net-misc/dhcpcd static
+
+# app-alternatives: select implementations for /bin/sh and vi
+app-alternatives/sh dash
+app-alternatives/lex flex
+
+# dash - minimal POSIX /bin/sh
+app-shells/dash static
+
+# Core libraries - static-libs for development use
+sys-libs/readline static static-libs
+sys-libs/ncurses static static-libs -gpm -minimal unicode
+sys-libs/zlib static-libs
+dev-libs/libpcre2 static static-libs
+dev-libs/openssl static static-libs
+
+# diffutils - diff, cmp, patch
+sys-apps/diffutils static -nls
+
+# tree - directory listing
+app-text/tree static
+
+# vim - full-featured; -minimal overrides global minimal to keep syntax highlighting
+app-editors/vim static -minimal
+
+# mandoc - man page reader; system-man needed to satisfy virtual/man
+app-text/mandoc static system-man
+
+# binutils - assembler, linker, objdump, nm, strip, etc.
+sys-devel/binutils static -nls
+
+# make - GNU make
+dev-build/make static -nls
+
+# gdb - debugger; disable Python scripting to avoid Python dep
+dev-debug/gdb static -minimal -python -source-highlight -guile -lzma -nls
+
+# strace - syscall tracer
+dev-debug/strace static
+
+# patch - apply diffs
+sys-devel/patch static -nls
+
+# wget - HTTP/FTP downloader with SSL
+net-misc/wget static ssl -nls
+
+# netcat
+net-analyzer/netcat static
+
+# whois
+net-misc/whois static
+
+# traceroute
+net-analyzer/traceroute static
+
+# net-tools - ifconfig, netstat, arp, route
+sys-apps/net-tools static -nls
+
+# tmux - terminal multiplexer
+app-misc/tmux static -minimal
+
+# htop - interactive process viewer
+sys-process/htop static -minimal
+
+# lsof - list open files
+sys-process/lsof static
+
+# sysklogd - syslog daemon
+app-admin/sysklogd static
+
+# dcron - minimal cron daemon
+sys-process/dcron static
+
+# e2fsprogs - ext2/3/4 tools (mkfs, fsck, tune2fs)
+sys-fs/e2fsprogs static static-libs -nls
+
+# dosfstools - FAT filesystem tools (mkfs.fat, fsck.fat)
+sys-fs/dosfstools static -nls
+
+# squashfs-tools - mksquashfs, unsquashfs
+sys-fs/squashfs-tools static
+
+# lynx - text web browser with HTTPS
+www-client/lynx static ssl -minimal -nls
+
+# w3m - text web browser with HTTPS; disable image rendering (needs X)
+www-client/w3m static ssl -minimal -imlib
+
+# mutt - email client with SSL/SMTP/IMAP; smtp requires sasl per REQUIRED_USE
+# sasl pulls cyrus-sasl → virtual/tmpfiles → systemd-utils Python trap; drop smtp+sasl
+# imap with ssl still works via IMAP LOGIN without SASL
+mail-client/mutt static ssl imap -smtp -sasl -minimal -berkdb -gdbm -kerberos -nls
+
+# irssi - IRC client with SSL
+net-irc/irssi static ssl -minimal -otr -socks -nls
+
+# figlet - ASCII art text banners
+app-misc/figlet static
+
+# fortune-mod - random fortune cookies
+games-misc/fortune-mod -nls
+
+# cmatrix - terminal matrix rain animation
+app-misc/cmatrix static
+
+# sl - steam locomotive (typo correction for ls)
+app-misc/sl static
+
+# nethack - curses roguelike; force ncurses UI, no X11/Qt/GTK
+games-roguelike/nethack -minimal ncurses -X -qt -gtk
