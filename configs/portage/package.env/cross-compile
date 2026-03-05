@@ -4,18 +4,12 @@
 #
 # Environment files are stored in the portage env/ directory
 
-# Force static, non-PIE linking for all leaf binaries.
+# Force static, non-PIE linking for ALL packages.
 # static.conf adds -static to LDFLAGS, disables PIE (which conflicts with
-# static linking on i486/musl), and passes --disable-shared to libtool.
-
-app-shells/bash       static.conf
-net-misc/dropbear     static.conf
-net-misc/curl         static.conf
-app-editors/nano      static.conf
-app-arch/xz-utils     static.conf
-app-arch/bzip2        static.conf
-app-arch/gzip         static.conf
-dev-lang/lua          static.conf
-dev-libs/openssl      static.conf
-sys-apps/file         static.conf
-sys-apps/less         static.conf
+# static linking on i486/musl), passes --disable-shared to autotools configure,
+# and triggers the libtool patch in bashrc (which makes -static actually stick).
+#
+# This catch-all covers every world package AND every pulled-in dependency.
+# Packages that do not compile anything (virtuals, man-pages, app-alternatives)
+# ignore these variables harmlessly.
+*/*  static.conf

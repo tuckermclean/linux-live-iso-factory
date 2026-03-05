@@ -12,11 +12,11 @@
 #
 # Solution: after configure generates the libtool script, sed-patch it so
 # the -static handler also passes $link_static_flag to the compiler
-# (matching -all-static behavior). Only runs for packages that set
-# STATIC_PATCH_LIBTOOL=1 in their env file.
+# (matching -all-static behavior). Runs unconditionally — if no libtool
+# script exists in WORKDIR (e.g. cmake/meson packages) the find returns
+# nothing and the loop is a no-op.
 if [[ ${EBUILD_PHASE} == "configure" ]]; then
 	post_src_configure() {
-		[[ ${STATIC_PATCH_LIBTOOL} == 1 ]] || return 0
 		local lt
 		while IFS= read -r -d '' lt; do
 			einfo "Patching libtool for full static linking: ${lt}"
