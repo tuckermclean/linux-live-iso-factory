@@ -1,6 +1,6 @@
 # Release Readiness Report
 
-Audit date: 2026-03-04 (original: 2026-02-08)
+Audit date: 2026-03-05 (original: 2026-02-08)
 
 ---
 
@@ -25,50 +25,22 @@ to index.
 | `www-client/w3m` | econf fails — dependency/configure issue | `www-client/lynx` |
 | `sys-process/dcron` | `emake install` fails — Makefile hardcodes or uid/gid issues in cross env | None currently |
 
-### Pending: fortune-mod
+### fortune-mod and nethack — BUILD RESOLVED, nethack runtime known gap
 
-`games-misc/fortune-mod-3.24.0` — cmake configure fails. fortune-mod is the only cmake-based C
-program in the world file (htop uses autoconf, glib uses meson), so cmake cross-compilation for
-plain C is untested in our setup.
+Both packages now build and install correctly. See git log for details.
 
-**To debug**: Next build will save `output/logs/games-misc_fortune-mod-3.24.0.build.log`.
-Check for "CMake Error" lines — likely causes:
-- cmake toolchain file not setting `CMAKE_SYSTEM_NAME=Linux` and `CMAKE_SYSTEM_PROCESSOR=i486`
-- `try_compile()` failing due to CFLAGS interaction (`-march=i486 -Os`)
-- cmake cross-compilation regression in current cmake.eclass
+**Nethack runtime**: "Configuration incompatibility for file 'dungeon'. Dungeon description not valid."
 
-**Fix strategy**: A `cmake-cross.conf` package env override with explicit cmake toolchain
-variables, or a targeted USE/CFLAGS tweak after inspecting the log.
+The nethack data files (`nhdat`, `*.lev`) are built by `dlb`, `dgn_comp`, and `lev_comp` — which
+our CC_FOR_BUILD bashrc hook compiles as x86_64 binaries so they can run on the build host.
+x86_64 uses 64-bit `long` (8 bytes); i486 uses 32-bit `long` (4 bytes). The `dlb_fentry` struct
+contains `long foffset` and `long fsize`, so the archive index is misread by the i486 binary →
+dungeon data corruption.
 
-### Pending: nethack
-
-`games-roguelike/nethack-3.6.7` — compile phase fails. Root cause: nethack's build system
-compiles intermediate tools (`util/makedefs`, `util/dgn_comp`, `util/lev_comp`, `util/dlb`)
-targeting i486, then immediately **runs** them on the x86_64 build host to generate source
-files and dungeon data. Classic cross-compilation "build tool" problem.
-
-**Fix strategy A — CC_FOR_BUILD patch** (no Docker changes required):
-
-1. Write `patches/nethack-3.6.7-cc-for-build.patch` that modifies `sys/unix/Makefile.top`:
-   - Add `CC_FOR_BUILD ?= gcc` and `CFLAGS_FOR_BUILD ?=` at the top
-   - Change the compilation rules for `makedefs`, `dgn_comp`, `lev_comp`, `dlb` to use
-     `$(CC_FOR_BUILD) $(CFLAGS_FOR_BUILD)` instead of `$(CC) $(CFLAGS)`
-   - Keep separate object directories for build-host tools vs. target game code
-2. Apply via Portage user-patches: place patch in
-   `/usr/i486-linux-musl/etc/portage/patches/games-roguelike/nethack-3.6.7/`
-   (the `build-packages.sh` config sync already covers `package.env`/`env`/`package.use`;
-   extend it to sync `patches/` if using this approach)
-
-**Fix strategy B — QEMU user-mode emulation** (transparent, no Makefile surgery):
-
-Add to Dockerfile:
-```dockerfile
-RUN emerge --noreplace app-emulation/qemu  # with QEMU_SOFTMMU_TARGETS="" QEMU_USER_TARGETS="i386"
-```
-Then register `qemu-i386-static` as the binfmt handler for i386 ELF in the build container
-startup. Requires `docker run --privileged` (or `--security-opt seccomp=unconfined` +
-`SYS_ADMIN` capability) to write `/proc/sys/fs/binfmt_misc/register`.
-With binfmt registered, nethack's i486 `makedefs` binary runs transparently via QEMU.
+**Fix:** In the bashrc CC_FOR_BUILD section, add `-m32` to `CFLAGS_FOR_BUILD` and confirm the
+host gcc has 32-bit multilib support (`gcc -m32`). This compiles the build tools as 32-bit x86,
+matching the i486 ABI for `long`. Alternatively, patch nethack to use `int32_t`/`int64_t` instead
+of `long` in the DLB archive structs.
 
 ---
 
@@ -86,7 +58,28 @@ The package set has grown from a minimal BusyBox-based image to a full GNU/Linux
 
 ### Should Fix
 
-### 1. Root login with no password
+### 1. Dynamic linking — performance and correctness gap
+
+Several packages ignore `USE=static` and build as dynamically-linked PIE binaries:
+`sys-apps/util-linux` (mount, agetty, mountpoint, etc.), `sys-apps/iproute2` (ip),
+`net-misc/dhcpcd`, `sys-process/procps`, `app-arch/tar`, `sys-apps/gawk`, and others.
+
+This matters for two reasons:
+- **Performance**: every exec of these binaries requires the dynamic linker to do library
+  lookups and relocations. On a 486 booting from CD-ROM, that means extra seeks and page
+  faults on every shell command. A fully static userland would be noticeably snappier.
+- **Correctness**: the live sysroot installs `lib/ld-musl-i386.so.1` as a symlink to the
+  crossdev absolute path (`/usr/i486-linux-musl/usr/lib/libc.so`), which is dangling on
+  the live system. `extract-packages.sh` works around this by replacing the symlink with
+  the actual binary, but this is a band-aid.
+
+**Fix:** Audit each dynamic binary. Many can be forced static with package-specific
+`LDFLAGS=-static` env overrides or USE flags. For packages with no static option
+(e.g. util-linux), consider patching the ebuild or replacing with a BusyBox applet
+equivalent (BusyBox provides static mount, ip, agetty, etc. and is designed for exactly
+this use case).
+
+### 2. Root login with no password
 - `/etc/shadow` is created by `build-rootfs.sh`, but root has no password set
 - Anyone booting the ISO has passwordless root
 - For a live ISO this may be intentional, but should be explicitly documented
@@ -107,13 +100,30 @@ The package set has grown from a minimal BusyBox-based image to a full GNU/Linux
 - This allows the boot media (CD/USB) to be removed after boot — a significant usability feature for live systems
 - **Fix:** Document `toram` in README boot options (now done) and consider adding it as an explicit ISOLINUX label
 
-### 5. No clean shutdown sequence
+### 5. mandoc.db stale on first boot
+
+`man` works correctly, but on first boot it will print:
+```
+man: outdated mandoc.db lacks <pkg>(N) entry, run makewhatis /usr/share/man
+```
+
+Root cause: `mandoc.db` is built during `mandoc`'s `pkg_postinst` in the build container,
+at which point only mandoc itself is installed. It is also regenerated in `extract-packages.sh`,
+but `makewhatis` stores absolute paths — the build path (`/output/sysroot/usr/share/man`)
+is not the live path (`/usr/share/man`), so the db is always stale on the live system.
+
+**Workaround:** Run `makewhatis /usr/share/man` once on the live system. The warning can be
+suppressed and the db corrected in one command. Pages display correctly regardless of the warning.
+
+**Fix:** Add `makewhatis /usr/share/man` to the rcS startup script (run once, fast, in RAM).
+
+### 6. No clean shutdown sequence
 - BusyBox init with a basic `/etc/inittab`
 - `rcS` startup script created by `build-rootfs.sh` is minimal (mount filesystems, start mdev, bring up networking)
 - No service management, no shutdown scripts, no `rc.K` (kill script)
 - **Fix:** Add a shutdown/reboot script that kills processes, syncs filesystems, and unmounts cleanly
 
-### 6. Incomplete `.gitignore`
+### 7. Incomplete `.gitignore`
 - `.gitignore` was missing `.claude/` (Claude Code project settings directory)
 - **Fixed:** `.claude/` entry added
 
@@ -220,12 +230,15 @@ The package set has grown from a minimal BusyBox-based image to a full GNU/Linux
 
 | Priority | # | Item | Effort |
 |----------|---|------|--------|
-| Should-fix | 1 | Document/handle root password | 15 min |
+| Should-fix | 1 | Dynamic linking — static rebuild or BusyBox replacement | 4-8 hr |
+| Should-fix | 1b | Nethack dungeon ABI mismatch — `-m32` for CC_FOR_BUILD | 1 hr |
+| Should-fix | 2 | Document/handle root password | 15 min |
 | Should-fix | 2 | rescue label bug | fixed |
 | Should-fix | 3 | README PPP example | fixed |
 | Should-fix | 4 | Document toram | fixed |
-| Should-fix | 5 | Clean shutdown sequence | 30 min |
-| Should-fix | 6 | .gitignore cleanup | fixed |
+| Should-fix | 5 | mandoc.db stale on first boot — add makewhatis to rcS | 5 min |
+| Should-fix | 6 | Clean shutdown sequence | 30 min |
+| Should-fix | 7 | .gitignore cleanup | fixed |
 | Nice-to-have | 7 | Version update docs/tooling + SYSLINUX_VERSION | 1 hr |
 | Nice-to-have | 8 | EFI boot support | 2-4 hr |
 | Nice-to-have | 9 | Persistence support | 2-3 hr |

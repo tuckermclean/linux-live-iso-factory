@@ -66,6 +66,12 @@ if [ -d "${PORTAGE_DIR}" ] && [ -d "${SYSROOT_PORTAGE}" ]; then
     done
 fi
 
+# Ensure groups required by game package preinst phases exist on the BUILD HOST.
+# The nethack ebuild calls fowners root:gamestat, which runs chown on the host
+# during preinst — it needs the group in the host /etc/group, not the sysroot.
+grep -q "^games:"    /etc/group || echo "games:x:35:"    >> /etc/group
+grep -q "^gamestat:" /etc/group || echo "gamestat:x:36:" >> /etc/group
+
 # Regenerate binpkg index so it matches whatever .gpkg.tar files actually
 # exist on disk. Prevents "non-existent binary" errors after partial cleanup.
 echo "==> Regenerating binpkg index"
@@ -212,7 +218,8 @@ else
         # Extract category/name-version from path
         pkg_ver=$(echo "${build_log}" | sed 's|/var/tmp/portage/\(.*\)/temp/build.log|\1|')
         pkg_slug=$(echo "${pkg_ver}" | tr '/' '_')
-        cp "${build_log}" "${LOGS_DIR}/${pkg_slug}.build.log" 2>/dev/null || true
+        cp "${build_log}" "${LOGS_DIR}/${pkg_slug}.build.log" 2>/dev/null && \
+            chmod 644 "${LOGS_DIR}/${pkg_slug}.build.log" 2>/dev/null || true
     done
 
     # Count successes and failures from emerge output
@@ -252,6 +259,14 @@ if [ ${FAIL_COUNT} -gt 0 ]; then
     echo ""
     echo "    Check logs in: ${LOGS_DIR}/"
 fi
+
+# Save the live sysroot to the output volume.
+# Binary packages only contain what src_install puts in ${D}; files created by
+# pkg_postinst (e.g. /var/games/nethack/perm) are only in the live sysroot.
+# extract-packages.sh uses this as its source instead of the binary packages.
+echo "==> Saving live sysroot /usr/${CROSS_TARGET}/ to ${OUTPUT_DIR}/live-sysroot/"
+mkdir -p "${OUTPUT_DIR}/live-sysroot"
+rsync -a "/usr/${CROSS_TARGET}/" "${OUTPUT_DIR}/live-sysroot/"
 
 # Exit with error if any packages failed
 [ ${FAIL_COUNT} -eq 0 ]

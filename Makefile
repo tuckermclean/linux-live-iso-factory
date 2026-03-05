@@ -70,21 +70,21 @@ help:
 	@echo "  shell                - Drop into container shell"
 	@echo ""
 	@echo "Packages (Gentoo cross-compilation):"
-	@echo "  sync-portage         - Sync portage tree in cache volume"
-	@echo "  build-packages       - Cross-compile packages (JOBS=$(JOBS))"
+	@echo "  sync-portage          - Sync portage tree in cache volume"
+	@echo "  build-packages        - Cross-compile packages (JOBS=$(JOBS))"
 	@echo "  build-packages-resume - Resume build, skip already-built"
-	@echo "  extract              - Extract binpkgs to output/sysroot/"
+	@echo "  extract               - Copy live sysroot to output/sysroot/"
 	@echo ""
-	@echo "Kernel/BusyBox:"
-	@echo "  build                - Build kernel + busybox (initrd)"
+	@echo "Kernel/BusyBox (initrd only; rootfs uses Gentoo packages):"
+	@echo "  build                - Build kernel + busybox"
 	@echo "  build-kernel         - Build kernel only"
-	@echo "  build-busybox        - Build busybox only"
+	@echo "  build-busybox        - Build busybox only (used in initrd)"
 	@echo "  menuconfig-kernel    - Configure kernel interactively"
 	@echo "  menuconfig-busybox   - Configure busybox interactively"
 	@echo ""
 	@echo "ISO:"
-	@echo "  iso                  - Create bootable ISO (full pipeline)"
-	@echo "  all                  - Alias for iso"
+	@echo "  iso                  - Create bootable ISO"
+	@echo "  all                  - Full build: image → packages → extract → iso"
 	@echo ""
 	@echo "Testing:"
 	@echo "  test                 - Boot ISO in QEMU (requires qemu-system-i386)"
@@ -101,12 +101,10 @@ help:
 	@echo "  clean-all            - Remove everything (volumes + image)"
 	@echo ""
 	@echo "Quick Start:"
-	@echo "  1. make build-image"
-	@echo "  2. make sync-portage"
-	@echo "  3. make build-packages"
-	@echo "  4. make extract"
-	@echo "  5. make iso"
-	@echo "  6. make test"
+	@echo "  make build-image     - Build Docker image (once, or after Dockerfile changes)"
+	@echo "  make sync-portage    - Sync portage tree (once, or to get package updates)"
+	@echo "  make all             - Build everything and produce boot.iso"
+	@echo "  make test            - Boot ISO in QEMU"
 
 # Ensure output directories exist
 ensure-dirs:
@@ -179,8 +177,8 @@ iso: ensure-dirs
 	@echo "==> Creating bootable ISO"
 	$(DOCKER_RUN) $(IMAGE_NAME) make iso
 
-# Build everything
-all: iso
+# Build everything: image → packages → extract → iso
+all: build-image build-packages extract iso
 
 # Test ISO in QEMU (on host)
 test:

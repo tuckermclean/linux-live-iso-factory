@@ -120,8 +120,15 @@ WORKDIR /
 
 # Pre-install cmake on the host so BDEPEND resolution doesn't select cmake-9999
 # (the live git ebuild), which creates a circular dep via sphinx→pillow→libjpeg-turbo→cmake.
+# fortune-mod cross-compile requires a native 'strfile' binary in PATH — install the
+# host package so strfile is available without bashrc hackery.
 # Must come after all crossdev steps to avoid busting the toolchain layer cache.
-RUN emerge --noreplace dev-build/cmake && \
+# Create groups needed by game package preinst phases (e.g. nethack fowners root:gamestat)
+RUN groupadd -g 35 games 2>/dev/null || true && \
+    groupadd -g 36 gamestat 2>/dev/null || true
+
+RUN unset BUILD_DIR && \
+    emerge --noreplace dev-build/cmake games-misc/fortune-mod app-text/mandoc && \
     rm -rf /var/cache/distfiles/*
 
 # Default command shows help

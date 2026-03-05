@@ -1,126 +1,37 @@
 #!/bin/bash
 #
-# extract-packages.sh - Extract binary packages to sysroot
+# extract-packages.sh - Copy live sysroot to output sysroot
 #
-# Finds all .gpkg.tar (or .tbz2) files in the packages directory
-# and extracts their contents to the output sysroot.
+# Uses the live sysroot saved by build-packages.sh rather than extracting
+# binary packages directly. The live sysroot is the ground truth: it contains
+# everything installed by emerge including files created by pkg_postinst (which
+# are not present in binary packages).
 
 set -e
 
 CROSS_TARGET="${CROSS_TARGET:-i486-linux-musl}"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
-BINPKG_DIR="${OUTPUT_DIR}/packages"
+LIVE_SYSROOT_DIR="${OUTPUT_DIR}/live-sysroot"
 SYSROOT_DIR="${OUTPUT_DIR}/sysroot"
 
-echo "==> Extracting binary packages to sysroot"
-echo "    Packages: ${BINPKG_DIR}"
-echo "    Sysroot: ${SYSROOT_DIR}"
+echo "==> Copying live sysroot to ${SYSROOT_DIR}"
+echo "    Source: ${LIVE_SYSROOT_DIR}"
+
+if [ ! -d "${LIVE_SYSROOT_DIR}" ] || [ -z "$(ls -A "${LIVE_SYSROOT_DIR}" 2>/dev/null)" ]; then
+    echo "ERROR: Live sysroot not found at ${LIVE_SYSROOT_DIR}"
+    echo "Run 'make build-packages' first."
+    exit 1
+fi
 
 # Create fresh sysroot
 rm -rf "${SYSROOT_DIR}"
 mkdir -p "${SYSROOT_DIR}"
 
-# Create standard directories
-mkdir -p "${SYSROOT_DIR}"/{bin,sbin,usr/bin,usr/sbin,lib,usr/lib,etc}
-
-# Find all binary packages
-# Support both GPKG (.gpkg.tar) and legacy TBZ2 (.tbz2) formats
-ALL_GPKG_FILES=$(find "${BINPKG_DIR}" -name "*.gpkg.tar" -type f 2>/dev/null || true)
-TBZ2_FILES=$(find "${BINPKG_DIR}" -name "*.tbz2" -type f 2>/dev/null || true)
-
-# Deduplicate GPKG packages: when multiple revisions exist (e.g. foo-1.0-1.gpkg.tar,
-# foo-1.0-2.gpkg.tar), keep only the highest revision for each base package.
-declare -A BEST_GPKG
-for f in ${ALL_GPKG_FILES}; do
-    [ -z "$f" ] && continue
-    base=$(basename "$f" .gpkg.tar)
-    # Strip trailing -N revision suffix (e.g. "bash-5.3_p9-2" -> "bash-5.3_p9")
-    if [[ "$base" =~ ^(.*)-([0-9]+)$ ]]; then
-        key="${BASH_REMATCH[1]}"
-        rev="${BASH_REMATCH[2]}"
-    else
-        key="$base"
-        rev=0
-    fi
-    prev_rev="${BEST_GPKG[$key]##*|}"
-    if [ -z "$prev_rev" ] || [ "$rev" -gt "$prev_rev" ]; then
-        BEST_GPKG[$key]="$f|$rev"
-    fi
-done
-
-# Build deduplicated file list
-GPKG_FILES=""
-for key in "${!BEST_GPKG[@]}"; do
-    GPKG_FILES+="${BEST_GPKG[$key]%%|*}"$'\n'
-done
-GPKG_FILES=$(echo "$GPKG_FILES" | sed '/^$/d')
-
-# Count packages (wc -l on empty string gives 0; wc -w would miscount filenames with spaces)
-if [ -n "${GPKG_FILES}" ]; then
-    TOTAL_GPKG=$(echo "${GPKG_FILES}" | wc -l)
-else
-    TOTAL_GPKG=0
-fi
-if [ -n "${TBZ2_FILES}" ]; then
-    TOTAL_TBZ2=$(echo "${TBZ2_FILES}" | wc -l)
-else
-    TOTAL_TBZ2=0
-fi
-
-TOTAL_ALL_GPKG=$(echo "${ALL_GPKG_FILES}" | sed '/^$/d' | wc -l)
-TOTAL_ALL_GPKG=${TOTAL_ALL_GPKG##* }
-if [ "${TOTAL_ALL_GPKG}" -gt "${TOTAL_GPKG}" ]; then
-    echo "==> Found ${TOTAL_ALL_GPKG} GPKG files, deduplicated to ${TOTAL_GPKG} unique packages"
-else
-    echo "==> Found ${TOTAL_GPKG} GPKG packages, ${TOTAL_TBZ2} TBZ2 packages"
-fi
-
-if [ "${TOTAL_GPKG}" -eq 0 ] && [ "${TOTAL_TBZ2}" -eq 0 ]; then
-    echo "WARNING: No binary packages found in ${BINPKG_DIR}"
-    exit 0
-fi
-
-# Temporary extraction directory
-TMPDIR=$(mktemp -d)
-trap "rm -rf ${TMPDIR}" EXIT
-
-# Extract GPKG format packages
-# GPKG structure: outer tar containing image.tar.xz (the actual files)
-for pkg in ${GPKG_FILES}; do
-    [ -z "${pkg}" ] && continue
-
-    PKG_NAME=$(basename "${pkg}" .gpkg.tar)
-    echo "  Extracting: ${PKG_NAME}"
-
-    # Extract outer tar
-    tar -xf "${pkg}" -C "${TMPDIR}"
-
-    # Find and extract the image tarball
-    IMAGE_TAR=$(find "${TMPDIR}" -name "image.tar*" -type f | head -1)
-    if [ -n "${IMAGE_TAR}" ]; then
-        tar -xf "${IMAGE_TAR}" -C "${SYSROOT_DIR}" --strip-components=1
-    else
-        echo "    WARNING: No image.tar found in ${PKG_NAME}"
-    fi
-
-    # Clean up temp files
-    rm -rf "${TMPDIR}"/*
-done
-
-# Extract TBZ2 format packages (legacy format)
-for pkg in ${TBZ2_FILES}; do
-    [ -z "${pkg}" ] && continue
-
-    PKG_NAME=$(basename "${pkg}" .tbz2)
-    echo "  Extracting: ${PKG_NAME}"
-
-    # TBZ2 is a tar.bz2 containing the files directly
-    tar -xjf "${pkg}" -C "${SYSROOT_DIR}"
-done
+rsync -a "${LIVE_SYSROOT_DIR}/" "${SYSROOT_DIR}/"
 
 echo "==> Post-processing sysroot..."
 
-# Strip binaries to reduce size
+# Strip binaries to reduce squashfs size
 echo "  Stripping binaries..."
 find "${SYSROOT_DIR}" -type f -executable \( -name "*" ! -name "*.sh" \) -print0 2>/dev/null | \
     xargs -0 -r strip --strip-all 2>/dev/null || true
@@ -128,43 +39,30 @@ find "${SYSROOT_DIR}" -type f -executable \( -name "*" ! -name "*.sh" \) -print0
 find "${SYSROOT_DIR}" -name "*.a" -print0 2>/dev/null | \
     xargs -0 -r strip --strip-debug 2>/dev/null || true
 
-# Remove documentation (we specified nodoc but just in case)
-echo "  Removing documentation..."
-rm -rf "${SYSROOT_DIR}"/usr/share/{doc,man,info,gtk-doc} 2>/dev/null || true
-rm -rf "${SYSROOT_DIR}"/usr/share/locale 2>/dev/null || true
-
-# Remove development files (not needed for runtime)
-echo "  Removing development files..."
-rm -rf "${SYSROOT_DIR}"/usr/include 2>/dev/null || true
-rm -rf "${SYSROOT_DIR}"/usr/lib/pkgconfig 2>/dev/null || true
-find "${SYSROOT_DIR}" -name "*.la" -delete 2>/dev/null || true
-
-# Flatten usr/bin and usr/sbin to bin and sbin for minimal rootfs
-echo "  Flattening directory structure..."
-if [ -d "${SYSROOT_DIR}/usr/bin" ]; then
-    cp -a "${SYSROOT_DIR}/usr/bin"/* "${SYSROOT_DIR}/bin/" 2>/dev/null || true
-fi
-if [ -d "${SYSROOT_DIR}/usr/sbin" ]; then
-    cp -a "${SYSROOT_DIR}/usr/sbin"/* "${SYSROOT_DIR}/sbin/" 2>/dev/null || true
-fi
-
-# Copy musl dynamic linker from cross-toolchain so dynamically-linked binaries work.
-# Some packages (util-linux, iproute2, dhcpcd, etc.) don't fully honour USE=static
-# and end up as PIE/dynamic binaries referencing /lib/ld-musl-i386.so.1.
-MUSL_INTERP="/usr/${CROSS_TARGET}/lib/ld-musl-i386.so.1"
-if [ -f "${MUSL_INTERP}" ]; then
-    echo "  Copying musl dynamic linker (${MUSL_INTERP})..."
-    mkdir -p "${SYSROOT_DIR}/lib"
-    cp "${MUSL_INTERP}" "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
+# Fix the musl dynamic linker. The crossdev sysroot installs it as a symlink
+# pointing to an absolute crossdev path (/usr/i486-linux-musl/usr/lib/libc.so)
+# which is valid in the build container but dangling on the live system.
+# Replace it with the actual binary so it resolves correctly at runtime.
+# NOTE: several packages ignore USE=static and build as dynamic PIE binaries.
+# This is a known gap - see RELEASE-READINESS.md. Proper static builds are a
+# future project; for now we ship the musl linker so the system boots.
+echo "  Installing musl dynamic linker..."
+MUSL_LIBC="/usr/${CROSS_TARGET}/usr/lib/libc.so"
+if [ -f "${MUSL_LIBC}" ]; then
+    rm -f "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
+    cp "${MUSL_LIBC}" "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
 else
-    echo "  WARNING: musl dynamic linker not found at ${MUSL_INTERP}"
+    echo "  WARNING: musl libc not found at ${MUSL_LIBC}"
     echo "  Dynamically-linked binaries will fail to execute at runtime!"
 fi
 
-# Show results
-echo ""
-echo "==> Sysroot contents:"
-find "${SYSROOT_DIR}" -type f -executable -name "*" 2>/dev/null | head -20
+# Decompress bzip2-compressed man pages.
+# Gentoo installs man pages as .bz2; mandoc is built without libbz2 support
+# and outputs raw bzip2 bytes instead of decompressing them.
+echo "  Decompressing bzip2 man pages..."
+find "${SYSROOT_DIR}/usr/share/man" -name "*.bz2" -print0 2>/dev/null | \
+    xargs -0 -r bunzip2 2>/dev/null || true
+
 
 TOTAL_SIZE=$(du -sh "${SYSROOT_DIR}" | cut -f1)
 TOTAL_FILES=$(find "${SYSROOT_DIR}" -type f | wc -l)
