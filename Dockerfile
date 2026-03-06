@@ -81,6 +81,16 @@ RUN mkdir -p /etc/portage/package.accept_keywords && \
 RUN crossdev --target "${CROSS_TARGET}" --stable --portage --verbose && \
     rm -rf /var/cache/distfiles/*
 
+# Add static-libs USE for the cross-GCC so that libatomic.a (and libgcc.a) are
+# installed alongside the .so versions.  Without this, packages that need
+# libatomic (glib → irssi) can't link statically.
+# Placed AFTER the crossdev layer to preserve its build cache.
+# Only recompiles the GCC runtime library archives, not the full toolchain.
+RUN echo "cross-${CROSS_TARGET}/gcc static-libs" \
+        > /etc/portage/package.use/cross-gcc-static && \
+    emerge --update --newuse "cross-${CROSS_TARGET}/gcc" && \
+    rm -rf /var/cache/distfiles/*
+
 # Install cpio (needed for initramfs creation, after crossdev to preserve layer cache)
 RUN emerge --noreplace app-arch/cpio
 

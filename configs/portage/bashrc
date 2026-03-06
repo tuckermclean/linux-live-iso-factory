@@ -28,13 +28,34 @@ if [[ ${EBUILD_PHASE} == "configure" ]]; then
 	# emesonargs array declared inside the ebuild's src_configure(), which
 	# meson_src_configure() then passes to 'meson setup'.
 	pre_src_configure() {
+		# meson: force static-only library builds so .so link steps never
+		# occur and -static in LDFLAGS never conflicts with -shared.
 		if declare -f meson_src_configure > /dev/null 2>&1; then
 			eval "$(declare -f meson_src_configure | sed '1s/meson_src_configure/_orig_msc/')"
 			meson_src_configure() {
 				emesonargs+=( -Ddefault_library=static )
+				# glib links libmount.a which pulls in blkid symbols; disable
+				# the libmount feature to avoid the transitive dep entirely.
+				[[ ${CATEGORY}/${PN} == "dev-libs/glib" ]] && \
+					emesonargs+=( -Dlibmount=disabled )
 				_orig_msc "$@"
 			}
 			einfo "meson: injected -Ddefault_library=static"
+		fi
+
+		# cmake: prefer .a over .so when finding libraries, and disable
+		# shared library builds.  Prevents cmake from picking up stale .so
+		# files from the sysroot that can't be used with -static LDFLAGS.
+		if declare -f cmake_src_configure > /dev/null 2>&1; then
+			eval "$(declare -f cmake_src_configure | sed '1s/cmake_src_configure/_orig_csc/')"
+			cmake_src_configure() {
+				mycmakeargs+=(
+					-DBUILD_SHARED_LIBS=OFF
+					-DCMAKE_FIND_LIBRARY_SUFFIXES=".a"
+				)
+				_orig_csc "$@"
+			}
+			einfo "cmake: injected BUILD_SHARED_LIBS=OFF, CMAKE_FIND_LIBRARY_SUFFIXES=.a"
 		fi
 	}
 
@@ -124,6 +145,28 @@ print("nethack: util/Makefile patched OK")
 PYEOF
 
 		einfo "nethack: util/Makefile patched successfully"
+	}
+fi
+
+# After every package installs, remove .so files from the sysroot.
+#
+# Packages (e.g. ncurses) always install both .so and .a regardless of
+# --disable-shared in EXTRA_ECONF, because their ebuilds manage shared/static
+# independently.  cmake and meson then find the .so via pkg-config and pass
+# its full path to the linker, which refuses it with -static in LDFLAGS.
+#
+# Portage guarantees that a package's postinst completes before any dependent
+# package starts configure, so removing .so files here is safe — by the time
+# cmatrix (for example) runs cmake, ncurses .so files are already gone and
+# cmake finds only libncursesw.a.
+if [[ ${EBUILD_PHASE} == "postinst" ]]; then
+	post_pkg_postinst() {
+		local sysroot="/usr/${CHOST:-i486-linux-musl}"
+		find "${sysroot}/usr/lib" "${sysroot}/lib" \
+			\( -name "*.so" -o -name "*.so.*" \) -type f -delete 2>/dev/null
+		find "${sysroot}/usr/lib" "${sysroot}/lib" \
+			-name "*.so*" -xtype l -delete 2>/dev/null
+		true
 	}
 fi
 
