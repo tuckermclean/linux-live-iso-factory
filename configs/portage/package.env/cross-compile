@@ -14,16 +14,10 @@
 # ignore these variables harmlessly.
 */*  static.conf
 
-# Packages that build .so files as part of their own build and use a build
-# system that does not respect --disable-shared (meson, plain Makefiles).
-# no-static-ldflags.conf is applied AFTER static.conf and strips -static so
-# the .so link steps don't see it.  These packages still carry USE=static-libs
-# (global) so .a archives exist for their dependents to link against.
-dev-libs/glib        no-static-ldflags.conf
-dev-lang/lua         no-static-ldflags.conf
-
-# coreutils builds libstdbuf.so (a dlopen plugin for the stdbuf utility).
-# stdbuf is useless on a static system anyway; --disable-stdbuf removes it.
+# coreutils: --disable-stdbuf is unrecognised by coreutils configure; the
+# libstdbuf.so build is suppressed by a post_src_configure Makefile patch
+# in bashrc instead.  disable-stdbuf.conf is kept as a belt-and-suspenders
+# hint but the real fix lives in bashrc.
 sys-apps/coreutils   disable-stdbuf.conf
 
 # Packages using gnulib/librecode that reference libiconv_open but omit -liconv

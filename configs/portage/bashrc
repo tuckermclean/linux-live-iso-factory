@@ -16,12 +16,49 @@
 # script exists in WORKDIR (e.g. cmake/meson packages) the find returns
 # nothing and the loop is a no-op.
 if [[ ${EBUILD_PHASE} == "configure" ]]; then
+	# Inject -Ddefault_library=static into every meson configure call.
+	#
+	# With -static in global LDFLAGS, any package that also links a .so via
+	# meson fails with "undefined reference to main" (GCC pulls in crt1.o when
+	# -static is present, even for -shared link steps).  Telling meson to build
+	# only static archives eliminates all .so link steps entirely, so -static
+	# never conflicts with -shared.
+	#
+	# Uses bash dynamic scoping: emesonargs+=() here appends to the local
+	# emesonargs array declared inside the ebuild's src_configure(), which
+	# meson_src_configure() then passes to 'meson setup'.
+	pre_src_configure() {
+		if declare -f meson_src_configure > /dev/null 2>&1; then
+			eval "$(declare -f meson_src_configure | sed '1s/meson_src_configure/_orig_msc/')"
+			meson_src_configure() {
+				emesonargs+=( -Ddefault_library=static )
+				_orig_msc "$@"
+			}
+			einfo "meson: injected -Ddefault_library=static"
+		fi
+	}
+
 	post_src_configure() {
+		# Patch libtool scripts so -static actually reaches the linker.
 		local lt
 		while IFS= read -r -d '' lt; do
 			einfo "Patching libtool for full static linking: ${lt}"
 			sed -i 's/prefer_static_libs=built/prefer_static_libs=built\n\tcompile_command="$compile_command $link_static_flag"\n\tfinalize_command="$finalize_command $link_static_flag"/' "${lt}"
 		done < <(find "${WORKDIR}" -name libtool -type f -print0 2>/dev/null)
+
+		# coreutils: remove libstdbuf.so from the generated Makefile.
+		# --disable-stdbuf is unrecognised by coreutils configure (it
+		# autodetects stdbuf via dlopen on Linux).  The .so can't be linked
+		# with -static in LDFLAGS (-static + -shared pulls in crt1.o →
+		# "undefined reference to main").  Removing the target from the
+		# Makefile is the only reliable way to skip it.
+		if [[ ${CATEGORY}/${PN} == "sys-apps/coreutils" ]]; then
+			local mf="${S}/Makefile"
+			if [[ -f ${mf} ]]; then
+				einfo "coreutils: removing src/libstdbuf.so from Makefile"
+				sed -i 's|src/libstdbuf\.so||g' "${mf}"
+			fi
+		fi
 	}
 
 fi
