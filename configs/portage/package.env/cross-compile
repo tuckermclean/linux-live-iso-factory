@@ -25,3 +25,7 @@ dev-lang/lua         no-static-ldflags.conf
 # coreutils builds libstdbuf.so (a dlopen plugin for the stdbuf utility).
 # stdbuf is useless on a static system anyway; --disable-stdbuf removes it.
 sys-apps/coreutils   disable-stdbuf.conf
+
+# Packages using gnulib/librecode that reference libiconv_open but omit -liconv
+app-arch/tar             libiconv.conf
+games-misc/fortune-mod   libiconv.conf
