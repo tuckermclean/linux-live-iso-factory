@@ -114,7 +114,7 @@ ensure-dirs:
 # Build the Docker image
 build-image:
 	@echo "==> Building Docker image '$(IMAGE_NAME)'"
-	docker build -t $(IMAGE_NAME) .
+	docker buildx build --cache-from $(IMAGE_NAME) --cache-to type=inline -t $(IMAGE_NAME) .
 
 # Ensure portage volume exists
 ensure-volume:
