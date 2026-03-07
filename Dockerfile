@@ -128,17 +128,23 @@ COPY container-Makefile /Makefile
 
 WORKDIR /
 
-# Pre-install cmake on the host so BDEPEND resolution doesn't select cmake-9999
-# (the live git ebuild), which creates a circular dep via sphinx→pillow→libjpeg-turbo→cmake.
-# fortune-mod cross-compile requires a native 'strfile' binary in PATH — install the
-# host package so strfile is available without bashrc hackery.
+# Pre-install host tools needed by cross-compilation builds:
+#   cmake:      prevents BDEPEND from selecting cmake-9999 (live git ebuild), which
+#               creates a circular dep via sphinx→pillow→libjpeg-turbo→cmake.
+#   fortune-mod: cross-compile requires native 'strfile' binary in PATH.
+#   mandoc:     host makewhatis used by bashrc pkg_postinst override to build whatis DB.
+#   ncurses:    cross-compile requires native 'tic' (terminfo compiler) in PATH to
+#               install the terminfo database (e.g. linux, vt100) into the sysroot.
+#               Without it, tic is an i486 binary that can't run on the build host and
+#               the terminfo database is never installed — breaking all ncurses programs.
 # Must come after all crossdev steps to avoid busting the toolchain layer cache.
 # Create groups needed by game package preinst phases (e.g. nethack fowners root:gamestat)
 RUN groupadd -g 35 games 2>/dev/null || true && \
     groupadd -g 36 gamestat 2>/dev/null || true
 
 RUN unset BUILD_DIR && \
-    emerge --noreplace dev-build/cmake games-misc/fortune-mod app-text/mandoc && \
+    emerge --noreplace dev-build/cmake games-misc/fortune-mod app-text/mandoc \
+        sys-libs/ncurses && \
     rm -rf /var/cache/distfiles/*
 
 # Default command shows help
