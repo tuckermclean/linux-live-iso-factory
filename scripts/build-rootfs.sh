@@ -70,6 +70,24 @@ install_sysroot() {
         local sysroot_files=$(find "$sysroot" -type f | wc -l)
         log_info "Sysroot overlay applied (${sysroot_files} files)"
 
+        # Fix terminfo case collision caused by Windows/NTFS case-insensitivity.
+        # The terminfo database uses both uppercase dirs (L/Linux_console,
+        # A/Apple_Terminal) and lowercase dirs (l/linux, a/ansi). On NTFS these
+        # silently collapse into one directory under the uppercase name, so the
+        # squashfs ends up with L/ but no l/, and ncurses can't find l/linux.
+        # Create lowercase symlinks for any uppercase-only terminfo subdirs so
+        # that e.g. l -> L makes l/linux reachable. On a native Linux build the
+        # lowercase dirs already exist so this loop is a no-op.
+        local tdir="$ROOTFS_DIR/usr/share/terminfo"
+        if [ -d "$tdir" ]; then
+            for dir in "$tdir"/[A-Z]; do
+                [ -d "$dir" ] || continue
+                local lower
+                lower=$(basename "$dir" | tr 'A-Z' 'a-z')
+                [ -e "$tdir/$lower" ] || ln -s "$(basename "$dir")" "$tdir/$lower"
+            done
+        fi
+
         # Copy bash skel files to root home (sourced by login/subshells)
         cp -a "$ROOTFS_DIR"/etc/skel/.bash* "$ROOTFS_DIR"/root/ 2>/dev/null || true
     else
