@@ -32,8 +32,8 @@ LOAD_AVG ?= $(shell nproc)
 PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG)
 
 # Named volumes for persistent build state
-BUILD_VOLUME := i486-linux-build
-PORTAGE_VOLUME := i486-portage-cache
+BUILD_VOLUME := monolith-build
+PORTAGE_VOLUME := monolith-portage-cache
 
 # Bind mounts
 CONFIGS_MOUNT := -v $(PROJECT_DIR)/configs:/configs
