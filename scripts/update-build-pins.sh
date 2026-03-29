@@ -3,7 +3,7 @@
 # update-build-pins.sh - Update Dockerfile build pins
 #
 # Manages the two version pins that live outside portage:
-#   1. ARG STAGE3_DATE  — Gentoo stage3 amd64-multilib base image date tag
+#   1. ARG STAGE3_DATE  — Gentoo stage3 amd64-openrc base image date tag
 #   2. ENV SOURCE_DATE_EPOCH — Unix epoch derived from STAGE3_DATE
 #
 # Runs on the HOST (no Docker required).
@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKERFILE="${SCRIPT_DIR}/../Dockerfile"
 
 # Docker Hub API endpoint for gentoo/stage3 tags
-DOCKERHUB_TAGS_URL="https://hub.docker.com/v2/repositories/gentoo/stage3/tags?page_size=100&ordering=last_updated"
+DOCKERHUB_TAGS_URL="https://hub.docker.com/v2/repositories/gentoo/stage3/tags?page_size=100&ordering=last_updated&name=amd64-openrc-"
 
 usage() {
     echo "Usage: $0 <command>"
@@ -42,12 +42,12 @@ fetch_latest_stage3_date() {
             return 1
         }
 
-        # Extract tags matching amd64-multilib-YYYYMMDDTHHMMSSz pattern
+        # Extract tags matching amd64-openrc-YYYYMMDD pattern
         local page_latest
         page_latest=$(python3 -c "
 import json, sys, re
 data = json.load(sys.stdin)
-pattern = re.compile(r'^amd64-multilib-(\d{8}T\d{6}Z)$')
+pattern = re.compile(r'^amd64-openrc-(\d{8})$')
 dates = []
 for tag in data.get('results', []):
     m = pattern.match(tag['name'])
@@ -76,16 +76,15 @@ print(data.get('next') or '')
     echo "${latest_date}"
 }
 
-# Convert YYYYMMDDTHHMMSSZ date to Unix epoch
+# Convert YYYYMMDD date to Unix epoch (midnight UTC)
 date_to_epoch() {
     local datestr="$1"
-    # Format: 20250101T170557Z → 2025-01-01T17:05:57Z
-    local formatted
-    formatted=$(echo "${datestr}" | sed 's/\([0-9]\{8\}\)T\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)Z/\1T\2:\3:\4Z/')
+    # Format: 20260323 → 2026-03-23T00:00:00Z
+    local formatted="${datestr:0:4}-${datestr:4:2}-${datestr:6:2}T00:00:00Z"
     date -d "${formatted}" +%s 2>/dev/null || \
     python3 -c "
 from datetime import datetime, timezone
-dt = datetime.strptime('${datestr}', '%Y%m%dT%H%M%SZ').replace(tzinfo=timezone.utc)
+dt = datetime.strptime('${datestr}', '%Y%m%d').replace(tzinfo=timezone.utc)
 print(int(dt.timestamp()))
 "
 }
@@ -109,7 +108,7 @@ cmd_check() {
     current_date=$(get_current_stage3_date)
     current_epoch=$(get_current_epoch)
 
-    echo "  Fetching latest stage3 amd64-multilib tag from Docker Hub..."
+    echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
     latest_date=$(fetch_latest_stage3_date)
 
     if [[ -z "${latest_date}" ]]; then
@@ -138,7 +137,7 @@ cmd_update() {
     local current_date latest_date new_epoch
     current_date=$(get_current_stage3_date)
 
-    echo "  Fetching latest stage3 amd64-multilib tag from Docker Hub..."
+    echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
     latest_date=$(fetch_latest_stage3_date)
 
     if [[ -z "${latest_date}" ]]; then

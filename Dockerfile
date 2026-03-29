@@ -8,14 +8,14 @@
 #   make build-packages     # Cross-compile all packages (kernel, busybox, userland)
 #   make iso                # Build initrd + rootfs + ISO from compiled packages
 
-ARG STAGE3_DATE=20260304T170557Z
-FROM gentoo/stage3:amd64-multilib-${STAGE3_DATE}
+ARG STAGE3_DATE=20260323
+FROM gentoo/stage3:amd64-openrc-${STAGE3_DATE}
 
 LABEL maintainer="monolith-builder"
 LABEL description="Gentoo crossdev environment for i486-linux-musl + ISO tools"
 
 # Reproducibility: clamp all build output timestamps to the stage3 date
-ENV SOURCE_DATE_EPOCH=1772643957
+ENV SOURCE_DATE_EPOCH=1774224000
 
 ENV CROSS_TARGET=i486-linux-musl
 ENV CROSS_COMPILE=i486-linux-musl-
