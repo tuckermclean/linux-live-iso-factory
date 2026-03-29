@@ -5,6 +5,9 @@
 # Global static flags (applied via make.conf, but can be overridden here)
 */* static static-libs
 
+# BusyBox — static with savedconfig (savedconfig reads from configs/portage/savedconfig/sys-apps/busybox)
+sys-apps/busybox savedconfig static
+
 # app-alternatives packages need an explicit implementation choice since
 # our global USE="-*" strips their defaults.
 app-alternatives/* reference

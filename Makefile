@@ -4,11 +4,10 @@
 # Usage:
 #   make build-image         - Build the Docker image (do this first)
 #   make sync-portage        - Sync Gentoo portage tree
-#   make build-packages      - Cross-compile Gentoo packages
+#   make build-packages      - Cross-compile all packages (kernel, busybox, userland)
 #   make extract             - Extract binpkgs to output/sysroot/
-#   make build               - Build kernel + busybox
-#   make iso                 - Create bootable ISO (full pipeline)
-#   make test                - Test ISO in QEMU (runs on host)
+#   make iso                 - Create bootable ISO (initrd + rootfs + iso)
+#   make test                - Boot ISO in QEMU (runs on host)
 #   make shell               - Drop into container shell
 
 SHELL := /bin/bash
@@ -18,6 +17,14 @@ IMAGE_NAME := i486-linux-builder
 
 # Get absolute path to this directory
 PROJECT_DIR := $(shell pwd)
+
+# Image version derived from the pinned stage3 date in Dockerfile
+IMAGE_VERSION := $(shell grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)
+
+# Container registry — set REGISTRY to push/pull the builder image
+# e.g.: make push-image REGISTRY=ghcr.io/youruser
+REGISTRY ?=
+REGISTRY_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME),$(IMAGE_NAME))
 
 # Parallelism settings (passed to container)
 JOBS ?= $(shell nproc)
@@ -33,7 +40,6 @@ CONFIGS_MOUNT := -v $(PROJECT_DIR)/configs:/configs
 OUTPUT_MOUNT := -v $(PROJECT_DIR)/output:/output
 SCRIPTS_MOUNT := -v $(PROJECT_DIR)/scripts:/scripts:ro
 ROOTFS_MOUNT := -v $(PROJECT_DIR)/rootfs:/rootfs:ro
-PATCHES_MOUNT := -v $(PROJECT_DIR)/patches:/patches:ro
 
 # Volume mounts
 BUILD_MOUNT := -v $(BUILD_VOLUME):/build
@@ -45,20 +51,22 @@ LOGS_MOUNT := -v $(PROJECT_DIR)/output/portage-logs:/var/log/portage
 # Common docker run options
 DOCKER_RUN := docker run --rm \
 	$(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(SCRIPTS_MOUNT) \
-	$(ROOTFS_MOUNT) $(PATCHES_MOUNT) $(LOGS_MOUNT) \
+	$(ROOTFS_MOUNT) $(LOGS_MOUNT) \
 	$(BUILD_MOUNT) $(PORTAGE_MOUNT) \
 	$(PARALLEL_ENV)
 DOCKER_RUN_IT := docker run --rm -it \
 	$(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(SCRIPTS_MOUNT) \
-	$(ROOTFS_MOUNT) $(PATCHES_MOUNT) $(LOGS_MOUNT) \
+	$(ROOTFS_MOUNT) $(LOGS_MOUNT) \
 	$(BUILD_MOUNT) $(PORTAGE_MOUNT) \
 	$(PARALLEL_ENV)
 
-.PHONY: help build-image sync-portage build-packages build-packages-resume extract \
-        build build-kernel build-busybox menuconfig-kernel menuconfig-busybox \
-        iso all rootfs test shell \
-        check-updates update-versions list-packages show-failed \
-        clean clean-build clean-all ensure-dirs
+.PHONY: help build-image push-image pull-image \
+        sync-portage build-packages build-packages-resume extract \
+        menuconfig-kernel menuconfig-busybox \
+        iso all test shell \
+        check-updates update-versions update-build-pins update-all \
+        list-packages show-failed \
+        clean clean-build clean-all ensure-dirs ensure-volume
 
 help:
 	@echo "=========================================="
@@ -66,24 +74,23 @@ help:
 	@echo "=========================================="
 	@echo ""
 	@echo "Docker:"
-	@echo "  build-image          - Build the Docker image (do this first)"
+	@echo "  build-image          - Build the Docker image (factory, no sources)"
+	@echo "  push-image           - Push image to registry (set REGISTRY=...)"
+	@echo "  pull-image           - Pull image from registry (set REGISTRY=...)"
 	@echo "  shell                - Drop into container shell"
 	@echo ""
-	@echo "Packages (Gentoo cross-compilation):"
+	@echo "Packages (Gentoo cross-compilation — kernel, busybox, userland):"
 	@echo "  sync-portage          - Sync portage tree in cache volume"
-	@echo "  build-packages        - Cross-compile packages (JOBS=$(JOBS))"
+	@echo "  build-packages        - Cross-compile all packages (JOBS=$(JOBS))"
 	@echo "  build-packages-resume - Resume build, skip already-built"
 	@echo "  extract               - Copy live sysroot to output/sysroot/"
 	@echo ""
-	@echo "Kernel/BusyBox (initrd only; rootfs uses Gentoo packages):"
-	@echo "  build                - Build kernel + busybox"
-	@echo "  build-kernel         - Build kernel only"
-	@echo "  build-busybox        - Build busybox only (used in initrd)"
+	@echo "Configuration:"
 	@echo "  menuconfig-kernel    - Configure kernel interactively"
-	@echo "  menuconfig-busybox   - Configure busybox interactively"
+	@echo "  menuconfig-busybox   - Configure BusyBox interactively"
 	@echo ""
 	@echo "ISO:"
-	@echo "  iso                  - Create bootable ISO"
+	@echo "  iso                  - Create bootable ISO (initrd + rootfs + iso)"
 	@echo "  all                  - Full build: image → packages → extract → iso"
 	@echo ""
 	@echo "Testing:"
@@ -92,6 +99,8 @@ help:
 	@echo "Version Management:"
 	@echo "  check-updates        - Show available updates vs pinned versions"
 	@echo "  update-versions      - Update versions.lock with latest versions"
+	@echo "  update-build-pins    - Update stage3 date + epoch in Dockerfile"
+	@echo "  update-all           - Update everything (build pins + package versions)"
 	@echo "  list-packages        - Show packages in world file"
 	@echo "  show-failed          - Show failed packages from last build"
 	@echo ""
@@ -105,16 +114,15 @@ help:
 	@echo "  make sync-portage    - Sync portage tree (once, or to get package updates)"
 	@echo "  make all             - Build everything and produce boot.iso"
 	@echo "  make test            - Boot ISO in QEMU"
+	@echo ""
+	@echo "Registry (optional):"
+	@echo "  REGISTRY=ghcr.io/user make push-image   - Push to registry"
+	@echo "  REGISTRY=ghcr.io/user make pull-image   - Pull from registry"
 
 # Ensure output directories exist
 ensure-dirs:
 	@mkdir -p $(PROJECT_DIR)/output/{packages,logs,sysroot,portage-logs}
 	@mkdir -p $(PROJECT_DIR)/configs
-
-# Build the Docker image
-build-image:
-	@echo "==> Building Docker image '$(IMAGE_NAME)'"
-	docker buildx build --cache-from $(IMAGE_NAME) --cache-to type=inline -t $(IMAGE_NAME) .
 
 # Ensure portage volume exists
 ensure-volume:
@@ -122,12 +130,42 @@ ensure-volume:
 		(echo "==> Creating portage cache volume" && \
 		 docker volume create $(PORTAGE_VOLUME))
 
+# Build the Docker image (pure factory — toolchain only, no sources)
+build-image:
+	@echo "==> Building Docker image '$(IMAGE_NAME)' (stage3: $(IMAGE_VERSION))"
+	docker buildx build --cache-from $(IMAGE_NAME) --cache-to type=inline \
+		-t $(IMAGE_NAME) \
+		$(if $(REGISTRY),-t $(REGISTRY_IMAGE):$(IMAGE_VERSION) -t $(REGISTRY_IMAGE):latest,) \
+		.
+
+# Push builder image to registry
+push-image: build-image
+	@if [ -z "$(REGISTRY)" ]; then \
+		echo "Error: set REGISTRY=<registry/repo> — e.g. REGISTRY=ghcr.io/youruser make push-image"; \
+		exit 1; \
+	fi
+	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(IMAGE_VERSION)
+	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):latest
+	docker push $(REGISTRY_IMAGE):$(IMAGE_VERSION)
+	docker push $(REGISTRY_IMAGE):latest
+	@echo "==> Pushed $(REGISTRY_IMAGE):$(IMAGE_VERSION) and :latest"
+
+# Pull builder image from registry and tag locally
+pull-image:
+	@if [ -z "$(REGISTRY)" ]; then \
+		echo "Error: set REGISTRY=<registry/repo> — e.g. REGISTRY=ghcr.io/youruser make pull-image"; \
+		exit 1; \
+	fi
+	docker pull $(REGISTRY_IMAGE):$(IMAGE_VERSION)
+	docker tag $(REGISTRY_IMAGE):$(IMAGE_VERSION) $(IMAGE_NAME)
+	@echo "==> Pulled and tagged as $(IMAGE_NAME)"
+
 # Sync portage tree in volume
 sync-portage: ensure-volume ensure-dirs
 	@echo "==> Syncing portage tree"
 	$(DOCKER_RUN) $(IMAGE_NAME) emerge --sync
 
-# Build all packages (with parallel jobs)
+# Build all packages: kernel, busybox, and userland (with parallel jobs)
 build-packages: ensure-volume ensure-dirs
 	@echo "==> Building packages ($(JOBS) parallel jobs)"
 	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/build-packages.sh
@@ -142,43 +180,27 @@ extract: ensure-dirs
 	@echo "==> Extracting packages to sysroot"
 	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/extract-packages.sh
 
-# Build kernel and busybox
-build: ensure-dirs
-	@echo "==> Building kernel and busybox"
-	$(DOCKER_RUN) $(IMAGE_NAME) make build
-
-# Build kernel only
-build-kernel: ensure-dirs
-	@echo "==> Building kernel"
-	$(DOCKER_RUN) $(IMAGE_NAME) make build-kernel
-
-# Build busybox only
-build-busybox: ensure-dirs
-	@echo "==> Building busybox"
-	$(DOCKER_RUN) $(IMAGE_NAME) make build-busybox
-
-# Interactive kernel configuration
-menuconfig-kernel: ensure-dirs
+# Interactive kernel menuconfig — saves result to configs/kernel.config
+menuconfig-kernel: ensure-volume ensure-dirs
 	@echo "==> Running kernel menuconfig"
-	$(DOCKER_RUN_IT) $(IMAGE_NAME) make menuconfig-kernel
+	$(DOCKER_RUN_IT) $(IMAGE_NAME) emerge --config sys-kernel/linux-live
 
-# Interactive busybox configuration
-menuconfig-busybox: ensure-dirs
-	@echo "==> Running busybox menuconfig"
-	$(DOCKER_RUN_IT) $(IMAGE_NAME) make menuconfig-busybox
+# Interactive BusyBox menuconfig — saves result to configs/portage/savedconfig/sys-apps/busybox
+menuconfig-busybox: ensure-volume ensure-dirs
+	@echo "==> Running BusyBox menuconfig"
+	$(DOCKER_RUN_IT) $(IMAGE_NAME) i486-linux-musl-emerge --config sys-apps/busybox
 
-# Build root filesystem (squashfs)
-rootfs: ensure-dirs
-	@echo "==> Building root filesystem"
-	$(DOCKER_RUN) $(IMAGE_NAME) make rootfs
-
-# Create bootable ISO (full pipeline: build + initrd + rootfs + iso)
+# Create bootable ISO (initrd + rootfs + iso)
 iso: ensure-dirs
+	@echo "==> Building initramfs"
+	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/build-initrd.sh
+	@echo "==> Building root filesystem"
+	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/build-rootfs.sh
 	@echo "==> Creating bootable ISO"
-	$(DOCKER_RUN) $(IMAGE_NAME) make iso
+	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/build-iso.sh
 
 # Build everything: image → packages → extract → iso
-all: build-image build-packages extract iso
+all: build-image sync-portage build-packages extract iso
 
 # Test ISO in QEMU (on host)
 test:
@@ -195,16 +217,24 @@ test:
 		-nographic \
 		-serial mon:stdio
 
-# Check for available updates
+# Check for available updates (portage packages)
 check-updates: ensure-volume ensure-dirs
 	@echo "==> Checking for package updates"
 	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/update-versions.sh check
 
-# Update versions.lock with latest versions
-# The script writes directly to /configs/portage/versions.lock (bind-mounted)
+# Update versions.lock with latest portage package versions
 update-versions: ensure-volume ensure-dirs
 	@echo "==> Updating versions.lock"
 	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/update-versions.sh update
+
+# Update stage3 date + SOURCE_DATE_EPOCH in Dockerfile (runs on host, no Docker needed)
+update-build-pins:
+	@echo "==> Updating Dockerfile build pins (stage3 date, epoch)"
+	$(PROJECT_DIR)/scripts/update-build-pins.sh update
+
+# Update everything: Dockerfile pins + portage package versions
+update-all: update-build-pins update-versions
+	@echo "==> All pins updated. Run 'make build-image' to rebuild the factory."
 
 # List packages in world file
 list-packages:

@@ -5,6 +5,8 @@
 #
 # Updated: 2026-03-04T05:34:40-00:00
 
+sys-kernel/linux-live:6.12.11:0
+sys-apps/busybox:1.36.1:0
 app-shells/bash:5.3_p9:0
 net-misc/dropbear:2025.89:0
 net-misc/curl:8.18.0:0

@@ -1,6 +1,0 @@
-# Placeholder for cross-compilation patches
-#
-# Add patches here for packages that need fixes for i486-linux-musl.
-# Patches should be named: category_package_description.patch
-#
-# Example: net-misc_curl_musl-static-fix.patch

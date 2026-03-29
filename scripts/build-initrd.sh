@@ -18,8 +18,9 @@ INITRD_DIR="${INITRD_DIR:-/initrd}"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 ROOTFS_SKELETON="/rootfs"
 
-# Input files
-BUSYBOX_BIN="${OUTPUT_DIR}/busybox"
+# Input files — busybox is cross-compiled by portage into the sysroot
+SYSROOT="/usr/${CROSS_TARGET:-i486-linux-musl}"
+BUSYBOX_BIN="${OUTPUT_DIR}/sysroot/bin/busybox"
 
 # Output file
 INITRD_IMAGE="${OUTPUT_DIR}/initrd.img"
@@ -45,7 +46,7 @@ log_error() {
 # Check prerequisites
 if [ ! -f "$BUSYBOX_BIN" ]; then
     log_error "BusyBox binary not found at $BUSYBOX_BIN"
-    log_error "Run 'make build-busybox' first"
+    log_error "Run 'make build-packages' first"
     exit 1
 fi
 

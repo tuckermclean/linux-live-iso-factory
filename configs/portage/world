@@ -5,6 +5,12 @@
 #
 # Add packages here and run: make build-packages
 
+# Kernel (cross-compiled via minlinux overlay ebuild)
+sys-kernel/linux-live
+
+# BusyBox (for initramfs — cross-compiled with savedconfig)
+sys-apps/busybox
+
 # Shells
 app-shells/bash
 app-shells/dash

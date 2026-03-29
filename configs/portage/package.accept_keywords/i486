@@ -6,6 +6,5 @@
 # Accept unstable for all our target packages
 */* ~x86
 
-# Specific version keywords if needed
-# app-shells/bash ~x86
-# net-misc/dropbear ~x86
+# minlinux overlay packages — accept all keywords (local overlay, no arch support matrix)
+sys-kernel/linux-live **
