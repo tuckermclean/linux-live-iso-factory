@@ -150,7 +150,7 @@ SAY
 
 # Main boot entry (text mode)
 LABEL linux
-    MENU LABEL Boot Minimal Linux (text)
+    MENU LABEL Boot The Monolith
     KERNEL /boot/vmlinuz
     APPEND initrd=/boot/initrd.img quiet
 
@@ -231,7 +231,7 @@ XORRISO_CMD=(
     xorriso -as mkisofs
     -o "$ISO_TMP"
     -R -J                           # Rock Ridge + Joliet extensions
-    -V "MINLINUX"                   # Volume ID
+    -V "MONOLITH"                   # Volume ID
     -b isolinux/isolinux.bin        # BIOS boot image
     -c isolinux/boot.cat            # Boot catalog
     -no-emul-boot                   # No floppy emulation

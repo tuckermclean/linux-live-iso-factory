@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# build-initrd.sh - Create initramfs for minimal Linux
+# build-initrd.sh - Create initramfs for The Monolith
 #
 # This script creates a minimal initramfs (initial RAM filesystem) that:
 # - Provides early userspace with BusyBox

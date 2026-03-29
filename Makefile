@@ -13,7 +13,7 @@
 SHELL := /bin/bash
 
 # Docker image name
-IMAGE_NAME := i486-linux-builder
+IMAGE_NAME := monolith-builder
 
 # Get absolute path to this directory
 PROJECT_DIR := $(shell pwd)
@@ -70,7 +70,7 @@ DOCKER_RUN_IT := docker run --rm -it \
 
 help:
 	@echo "=========================================="
-	@echo "  i486 Linux Build System"
+	@echo "  The Monolith"
 	@echo "=========================================="
 	@echo ""
 	@echo "Docker:"

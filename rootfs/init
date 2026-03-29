@@ -211,7 +211,7 @@ if [ "$OVERLAY_MODE" = "1" ]; then
 
     # Also try looking in /dev/disk/by-label if available
     if [ -z "$BOOT_MEDIA" ] && [ -d /dev/disk/by-label ]; then
-        for label in MINLINUX LIVECD; do
+        for label in MONOLITH LIVECD; do
             dev="/dev/disk/by-label/$label"
             [ -e "$dev" ] || continue
             dbg "Trying label $label..."

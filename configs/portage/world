@@ -5,7 +5,7 @@
 #
 # Add packages here and run: make build-packages
 
-# Kernel (cross-compiled via minlinux overlay ebuild)
+# Kernel (cross-compiled via monolith overlay ebuild)
 sys-kernel/linux-live
 
 # BusyBox (for initramfs — cross-compiled with savedconfig)

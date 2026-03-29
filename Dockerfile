@@ -14,7 +14,7 @@ FROM gentoo/stage3:amd64-multilib-${STAGE3_DATE}
 # Reproducibility: clamp all build output timestamps to the stage3 date
 ENV SOURCE_DATE_EPOCH=1772643957
 
-LABEL maintainer="linux-live-iso-factory"
+LABEL maintainer="monolith-builder"
 LABEL description="Gentoo crossdev environment for i486-linux-musl + ISO tools"
 
 # Target architecture
@@ -68,17 +68,17 @@ RUN if [ -f /etc/portage/repos.conf ]; then \
     printf '[crossdev]\nlocation = /var/db/repos/crossdev\npriority = 10\nmasters = gentoo\nauto-sync = no\n' \
         > /etc/portage/repos.conf/crossdev.conf
 
-# Register the minlinux overlay (configs bind-mounted at /configs at runtime)
+# Register the monolith overlay (configs bind-mounted at /configs at runtime)
 # The overlay lives at /configs/overlay — registered here so portage finds it at runtime
-RUN printf '[minlinux]\nlocation = /configs/overlay\npriority = 20\nmasters = gentoo\nauto-sync = no\n' \
-    > /etc/portage/repos.conf/minlinux.conf
+RUN printf '[monolith]\nlocation = /configs/overlay\npriority = 20\nmasters = gentoo\nauto-sync = no\n' \
+    > /etc/portage/repos.conf/monolith.conf
 
-# Accept all keywords for cross packages and minlinux overlay
+# Accept all keywords for cross packages and monolith overlay
 RUN mkdir -p /etc/portage/package.accept_keywords && \
     echo '*/* **' > /etc/portage/package.accept_keywords/crossdev-all && \
-    echo 'sys-kernel/linux-live **' > /etc/portage/package.accept_keywords/minlinux
+    echo 'sys-kernel/linux-live **' > /etc/portage/package.accept_keywords/monolith
 
-# Disable Manifest verification for the minlinux overlay (local overlay, no upstream signing)
+# Disable Manifest verification for the monolith overlay (local overlay, no upstream signing)
 RUN echo 'FEATURES="${FEATURES} -strict"' >> /etc/portage/make.conf
 
 # Build the crossdev toolchain (cached as a Docker layer)
