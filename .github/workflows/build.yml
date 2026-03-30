@@ -38,6 +38,9 @@ jobs:
   build-image:
     runs-on: ubuntu-latest
     needs: changes
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image-changed: ${{ steps.check-hash.outputs.changed }}
     steps:
