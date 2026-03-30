@@ -139,34 +139,44 @@ CROSSDEV_CONTAINER := monolith-crossdev-build
 # Build the Docker image (pure factory — toolchain only, no sources)
 # Crossdev runs as `docker run` so portage logs always land in output/portage-logs/.
 # The final image is produced by `docker commit` from the completed crossdev container.
+# The base-tools image ID is stamped as a label on the final image. On subsequent
+# runs, if that label matches the current base-tools ID, the crossdev step is skipped.
 build-image: ensure-dirs
 	@echo "==> Building base-tools stage (stage3: $(IMAGE_VERSION))"
 	docker buildx build --target base-tools \
 		--cache-from $(BASE_TOOLS_IMAGE) --cache-to type=inline \
 		-t $(BASE_TOOLS_IMAGE) \
 		.
-	@echo "==> Building crossdev toolchain (logs → output/portage-logs/)"
-	@docker rm -f $(CROSSDEV_CONTAINER) 2>/dev/null || true
-	docker run --name $(CROSSDEV_CONTAINER) \
-		$(LOGS_MOUNT) \
-		$(BASE_TOOLS_IMAGE) \
-		bash -c 'set -e && \
-		    crossdev --target "$$CROSS_TARGET" --stable --gcc 15 --portage --verbose && \
-		    echo "cross-$$CROSS_TARGET/gcc static-libs" \
-		        > /etc/portage/package.use/cross-gcc-static && \
-		    emerge --update --newuse "cross-$$CROSS_TARGET/gcc" && \
-		    rm -rf /var/cache/distfiles/* && \
-		    mkdir -p \
-		        /usr/$$CROSS_TARGET/etc/portage/{package.use,package.accept_keywords,package.mask,package.env,env} \
-		        /build /configs /output /initrd'
-	@echo "==> Committing $(IMAGE_NAME)"
-	docker commit \
-		--change 'ENV BUILD_DIR=/build' \
-		--change 'ENV CONFIGS_DIR=/configs' \
-		--change 'ENV OUTPUT_DIR=/output' \
-		$(CROSSDEV_CONTAINER) $(IMAGE_NAME)
-	@docker rm $(CROSSDEV_CONTAINER)
-	@echo "==> Image $(IMAGE_NAME) ready"
+	@BASE_ID=$$(docker inspect --format='{{.Id}}' $(BASE_TOOLS_IMAGE)); \
+	EXISTING_BASE=$$(docker inspect --format='{{index .Config.Labels "base-tools-id"}}' $(IMAGE_NAME) 2>/dev/null || true); \
+	if [ -n "$$EXISTING_BASE" ] && [ "$$BASE_ID" = "$$EXISTING_BASE" ]; then \
+		echo "==> Image $(IMAGE_NAME) is up to date — base-tools unchanged, skipping crossdev"; \
+	else \
+		[ -n "$$EXISTING_BASE" ] \
+			&& echo "==> Base-tools layer changed — rebuilding crossdev toolchain" \
+			|| echo "==> Building crossdev toolchain (logs → output/portage-logs/)"; \
+		docker rm -f $(CROSSDEV_CONTAINER) 2>/dev/null || true; \
+		docker run --name $(CROSSDEV_CONTAINER) \
+			$(LOGS_MOUNT) \
+			$(BASE_TOOLS_IMAGE) \
+			bash -c 'set -e && \
+			    crossdev --target "$$CROSS_TARGET" --stable --gcc 15 --portage --verbose && \
+			    echo "cross-$$CROSS_TARGET/gcc static-libs" \
+			        > /etc/portage/package.use/cross-gcc-static && \
+			    emerge --update --newuse "cross-$$CROSS_TARGET/gcc" && \
+			    rm -rf /var/cache/distfiles/* && \
+			    mkdir -p \
+			        /usr/$$CROSS_TARGET/etc/portage/{package.use,package.accept_keywords,package.mask,package.env,env} \
+			        /build /configs /output /initrd' && \
+		docker commit \
+			--change 'ENV BUILD_DIR=/build' \
+			--change 'ENV CONFIGS_DIR=/configs' \
+			--change 'ENV OUTPUT_DIR=/output' \
+			--change "LABEL base-tools-id=$$BASE_ID" \
+			$(CROSSDEV_CONTAINER) $(IMAGE_NAME) && \
+		docker rm $(CROSSDEV_CONTAINER) && \
+		echo "==> Image $(IMAGE_NAME) ready"; \
+	fi
 
 # Push builder image to registry
 push-image: build-image
