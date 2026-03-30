@@ -68,7 +68,7 @@ DOCKER_RUN_IT := docker run --rm -it \
         menuconfig-kernel menuconfig-busybox \
         iso all test shell \
         check-updates update-versions update-build-pins update-all \
-        list-packages show-failed \
+        list-packages show-failed regen-manifest \
         clean clean-build clean-all ensure-dirs ensure-volume
 
 help:
@@ -290,6 +290,11 @@ show-failed:
 	@cat $(PROJECT_DIR)/output/.failed-packages 2>/dev/null || echo "(none or no build run yet)"
 	@echo ""
 	@echo "==> Logs available in: output/logs/"
+
+# Regenerate linux-live Manifest with kernel tarball checksums (run once after changing the ebuild)
+regen-manifest: ensure-dirs
+	$(DOCKER_RUN_IT) $(IMAGE_NAME) \
+	    ebuild /configs/overlay/sys-kernel/linux-live/linux-live-6.12.11.ebuild manifest
 
 # Drop into container shell
 shell: ensure-volume ensure-dirs

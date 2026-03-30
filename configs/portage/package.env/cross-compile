@@ -22,4 +22,3 @@ sys-apps/coreutils   disable-stdbuf.conf
 
 # Packages using gnulib/librecode that reference libiconv_open but omit -liconv
 app-arch/tar             libiconv.conf
-games-misc/fortune-mod   libiconv.conf

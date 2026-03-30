@@ -81,7 +81,6 @@ net-analyzer/traceroute
 # Network clients
 www-client/lynx
 mail-client/mutt
-net-irc/irssi
 
 # Terminal multiplexer
 app-misc/tmux
@@ -99,7 +98,6 @@ sys-fs/squashfs-tools
 
 # Amusements
 app-misc/figlet
-games-misc/fortune-mod
 app-misc/cmatrix
 app-misc/sl
 games-roguelike/nethack

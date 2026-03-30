@@ -17,4 +17,13 @@
 # app-text/mandoc instead.
 sys-apps/man-db
 
-# Currently no other masked versions - add as issues are discovered
+# fortune-mod CMake requires a pre-installed native 'strfile' binary in PATH.
+# Cross-compiling this is a circular build-tool dependency.
+# Re-enable by installing fortune-mod natively in the Dockerfile first.
+games-misc/fortune-mod
+
+# irssi → glib needs libatomic; cross-gcc only has libatomic.so (no libatomic.a).
+# Fix: verify static-libs was correctly applied to the cross-gcc package and
+# that libatomic.a exists at /usr/lib/gcc/i486-linux-musl/<ver>/libatomic.a.
+# Check with: make shell → ls /usr/lib/gcc/i486-linux-musl/*/libatomic*
+net-irc/irssi

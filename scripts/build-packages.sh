@@ -58,7 +58,7 @@ if [ -d "${PORTAGE_DIR}" ] && [ -d "${SYSROOT_PORTAGE}" ]; then
     echo "==> Syncing configs from ${PORTAGE_DIR} to ${SYSROOT_PORTAGE}"
     cp "${PORTAGE_DIR}/make.conf" "${SYSROOT_PORTAGE}/make.conf" 2>/dev/null || true
     cp "${PORTAGE_DIR}/bashrc" "${SYSROOT_PORTAGE}/bashrc" 2>/dev/null || true
-    for dir in package.use package.accept_keywords package.mask package.env env; do
+    for dir in package.use package.accept_keywords package.mask package.env env savedconfig; do
         if [ -d "${PORTAGE_DIR}/${dir}" ]; then
             mkdir -p "${SYSROOT_PORTAGE}/${dir}"
             cp -r "${PORTAGE_DIR}/${dir}"/* "${SYSROOT_PORTAGE}/${dir}/" 2>/dev/null || true

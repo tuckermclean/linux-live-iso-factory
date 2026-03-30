@@ -105,7 +105,11 @@ if [[ ${EBUILD_PHASE} == "compile" ]]; then
 
 		# configure copies sys/unix/Makefile.utl → util/Makefile; patch the copy
 		local makefile="${S}/util/Makefile"
-		[[ -f "${makefile}" ]] || return 0
+		if [[ ! -f "${makefile}" ]]; then
+			ewarn "nethack: util/Makefile not found at pre_src_compile — patch skipped"
+			ewarn "  Expected: ${makefile}"
+			return 0
+		fi
 
 		einfo "nethack: patching util/Makefile for CC_FOR_BUILD cross-compilation"
 
@@ -129,7 +133,7 @@ insert = """
 # 'override' is required to beat the command-line CC=/CFLAGS=/LFLAGS= set by the ebuild.
 # Target-specific vars propagate to prerequisites (makedefs.o, ./monst.o, etc.)
 CC_FOR_BUILD ?= gcc
-CFLAGS_FOR_BUILD ?= -O2 -std=gnu89 -I../include -DDLB -DSECURE -DTIMED_DELAY -DVISION_TABLES -DDUMPLOG -DSCORE_ON_BOTL
+CFLAGS_FOR_BUILD ?= -O2 -std=gnu89 -I$(abspath ../include) -DDLB -DSECURE -DTIMED_DELAY -DVISION_TABLES -DDUMPLOG -DSCORE_ON_BOTL
 
 makedefs lev_comp dgn_comp dlb: override CC := $(CC_FOR_BUILD)
 makedefs lev_comp dgn_comp dlb: override CFLAGS := $(CFLAGS_FOR_BUILD)
