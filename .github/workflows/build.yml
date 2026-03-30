@@ -30,8 +30,8 @@ jobs:
               - 'Dockerfile'
             packages:
               - 'configs/portage/world'
-              - 'configs/versions.lock'
-              - 'overlay/**'
+              - 'configs/portage/versions.lock'
+              - 'configs/overlay/**'
               - 'scripts/**'
               - 'rootfs/**'
 
