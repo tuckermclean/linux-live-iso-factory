@@ -1,0 +1,183 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      dockerfile: ${{ steps.filter.outputs.dockerfile }}
+      packages: ${{ steps.filter.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            dockerfile:
+              - 'Dockerfile'
+            packages:
+              - 'configs/portage/world'
+              - 'configs/versions.lock'
+              - 'overlay/**'
+              - 'scripts/**'
+              - 'rootfs/**'
+
+  build-image:
+    runs-on: ubuntu-latest
+    needs: changes
+    outputs:
+      image-changed: ${{ steps.check-hash.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull existing images for cache
+        run: |
+          docker pull ${{ env.REGISTRY }}/monolith-builder:latest || true
+          docker tag ${{ env.REGISTRY }}/monolith-builder:latest monolith-builder || true
+          docker pull ${{ env.REGISTRY }}/monolith-builder-base-tools:latest || true
+          docker tag ${{ env.REGISTRY }}/monolith-builder-base-tools:latest monolith-builder-base-tools || true
+
+      - name: Capture pre-build hash
+        id: pre-hash
+        run: |
+          echo "hash=$(docker inspect --format='{{index .Config.Labels "base-tools-hash"}}' monolith-builder 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+
+      - run: make ensure-dirs
+
+      - name: Build image
+        run: make build-image
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+
+      - name: Check if image changed
+        id: check-hash
+        run: |
+          NEW_HASH=$(docker inspect --format='{{index .Config.Labels "base-tools-hash"}}' monolith-builder)
+          OLD_HASH="${{ steps.pre-hash.outputs.hash }}"
+          if [ "$NEW_HASH" != "$OLD_HASH" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "==> base-tools-hash changed: $OLD_HASH -> $NEW_HASH"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "==> base-tools-hash unchanged, skipping push"
+          fi
+
+      - name: Push images
+        if: steps.check-hash.outputs.changed == 'true'
+        run: make push-image
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+
+  build-packages:
+    runs-on: ubuntu-latest
+    needs: [changes, build-image]
+    if: >
+      needs.changes.outputs.packages == 'true' ||
+      needs.build-image.outputs.image-changed == 'true' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull images
+        run: make pull-image
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+
+      - run: make ensure-dirs ensure-volume
+
+      - name: Sync portage
+        run: make sync-portage
+
+      - name: Restore binary package cache from S3
+        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/ output/packages/ || true
+
+      - name: Build packages
+        run: make build-packages
+
+      - name: Save binary packages to S3
+        if: always()
+        run: aws s3 sync output/packages/ s3://${{ secrets.S3_BUCKET }}/packages/
+
+      - name: Save live sysroot to S3
+        if: always()
+        run: aws s3 sync output/live-sysroot/ s3://${{ secrets.S3_BUCKET }}/live-sysroot/
+
+  build-iso:
+    runs-on: ubuntu-latest
+    needs: [build-image, build-packages]
+    if: >
+      always() &&
+      needs.build-image.result == 'success' &&
+      (needs.build-packages.result == 'success' || needs.build-packages.result == 'skipped')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull images
+        run: make pull-image
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+
+      - run: make ensure-dirs
+
+      - name: Restore live sysroot from S3
+        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/live-sysroot/ output/live-sysroot/
+
+      - name: Build ISO
+        run: make extract iso
+
+      - name: Upload ISO to S3
+        run: |
+          STAGE3_DATE=$(grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)
+          SHA=$(git rev-parse --short HEAD)
+          aws s3 cp output/boot.iso s3://${{ secrets.S3_BUCKET }}/boot.iso
+          aws s3 cp output/boot.iso s3://${{ secrets.S3_BUCKET }}/boot-${STAGE3_DATE}-${SHA}.iso
+          echo "==> Uploaded boot.iso and boot-${STAGE3_DATE}-${SHA}.iso"

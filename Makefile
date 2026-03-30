@@ -191,7 +191,11 @@ push-image: build-image
 	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):latest
 	docker push $(REGISTRY_IMAGE):$(IMAGE_VERSION)
 	docker push $(REGISTRY_IMAGE):latest
-	@echo "==> Pushed $(REGISTRY_IMAGE):$(IMAGE_VERSION) and :latest"
+	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(IMAGE_VERSION)
+	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:latest
+	docker push $(REGISTRY_IMAGE)-base-tools:$(IMAGE_VERSION)
+	docker push $(REGISTRY_IMAGE)-base-tools:latest
+	@echo "==> Pushed $(REGISTRY_IMAGE):$(IMAGE_VERSION) and :latest (+ base-tools)"
 
 # Pull builder image from registry and tag locally
 pull-image:
@@ -201,7 +205,9 @@ pull-image:
 	fi
 	docker pull $(REGISTRY_IMAGE):$(IMAGE_VERSION)
 	docker tag $(REGISTRY_IMAGE):$(IMAGE_VERSION) $(IMAGE_NAME)
-	@echo "==> Pulled and tagged as $(IMAGE_NAME)"
+	docker pull $(REGISTRY_IMAGE)-base-tools:latest || true
+	docker tag $(REGISTRY_IMAGE)-base-tools:latest $(BASE_TOOLS_IMAGE) || true
+	@echo "==> Pulled and tagged as $(IMAGE_NAME) (+ base-tools)"
 
 # Sync portage tree in volume
 sync-portage: ensure-volume ensure-dirs
