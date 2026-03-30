@@ -9,7 +9,7 @@
 #   make iso                # Build initrd + rootfs + ISO from compiled packages
 
 ARG STAGE3_DATE=20260323
-FROM gentoo/stage3:amd64-openrc-${STAGE3_DATE}
+FROM gentoo/stage3:amd64-openrc-${STAGE3_DATE} AS base-tools
 
 LABEL maintainer="monolith-builder"
 LABEL description="Gentoo crossdev environment for i486-linux-musl + ISO tools"
@@ -64,21 +64,6 @@ RUN mkdir -p /var/db/repos/crossdev/{profiles,metadata} && \
     echo 'sys-kernel/linux-live **' > /etc/portage/package.accept_keywords/monolith && \
     echo 'FEATURES="${FEATURES} -strict"' >> /etc/portage/make.conf
 
-# Build the crossdev toolchain
-# static-libs on cross-GCC: libatomic.a needed by packages that link statically (glib → irssi)
-RUN crossdev --target "${CROSS_TARGET}" --stable --portage --verbose && \
-    echo "cross-${CROSS_TARGET}/gcc static-libs" \
-        > /etc/portage/package.use/cross-gcc-static && \
-    emerge --update --newuse "cross-${CROSS_TARGET}/gcc" && \
-    rm -rf /var/cache/distfiles/*
-
-# Runtime environment
-# Set AFTER all emerge steps — Portage eclasses (multilib-minimal) use BUILD_DIR and
-# SYSROOT internally; setting them earlier causes sandbox violations.
-ENV BUILD_DIR=/build
-ENV CONFIGS_DIR=/configs
-ENV OUTPUT_DIR=/output
-
-RUN mkdir -p \
-        /usr/${CROSS_TARGET}/etc/portage/{package.use,package.accept_keywords,package.mask,package.env,env} \
-        ${BUILD_DIR} ${CONFIGS_DIR} ${OUTPUT_DIR} /initrd
+# crossdev toolchain build and runtime setup are handled by `make build-image`.
+# Running crossdev via `docker run` (not `docker build`) ensures all portage logs
+# are captured to output/portage-logs/ on the host via LOGS_MOUNT.
