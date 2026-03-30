@@ -139,6 +139,10 @@ jobs:
         if: always()
         run: aws s3 sync output/packages/ s3://${{ secrets.S3_BUCKET }}/packages/
 
+      - name: Save build logs to S3
+        if: always()
+        run: aws s3 sync output/logs/ s3://${{ secrets.S3_BUCKET }}/logs/
+
       - name: Save live sysroot to S3
         if: always()
         run: aws s3 sync output/live-sysroot/ s3://${{ secrets.S3_BUCKET }}/live-sysroot/
