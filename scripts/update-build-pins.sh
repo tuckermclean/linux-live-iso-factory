@@ -94,9 +94,22 @@ get_current_stage3_date() {
     grep '^ARG STAGE3_DATE=' "${DOCKERFILE}" | cut -d= -f2
 }
 
+# Read current value of ARG PORTAGE_DATE from Dockerfile
+get_current_portage_date() {
+    grep '^ARG PORTAGE_DATE=' "${DOCKERFILE}" | cut -d= -f2
+}
+
 # Read current SOURCE_DATE_EPOCH from Dockerfile
 get_current_epoch() {
     grep '^ENV SOURCE_DATE_EPOCH=' "${DOCKERFILE}" | cut -d= -f2
+}
+
+# Verify a portage snapshot and its GPG signature exist on distfiles for the given date
+verify_portage_snapshot() {
+    local datestr="$1"
+    local base="https://distfiles.gentoo.org/snapshots/gentoo-${datestr}.tar.xz"
+    curl -fsSL --head "${base}" >/dev/null 2>&1 && \
+    curl -fsSL --head "${base}.gpgsig" >/dev/null 2>&1
 }
 
 # Command: check
@@ -104,8 +117,9 @@ cmd_check() {
     echo "==> Checking build pins"
     echo ""
 
-    local current_date current_epoch latest_date latest_epoch
-    current_date=$(get_current_stage3_date)
+    local current_stage3 current_portage current_epoch latest_date latest_epoch
+    current_stage3=$(get_current_stage3_date)
+    current_portage=$(get_current_portage_date)
     current_epoch=$(get_current_epoch)
 
     echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
@@ -121,8 +135,10 @@ cmd_check() {
 
     printf "\n  %-25s %-28s %-28s\n" "Pin" "Current" "Latest"
     printf "  %-25s %-28s %-28s\n" "---" "-------" "------"
-    printf "  %-25s %-28s %-28s" "STAGE3_DATE" "${current_date}" "${latest_date}"
-    [[ "${current_date}" != "${latest_date}" ]] && echo " *" || echo ""
+    printf "  %-25s %-28s %-28s" "STAGE3_DATE" "${current_stage3}" "${latest_date}"
+    [[ "${current_stage3}" != "${latest_date}" ]] && echo " *" || echo ""
+    printf "  %-25s %-28s %-28s" "PORTAGE_DATE" "${current_portage}" "${latest_date}"
+    [[ "${current_portage}" != "${latest_date}" ]] && echo " *" || echo ""
     printf "  %-25s %-28s %-28s\n" "SOURCE_DATE_EPOCH" "${current_epoch}" "${latest_epoch:-derived}"
     echo ""
     echo "  * = update available"
@@ -134,8 +150,9 @@ cmd_check() {
 cmd_update() {
     echo "==> Updating Dockerfile build pins"
 
-    local current_date latest_date new_epoch
-    current_date=$(get_current_stage3_date)
+    local current_stage3 current_portage latest_date new_epoch
+    current_stage3=$(get_current_stage3_date)
+    current_portage=$(get_current_portage_date)
 
     echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
     latest_date=$(fetch_latest_stage3_date)
@@ -145,11 +162,24 @@ cmd_update() {
         exit 1
     fi
 
-    if [[ "${current_date}" == "${latest_date}" ]]; then
-        echo "  STAGE3_DATE already up to date: ${current_date}"
+    if [[ "${current_stage3}" == "${latest_date}" ]]; then
+        echo "  STAGE3_DATE already up to date: ${current_stage3}"
     else
-        echo "  Updating STAGE3_DATE: ${current_date} → ${latest_date}"
+        echo "  Updating STAGE3_DATE: ${current_stage3} → ${latest_date}"
         sed -i "s/^ARG STAGE3_DATE=.*/ARG STAGE3_DATE=${latest_date}/" "${DOCKERFILE}"
+    fi
+
+    # Verify the portage snapshot exists for this date before pinning it
+    echo "  Verifying portage snapshot exists for ${latest_date}..."
+    if verify_portage_snapshot "${latest_date}"; then
+        if [[ "${current_portage}" == "${latest_date}" ]]; then
+            echo "  PORTAGE_DATE already up to date: ${current_portage}"
+        else
+            echo "  Updating PORTAGE_DATE: ${current_portage} → ${latest_date}"
+            sed -i "s/^ARG PORTAGE_DATE=.*/ARG PORTAGE_DATE=${latest_date}/" "${DOCKERFILE}"
+        fi
+    else
+        echo "  WARNING: No portage snapshot found for ${latest_date} — PORTAGE_DATE unchanged (${current_portage})"
     fi
 
     new_epoch=$(date_to_epoch "${latest_date}")

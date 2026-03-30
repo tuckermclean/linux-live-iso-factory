@@ -9,6 +9,11 @@
 #   make iso                # Build initrd + rootfs + ISO from compiled packages
 
 ARG STAGE3_DATE=20260323
+# Portage snapshot date — must match an available gentoo-YYYYMMDD.tar.xz on distfiles.
+# Pinned independently of STAGE3_DATE so both can be updated and attested separately.
+# Verified at build time against Gentoo's release signing key (GPG).
+# Update with: make update-build-pins
+ARG PORTAGE_DATE=20260323
 FROM gentoo/stage3:amd64-openrc-${STAGE3_DATE} AS base-tools
 
 LABEL maintainer="monolith-builder"
@@ -20,12 +25,32 @@ ENV SOURCE_DATE_EPOCH=1774224000
 ENV CROSS_TARGET=i486-linux-musl
 ENV CROSS_COMPILE=i486-linux-musl-
 
-# Sync portage and install all host tools
+# Re-declare so the value is available inside this stage
+ARG PORTAGE_DATE
+
+# Fetch pinned portage snapshot and verify against Gentoo's release signing key.
+# Using a dated snapshot (not emerge-webrsync) ensures the same Dockerfile always
+# produces the same package database — required for reproducible builds and SBOM attestation.
+# Key: DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D (Gentoo ebuild repository signing key)
+RUN GENTOO_KEY="DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D" && \
+    wget -q "https://qa-reports.gentoo.org/output/service-keys.gpg" -O /tmp/gentoo-keys.gpg && \
+    gpg --import /tmp/gentoo-keys.gpg && \
+    rm /tmp/gentoo-keys.gpg && \
+    gpg --list-keys "${GENTOO_KEY}" && \
+    cd /tmp && \
+    SNAPSHOT="gentoo-${PORTAGE_DATE}.tar.xz" && \
+    wget -q "https://distfiles.gentoo.org/snapshots/${SNAPSHOT}" && \
+    wget -q "https://distfiles.gentoo.org/snapshots/${SNAPSHOT}.gpgsig" && \
+    gpg --verify "${SNAPSHOT}.gpgsig" "${SNAPSHOT}" && \
+    rm -rf /var/db/repos/gentoo && \
+    tar -xJf "${SNAPSHOT}" -C /var/db/repos/ && \
+    rm "${SNAPSHOT}" "${SNAPSHOT}.gpgsig"
+
+# Install all host tools
 # cmake:   prevents BDEPEND from pulling in cmake-9999 (live ebuild)
 # mandoc:  host makewhatis called by bashrc hook to build whatis DB in sysroot
 # ncurses: host tic needed to install terminfo DB into sysroot during cross-compile
-RUN emerge-webrsync && \
-    emerge --noreplace \
+RUN emerge --noreplace \
         sys-devel/crossdev \
         app-portage/gentoolkit \
         app-portage/eix \
