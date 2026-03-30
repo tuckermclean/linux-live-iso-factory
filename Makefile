@@ -147,13 +147,13 @@ build-image: ensure-dirs
 		--cache-from $(BASE_TOOLS_IMAGE) --cache-to type=inline \
 		-t $(BASE_TOOLS_IMAGE) \
 		.
-	@BASE_ID=$$(docker inspect --format='{{.Id}}' $(BASE_TOOLS_IMAGE)); \
-	EXISTING_BASE=$$(docker inspect --format='{{index .Config.Labels "base-tools-id"}}' $(IMAGE_NAME) 2>/dev/null || true); \
-	if [ -n "$$EXISTING_BASE" ] && [ "$$BASE_ID" = "$$EXISTING_BASE" ]; then \
+	@BASE_LAYERS=$$(docker inspect --format='{{json .RootFS.Layers}}' $(BASE_TOOLS_IMAGE)); \
+	EXISTING_BASE=$$(docker inspect --format='{{index .Config.Labels "base-tools-layers"}}' $(IMAGE_NAME) 2>/dev/null || true); \
+	if [ -n "$$EXISTING_BASE" ] && [ "$$BASE_LAYERS" = "$$EXISTING_BASE" ]; then \
 		echo "==> Image $(IMAGE_NAME) is up to date — base-tools unchanged, skipping crossdev"; \
 	else \
 		[ -n "$$EXISTING_BASE" ] \
-			&& echo "==> Base-tools layer changed — rebuilding crossdev toolchain" \
+			&& echo "==> Base-tools layers changed — rebuilding crossdev toolchain" \
 			|| echo "==> Building crossdev toolchain (logs → output/portage-logs/)"; \
 		docker rm -f $(CROSSDEV_CONTAINER) 2>/dev/null || true; \
 		docker run --name $(CROSSDEV_CONTAINER) \
@@ -172,7 +172,7 @@ build-image: ensure-dirs
 			--change 'ENV BUILD_DIR=/build' \
 			--change 'ENV CONFIGS_DIR=/configs' \
 			--change 'ENV OUTPUT_DIR=/output' \
-			--change "LABEL base-tools-id=$$BASE_ID" \
+			--change "LABEL base-tools-layers=$$BASE_LAYERS" \
 			$(CROSSDEV_CONTAINER) $(IMAGE_NAME) && \
 		docker rm $(CROSSDEV_CONTAINER) && \
 		echo "==> Image $(IMAGE_NAME) ready"; \
