@@ -21,6 +21,9 @@ PROJECT_DIR := $(shell pwd)
 # Image version derived from the pinned stage3 date in Dockerfile
 IMAGE_VERSION := $(shell grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)
 
+# Portage snapshot date — must match PORTAGE_DATE in Dockerfile
+PORTAGE_DATE := $(shell grep '^ARG PORTAGE_DATE=' Dockerfile | cut -d= -f2)
+
 # Container registry — set REGISTRY to push/pull the builder image
 # e.g.: make push-image REGISTRY=ghcr.io/youruser
 REGISTRY ?=
@@ -202,8 +205,8 @@ pull-image:
 
 # Sync portage tree in volume
 sync-portage: ensure-volume ensure-dirs
-	@echo "==> Syncing portage tree"
-	$(DOCKER_RUN) $(IMAGE_NAME) emerge --sync
+	@echo "==> Syncing portage tree (pinned: $(PORTAGE_DATE))"
+	$(DOCKER_RUN) $(IMAGE_NAME) emerge-webrsync --revert=$(PORTAGE_DATE)
 
 # Build all packages: kernel, busybox, and userland (with parallel jobs)
 build-packages: ensure-volume ensure-dirs
