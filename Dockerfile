@@ -28,23 +28,11 @@ ENV CROSS_COMPILE=i486-linux-musl-
 # Re-declare so the value is available inside this stage
 ARG PORTAGE_DATE
 
-# Fetch pinned portage snapshot and verify against Gentoo's release signing key.
-# Using a dated snapshot (not emerge-webrsync) ensures the same Dockerfile always
-# produces the same package database — required for reproducible builds and SBOM attestation.
-# Key: DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D (Gentoo ebuild repository signing key)
-RUN GENTOO_KEY="DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D" && \
-    wget -q "https://qa-reports.gentoo.org/output/service-keys.gpg" -O /tmp/gentoo-keys.gpg && \
-    gpg --import /tmp/gentoo-keys.gpg && \
-    rm /tmp/gentoo-keys.gpg && \
-    gpg --list-keys "${GENTOO_KEY}" && \
-    cd /tmp && \
-    SNAPSHOT="gentoo-${PORTAGE_DATE}.tar.xz" && \
-    wget -q "https://distfiles.gentoo.org/snapshots/${SNAPSHOT}" && \
-    wget -q "https://distfiles.gentoo.org/snapshots/${SNAPSHOT}.gpgsig" && \
-    gpg --verify "${SNAPSHOT}.gpgsig" "${SNAPSHOT}" && \
-    rm -rf /var/db/repos/gentoo && \
-    tar -xJf "${SNAPSHOT}" -C /var/db/repos/ && \
-    rm "${SNAPSHOT}" "${SNAPSHOT}.gpgsig"
+# Fetch pinned portage snapshot using portage's own tooling.
+# --revert pins to a specific date for reproducibility; emerge-webrsync handles
+# GPG verification internally using its bundled Gentoo release signing key
+# (DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D) — build fails if signature invalid.
+RUN emerge-webrsync --revert=${PORTAGE_DATE}
 
 # Install all host tools
 # cmake:   prevents BDEPEND from pulling in cmake-9999 (live ebuild)
