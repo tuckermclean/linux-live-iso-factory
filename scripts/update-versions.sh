@@ -84,7 +84,7 @@ cmd_check() {
         [ -z "${PINNED}" ] && PINNED="(unpinned)"
 
         # Get available version
-        AVAILABLE=$(get_best_version "${pkg}")
+        AVAILABLE=$(get_best_version "${pkg}") || true
         [ -z "${AVAILABLE}" ] && AVAILABLE="(not found)"
 
         # Mark if update available
@@ -124,8 +124,8 @@ EOF
     while read -r pkg; do
         [ -z "${pkg}" ] && continue
 
-        VERSION=$(get_best_version "${pkg}")
-        SLOT=$(get_slot "${pkg}")
+        VERSION=$(get_best_version "${pkg}") || true
+        SLOT=$(get_slot "${pkg}") || true
 
         if [ -n "${VERSION}" ]; then
             echo "${pkg}:${VERSION}:${SLOT:-0}" >> "${TMPFILE}"
