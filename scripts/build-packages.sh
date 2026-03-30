@@ -64,6 +64,11 @@ if [ -d "${PORTAGE_DIR}" ] && [ -d "${SYSROOT_PORTAGE}" ]; then
             cp -r "${PORTAGE_DIR}/${dir}"/* "${SYSROOT_PORTAGE}/${dir}/" 2>/dev/null || true
         fi
     done
+    # Register the monolith overlay in the sysroot repos.conf so cross-emerge
+    # can find ebuilds from /configs/overlay (bind-mounted at runtime).
+    mkdir -p "${SYSROOT_PORTAGE}/repos.conf"
+    printf '[monolith]\nlocation = /configs/overlay\npriority = 20\nmasters = gentoo\nauto-sync = no\n' \
+        > "${SYSROOT_PORTAGE}/repos.conf/monolith.conf"
 fi
 
 # Ensure groups required by game package preinst phases exist on the BUILD HOST.
