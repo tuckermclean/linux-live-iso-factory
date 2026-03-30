@@ -151,7 +151,7 @@ build-image: ensure-dirs
 		$(LOGS_MOUNT) \
 		$(BASE_TOOLS_IMAGE) \
 		bash -c 'set -e && \
-		    crossdev --target "$$CROSS_TARGET" --stable --portage --verbose && \
+		    crossdev --target "$$CROSS_TARGET" --stable --gcc 15 --portage --verbose && \
 		    echo "cross-$$CROSS_TARGET/gcc static-libs" \
 		        > /etc/portage/package.use/cross-gcc-static && \
 		    emerge --update --newuse "cross-$$CROSS_TARGET/gcc" && \
