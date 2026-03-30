@@ -94,6 +94,9 @@ jobs:
   build-packages:
     runs-on: ubuntu-latest
     needs: [changes, build-image]
+    permissions:
+      contents: read
+      packages: read
     if: >
       needs.changes.outputs.packages == 'true' ||
       needs.build-image.outputs.image-changed == 'true' ||
@@ -143,6 +146,9 @@ jobs:
   build-iso:
     runs-on: ubuntu-latest
     needs: [build-image, build-packages]
+    permissions:
+      contents: read
+      packages: read
     if: >
       always() &&
       needs.build-image.result == 'success' &&
