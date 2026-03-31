@@ -37,7 +37,8 @@ src_configure() {
 }
 
 src_compile() {
-    emake ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" bzImage
+    # -j1: cross-gcc is memory-heavy; higher parallelism OOMs CI runners
+    emake -j1 ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" bzImage
 }
 
 src_install() {
