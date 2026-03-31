@@ -168,11 +168,14 @@ fi
 if [[ ${EBUILD_PHASE} == "postinst" ]]; then
 	post_pkg_postinst() {
 		local sysroot="/usr/${CHOST:-i486-linux-musl}"
-		find "${sysroot}/usr/lib" "${sysroot}/lib" \
-			\( -name "*.so" -o -name "*.so.*" \) -type f -delete 2>/dev/null
-		find "${sysroot}/usr/lib" "${sysroot}/lib" \
-			-name "*.so*" -xtype l -delete 2>/dev/null
-		true
+		einfo "so-cleanup: starting for ${CATEGORY}/${PF}"
+		timeout 30 find "${sysroot}/usr/lib" "${sysroot}/lib" \
+			\( -name "*.so" -o -name "*.so.*" \) -type f -delete 2>/dev/null \
+			|| ewarn "so-cleanup: find (regular) timed out or failed for ${CATEGORY}/${PF}"
+		timeout 30 find "${sysroot}/usr/lib" "${sysroot}/lib" \
+			-name "*.so*" -xtype l -delete 2>/dev/null \
+			|| ewarn "so-cleanup: find (symlinks) timed out or failed for ${CATEGORY}/${PF}"
+		einfo "so-cleanup: done for ${CATEGORY}/${PF}"
 	}
 fi
 
