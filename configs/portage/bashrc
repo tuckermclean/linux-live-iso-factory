@@ -185,8 +185,9 @@ if [[ ${EBUILD_PHASE} == "postinst" ]] && [[ ${CATEGORY}/${PN} == "app-text/mand
 	pkg_postinst() {
 		local host_makewhatis="/usr/sbin/makewhatis"
 		if [[ -x "${host_makewhatis}" ]]; then
-			einfo "mandoc: building whatis database with host makewhatis"
-			"${host_makewhatis}" "${ROOT}/usr/share/man" || true
+			einfo "mandoc: building whatis database with host makewhatis (60s timeout)"
+			timeout 60 "${host_makewhatis}" "${ROOT}/usr/share/man" || \
+				ewarn "mandoc: makewhatis timed out or failed — whatis database not built"
 		else
 			ewarn "mandoc: host makewhatis not found; whatis database not built"
 			ewarn "Rebuild the Docker image to install app-text/mandoc on the host."
