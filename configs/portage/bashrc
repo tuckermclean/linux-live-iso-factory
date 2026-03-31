@@ -139,7 +139,8 @@ CFLAGS_FOR_BUILD := $(CFLAGS_FOR_BUILD) -std=gnu89 -I$(abspath ../include) -DDLB
 
 makedefs lev_comp dgn_comp dlb: override CC := $(CC_FOR_BUILD)
 makedefs lev_comp dgn_comp dlb: override CFLAGS := $(CFLAGS_FOR_BUILD)
-makedefs lev_comp dgn_comp dlb: override LFLAGS :=
+makedefs lev_comp dgn_comp dlb: override LFLAGS := -m32
+makedefs lev_comp dgn_comp dlb: override LDFLAGS := -m32
 """
 
 # Append to end of file — util/Makefile doesn't define LFLAGS as a variable
