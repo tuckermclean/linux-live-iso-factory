@@ -11,6 +11,9 @@ LICENSE="GPL-2"
 SLOT="0"
 KEYWORDS="~amd64"
 
+# Kernel tarballs extract to linux-${PV}, not linux-live-${PV}
+S="${WORKDIR}/linux-${PV}"
+
 BDEPEND="
     sys-devel/bc
     sys-devel/flex

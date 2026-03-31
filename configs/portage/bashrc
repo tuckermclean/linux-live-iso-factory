@@ -133,7 +133,9 @@ insert = """
 # 'override' is required to beat the command-line CC=/CFLAGS=/LFLAGS= set by the ebuild.
 # Target-specific vars propagate to prerequisites (makedefs.o, ./monst.o, etc.)
 CC_FOR_BUILD ?= gcc
-CFLAGS_FOR_BUILD ?= -O2 -std=gnu89 -I$(abspath ../include) -DDLB -DSECURE -DTIMED_DELAY -DVISION_TABLES -DDUMPLOG -DSCORE_ON_BOTL
+# Append required flags to whatever Portage/crossdev already set (e.g. -O2 -m32).
+# Use := not ?= so we always add -I../include even if CFLAGS_FOR_BUILD is in the env.
+CFLAGS_FOR_BUILD := $(CFLAGS_FOR_BUILD) -I$(abspath ../include) -DDLB -DSECURE -DTIMED_DELAY -DVISION_TABLES -DDUMPLOG -DSCORE_ON_BOTL
 
 makedefs lev_comp dgn_comp dlb: override CC := $(CC_FOR_BUILD)
 makedefs lev_comp dgn_comp dlb: override CFLAGS := $(CFLAGS_FOR_BUILD)
