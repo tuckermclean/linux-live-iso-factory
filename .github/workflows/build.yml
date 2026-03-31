@@ -133,7 +133,7 @@ jobs:
         run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/ output/packages/ || true
 
       - name: Build packages
-        run: make build-packages
+        run: make build-packages JOBS=2 LOAD_AVG=2
 
       - name: Save binary packages to S3
         if: always()
