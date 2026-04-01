@@ -84,7 +84,7 @@ app-shells/dash static
 
 # Core libraries - static-libs for development use
 sys-libs/readline static static-libs
-sys-libs/ncurses static static-libs -gpm -minimal unicode
+sys-libs/ncurses static static-libs tinfo -gpm -minimal unicode
 sys-libs/zlib static-libs
 dev-libs/libpcre2 static static-libs
 dev-libs/openssl static static-libs
