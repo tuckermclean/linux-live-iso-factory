@@ -25,3 +25,6 @@ app-arch/tar             libiconv.conf
 
 # Packages that use C++ exceptions — override global -fno-exceptions
 sys-apps/smartmontools   fexceptions.conf
+
+# shadow installs libsubid to /lib/ (not /usr/lib/); override libdir at configure time
+sys-apps/shadow          shadow-libdir.conf
