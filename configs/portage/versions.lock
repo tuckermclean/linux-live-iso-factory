@@ -70,6 +70,7 @@ app-arch/zstd:1.5.7-r1:0
 net-analyzer/nmap:7.98:0
 net-misc/socat:1.8.1.1:0
 net-analyzer/iftop:1.0_pre4-r5:0
+net-analyzer/tcpdump:4.99.6:0
 net-analyzer/nethogs:0.8.8:0
 sys-apps/pciutils:3.14.0:0
 sys-apps/usbutils:019:0

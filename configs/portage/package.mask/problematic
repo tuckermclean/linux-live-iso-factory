@@ -22,6 +22,12 @@ sys-apps/man-db
 # Re-enable by installing fortune-mod natively in the Dockerfile first.
 games-misc/fortune-mod
 
+# nmap has an unconditional REQUIRED_USE on python_single_target even when all
+# Python features (ndiff, zenmap, nse) are disabled — pulls in full Python runtime.
+# Re-enable by adding dev-lang/python to world and setting python_single_target_python3_12
+# in package.use/nmap.
+net-analyzer/nmap
+
 # irssi → glib needs libatomic; cross-gcc only has libatomic.so (no libatomic.a).
 # Fix: verify static-libs was correctly applied to the cross-gcc package and
 # that libatomic.a exists at /usr/lib/gcc/i486-linux-musl/<ver>/libatomic.a.
