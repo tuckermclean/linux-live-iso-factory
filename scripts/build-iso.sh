@@ -255,8 +255,9 @@ XORRISO_CMD+=("$ISO_DIR")
 # Run xorriso
 "${XORRISO_CMD[@]}"
 
-# Move to final output location
+# Move to final output location and make readable outside the container
 mv "$ISO_TMP" "$ISO_IMAGE"
+chmod 644 "$ISO_IMAGE"
 
 # Show final ISO size
 ISO_SIZE=$(stat -c%s "$ISO_IMAGE")
