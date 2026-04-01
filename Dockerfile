@@ -13,7 +13,7 @@ ARG STAGE3_DATE=20260323
 # Pinned independently of STAGE3_DATE so both can be updated and attested separately.
 # Verified at build time against Gentoo's release signing key (GPG).
 # Update with: make update-build-pins
-ARG PORTAGE_DATE=20260323
+ARG PORTAGE_DATE=20260330
 FROM gentoo/stage3:amd64-openrc-${STAGE3_DATE} AS base-tools
 
 LABEL maintainer="monolith-builder"
