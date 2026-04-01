@@ -8,13 +8,12 @@
 #   make build-packages     # Cross-compile all packages (kernel, busybox, userland)
 #   make iso                # Build initrd + rootfs + ISO from compiled packages
 
-ARG STAGE3_DATE=20260330
-# Portage snapshot date — must match an available gentoo-YYYYMMDD.tar.xz on distfiles.
-# Pinned independently of STAGE3_DATE so both can be updated and attested separately.
-# Verified at build time against Gentoo's release signing key (GPG).
+# Single epoch pins the stage3 base image and portage snapshot to the same date.
+# This is a policy choice for reproducibility and attestation: a single BUILD_EPOCH
+# unambiguously identifies all build inputs (toolchain + ebuilds).
 # Update with: make update-build-pins
-ARG PORTAGE_DATE=20260330
-FROM gentoo/stage3:amd64-openrc-${STAGE3_DATE} AS base-tools
+ARG BUILD_EPOCH=20260330
+FROM gentoo/stage3:amd64-openrc-${BUILD_EPOCH} AS base-tools
 
 LABEL maintainer="monolith-builder"
 LABEL description="Gentoo crossdev environment for i486-linux-musl + ISO tools"
@@ -26,13 +25,13 @@ ENV CROSS_TARGET=i486-linux-musl
 ENV CROSS_COMPILE=i486-linux-musl-
 
 # Re-declare so the value is available inside this stage
-ARG PORTAGE_DATE
+ARG BUILD_EPOCH
 
 # Fetch pinned portage snapshot using portage's own tooling.
 # --revert pins to a specific date for reproducibility; emerge-webrsync handles
 # GPG verification internally using its bundled Gentoo release signing key
 # (DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D) — build fails if signature invalid.
-RUN emerge-webrsync --revert=${PORTAGE_DATE}
+RUN emerge-webrsync --revert=${BUILD_EPOCH}
 
 # Install all host tools
 # cmake:   prevents BDEPEND from pulling in cmake-9999 (live ebuild)

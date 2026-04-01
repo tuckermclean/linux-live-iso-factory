@@ -31,7 +31,7 @@ CROSSDEV_KEYWORDS="/etc/portage/package.accept_keywords/crossdev-all"
 setup_keywords() {
     if [ -f "${CROSSDEV_KEYWORDS}" ] && grep -qF '**' "${CROSSDEV_KEYWORDS}" 2>/dev/null; then
         ORIG_KEYWORDS=$(cat "${CROSSDEV_KEYWORDS}")
-        echo '*/* *' > "${CROSSDEV_KEYWORDS}"
+        echo '*/* ~*' > "${CROSSDEV_KEYWORDS}"
         trap 'echo "${ORIG_KEYWORDS}" > "${CROSSDEV_KEYWORDS}"' EXIT
     fi
 }

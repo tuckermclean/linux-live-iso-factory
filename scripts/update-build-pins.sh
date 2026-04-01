@@ -2,9 +2,9 @@
 #
 # update-build-pins.sh - Update Dockerfile build pins
 #
-# Manages the two version pins that live outside portage:
-#   1. ARG STAGE3_DATE  — Gentoo stage3 amd64-openrc base image date tag
-#   2. ENV SOURCE_DATE_EPOCH — Unix epoch derived from STAGE3_DATE
+# Manages the build epoch that pins all build inputs to a single date:
+#   ARG BUILD_EPOCH  — stage3 base image date + portage snapshot date (always equal)
+#   ENV SOURCE_DATE_EPOCH — Unix epoch derived from BUILD_EPOCH
 #
 # Runs on the HOST (no Docker required).
 #
@@ -29,12 +29,11 @@ usage() {
     exit 1
 }
 
-# Fetch the latest amd64-multilib stage3 date tag from Docker Hub
+# Fetch the latest amd64-openrc stage3 date tag from Docker Hub
 fetch_latest_stage3_date() {
     local url="${DOCKERHUB_TAGS_URL}"
     local latest_date=""
 
-    # Paginate through results to find the most recent amd64-multilib-YYYYMMDDTHHMMSSZ tag
     while [[ -n "${url}" ]]; do
         local response
         response=$(curl -fsSL "${url}") || {
@@ -42,7 +41,6 @@ fetch_latest_stage3_date() {
             return 1
         }
 
-        # Extract tags matching amd64-openrc-YYYYMMDD pattern
         local page_latest
         page_latest=$(python3 -c "
 import json, sys, re
@@ -61,11 +59,9 @@ print(dates[0] if dates else '')
             if [[ -z "${latest_date}" ]] || [[ "${page_latest}" > "${latest_date}" ]]; then
                 latest_date="${page_latest}"
             fi
-            # We got a result from this page; check next page only if no result yet
             break
         fi
 
-        # Move to next page
         url=$(python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -79,7 +75,6 @@ print(data.get('next') or '')
 # Convert YYYYMMDD date to Unix epoch (midnight UTC)
 date_to_epoch() {
     local datestr="$1"
-    # Format: 20260323 → 2026-03-23T00:00:00Z
     local formatted="${datestr:0:4}-${datestr:4:2}-${datestr:6:2}T00:00:00Z"
     date -d "${formatted}" +%s 2>/dev/null || \
     python3 -c "
@@ -89,18 +84,13 @@ print(int(dt.timestamp()))
 "
 }
 
-# Read current value of ARG STAGE3_DATE from Dockerfile
-get_current_stage3_date() {
-    grep '^ARG STAGE3_DATE=' "${DOCKERFILE}" | cut -d= -f2
-}
-
-# Read current value of ARG PORTAGE_DATE from Dockerfile
-get_current_portage_date() {
-    grep '^ARG PORTAGE_DATE=' "${DOCKERFILE}" | cut -d= -f2
+# Read current BUILD_EPOCH from Dockerfile
+get_current_epoch() {
+    grep '^ARG BUILD_EPOCH=' "${DOCKERFILE}" | cut -d= -f2
 }
 
 # Read current SOURCE_DATE_EPOCH from Dockerfile
-get_current_epoch() {
+get_current_source_epoch() {
     grep '^ENV SOURCE_DATE_EPOCH=' "${DOCKERFILE}" | cut -d= -f2
 }
 
@@ -117,10 +107,9 @@ cmd_check() {
     echo "==> Checking build pins"
     echo ""
 
-    local current_stage3 current_portage current_epoch latest_date latest_epoch
-    current_stage3=$(get_current_stage3_date)
-    current_portage=$(get_current_portage_date)
+    local current_epoch current_source_epoch latest_date latest_epoch
     current_epoch=$(get_current_epoch)
+    current_source_epoch=$(get_current_source_epoch)
 
     echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
     latest_date=$(fetch_latest_stage3_date)
@@ -135,11 +124,9 @@ cmd_check() {
 
     printf "\n  %-25s %-28s %-28s\n" "Pin" "Current" "Latest"
     printf "  %-25s %-28s %-28s\n" "---" "-------" "------"
-    printf "  %-25s %-28s %-28s" "STAGE3_DATE" "${current_stage3}" "${latest_date}"
-    [[ "${current_stage3}" != "${latest_date}" ]] && echo " *" || echo ""
-    printf "  %-25s %-28s %-28s" "PORTAGE_DATE" "${current_portage}" "${latest_date}"
-    [[ "${current_portage}" != "${latest_date}" ]] && echo " *" || echo ""
-    printf "  %-25s %-28s %-28s\n" "SOURCE_DATE_EPOCH" "${current_epoch}" "${latest_epoch:-derived}"
+    printf "  %-25s %-28s %-28s" "BUILD_EPOCH" "${current_epoch}" "${latest_date}"
+    [[ "${current_epoch}" != "${latest_date}" ]] && echo " *" || echo ""
+    printf "  %-25s %-28s %-28s\n" "SOURCE_DATE_EPOCH" "${current_source_epoch}" "${latest_epoch:-derived}"
     echo ""
     echo "  * = update available"
     echo ""
@@ -150,9 +137,8 @@ cmd_check() {
 cmd_update() {
     echo "==> Updating Dockerfile build pins"
 
-    local current_stage3 current_portage latest_date new_epoch
-    current_stage3=$(get_current_stage3_date)
-    current_portage=$(get_current_portage_date)
+    local current_epoch latest_date new_source_epoch
+    current_epoch=$(get_current_epoch)
 
     echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
     latest_date=$(fetch_latest_stage3_date)
@@ -162,35 +148,30 @@ cmd_update() {
         exit 1
     fi
 
-    if [[ "${current_stage3}" == "${latest_date}" ]]; then
-        echo "  STAGE3_DATE already up to date: ${current_stage3}"
-    else
-        echo "  Updating STAGE3_DATE: ${current_stage3} → ${latest_date}"
-        sed -i "s/^ARG STAGE3_DATE=.*/ARG STAGE3_DATE=${latest_date}/" "${DOCKERFILE}"
-    fi
-
-    # Verify the portage snapshot exists for this date before pinning it
+    # Verify the portage snapshot exists for this date before committing to it
     echo "  Verifying portage snapshot exists for ${latest_date}..."
-    if verify_portage_snapshot "${latest_date}"; then
-        if [[ "${current_portage}" == "${latest_date}" ]]; then
-            echo "  PORTAGE_DATE already up to date: ${current_portage}"
-        else
-            echo "  Updating PORTAGE_DATE: ${current_portage} → ${latest_date}"
-            sed -i "s/^ARG PORTAGE_DATE=.*/ARG PORTAGE_DATE=${latest_date}/" "${DOCKERFILE}"
-        fi
-    else
-        echo "  WARNING: No portage snapshot found for ${latest_date} — PORTAGE_DATE unchanged (${current_portage})"
+    if ! verify_portage_snapshot "${latest_date}"; then
+        echo "ERROR: No portage snapshot found for ${latest_date} — cannot update BUILD_EPOCH" >&2
+        echo "       The stage3 image exists but the matching portage snapshot does not yet." >&2
+        exit 1
     fi
 
-    new_epoch=$(date_to_epoch "${latest_date}")
-    local current_epoch
-    current_epoch=$(get_current_epoch)
-
-    if [[ "${current_epoch}" == "${new_epoch}" ]]; then
-        echo "  SOURCE_DATE_EPOCH already up to date: ${current_epoch}"
+    if [[ "${current_epoch}" == "${latest_date}" ]]; then
+        echo "  BUILD_EPOCH already up to date: ${current_epoch}"
     else
-        echo "  Updating SOURCE_DATE_EPOCH: ${current_epoch} → ${new_epoch}"
-        sed -i "s/^ENV SOURCE_DATE_EPOCH=.*/ENV SOURCE_DATE_EPOCH=${new_epoch}/" "${DOCKERFILE}"
+        echo "  Updating BUILD_EPOCH: ${current_epoch} → ${latest_date}"
+        sed -i "s/^ARG BUILD_EPOCH=.*/ARG BUILD_EPOCH=${latest_date}/" "${DOCKERFILE}"
+    fi
+
+    new_source_epoch=$(date_to_epoch "${latest_date}")
+    local current_source_epoch
+    current_source_epoch=$(get_current_source_epoch)
+
+    if [[ "${current_source_epoch}" == "${new_source_epoch}" ]]; then
+        echo "  SOURCE_DATE_EPOCH already up to date: ${current_source_epoch}"
+    else
+        echo "  Updating SOURCE_DATE_EPOCH: ${current_source_epoch} → ${new_source_epoch}"
+        sed -i "s/^ENV SOURCE_DATE_EPOCH=.*/ENV SOURCE_DATE_EPOCH=${new_source_epoch}/" "${DOCKERFILE}"
     fi
 
     echo ""

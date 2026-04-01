@@ -85,6 +85,9 @@ mail-client/mutt
 # Terminal multiplexer
 app-misc/tmux
 
+# User/password management
+sys-apps/shadow
+
 # System utilities
 sys-process/procps
 sys-process/htop
@@ -96,8 +99,40 @@ sys-fs/e2fsprogs
 sys-fs/dosfstools
 sys-fs/squashfs-tools
 
+# Additional shells
+app-shells/zsh
+app-shells/bash-completion
+
+# File managers and search
+app-misc/mc
+net-misc/rsync
+sys-apps/the_silver_searcher
+
+# Additional compression
+app-arch/zip
+app-arch/unzip
+app-arch/zstd
+
+# Network analysis
+net-analyzer/nmap
+net-misc/socat
+net-analyzer/iftop
+net-analyzer/nethogs
+
+# Hardware info
+sys-apps/pciutils
+sys-apps/usbutils
+sys-apps/smartmontools
+sys-apps/hdparm
+sys-apps/dmidecode
+
+# Data tools
+app-misc/jq
+
 # Amusements
+games-misc/bsd-games
 app-misc/figlet
 app-misc/cmatrix
 app-misc/sl
+app-misc/toilet
 games-roguelike/nethack

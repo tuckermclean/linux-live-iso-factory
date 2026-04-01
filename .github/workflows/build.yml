@@ -107,7 +107,8 @@ jobs:
 
       - name: Set build version
         run: |
-          echo "BUILD_VERSION=$(grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)" >> "$GITHUB_ENV"
+          echo "BUILD_VERSION=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -134,7 +135,7 @@ jobs:
         run: make sync-portage
 
       - name: Restore binary package cache from S3
-        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/ output/packages/ || true
+        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/ output/packages/ || true
 
       - name: Build packages
         run: |
@@ -143,7 +144,7 @@ jobs:
 
       - name: Save binary packages to S3
         if: always()
-        run: aws s3 sync output/packages/ s3://${{ secrets.S3_BUCKET }}/packages/
+        run: aws s3 sync output/packages/ s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/
 
       - name: Save build logs to S3
         if: always()
@@ -172,7 +173,8 @@ jobs:
 
       - name: Set build version
         run: |
-          echo "BUILD_VERSION=$(grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)" >> "$GITHUB_ENV"
+          echo "BUILD_VERSION=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -199,7 +201,7 @@ jobs:
         run: make sync-portage
 
       - name: Restore binary package cache from S3
-        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/ output/packages/
+        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/ output/packages/
 
       - name: Build rootfs
         run: make build-rootfs JOBS=2 LOAD_AVG=2
@@ -235,7 +237,8 @@ jobs:
 
       - name: Set build version
         run: |
-          echo "BUILD_VERSION=$(grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)" >> "$GITHUB_ENV"
+          echo "BUILD_VERSION=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

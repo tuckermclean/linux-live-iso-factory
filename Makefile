@@ -18,15 +18,12 @@ IMAGE_NAME := monolith-builder
 # Get absolute path to this directory
 PROJECT_DIR := $(shell pwd)
 
-# Image version derived from the pinned stage3 date in Dockerfile
-IMAGE_VERSION := $(shell grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)
+# Single build epoch — pins stage3 base image and portage snapshot to the same date
+BUILD_EPOCH := $(shell grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
 
 # Build artifact version — override with BUILD_VERSION=x.y.z for CI
-BUILD_VERSION ?= $(IMAGE_VERSION)
+BUILD_VERSION ?= $(BUILD_EPOCH)
 VERSION_ENV := -e BUILD_VERSION=$(BUILD_VERSION)
-
-# Portage snapshot date — must match PORTAGE_DATE in Dockerfile
-PORTAGE_DATE := $(shell grep '^ARG PORTAGE_DATE=' Dockerfile | cut -d= -f2)
 
 # Container registry — set REGISTRY to push/pull the builder image
 # e.g.: make push-image REGISTRY=ghcr.io/youruser
@@ -151,7 +148,7 @@ CROSSDEV_CONTAINER := monolith-crossdev-build
 # The base-tools image ID is stamped as a label on the final image. On subsequent
 # runs, if that label matches the current base-tools ID, the crossdev step is skipped.
 build-image: ensure-dirs
-	@echo "==> Building base-tools stage (stage3: $(IMAGE_VERSION))"
+	@echo "==> Building base-tools stage (epoch: $(BUILD_EPOCH))"
 	docker buildx build --target base-tools \
 		--cache-from $(BASE_TOOLS_IMAGE) --cache-to type=inline \
 		-t $(BASE_TOOLS_IMAGE) \
@@ -193,15 +190,15 @@ push-image: build-image
 		echo "Error: set REGISTRY=<registry/repo> — e.g. REGISTRY=ghcr.io/youruser make push-image"; \
 		exit 1; \
 	fi
-	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(IMAGE_VERSION)
+	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(BUILD_EPOCH)
 	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):latest
-	docker push $(REGISTRY_IMAGE):$(IMAGE_VERSION)
+	docker push $(REGISTRY_IMAGE):$(BUILD_EPOCH)
 	docker push $(REGISTRY_IMAGE):latest
-	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(IMAGE_VERSION)
+	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)
 	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:latest
-	docker push $(REGISTRY_IMAGE)-base-tools:$(IMAGE_VERSION)
+	docker push $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)
 	docker push $(REGISTRY_IMAGE)-base-tools:latest
-	@echo "==> Pushed $(REGISTRY_IMAGE):$(IMAGE_VERSION) and :latest (+ base-tools)"
+	@echo "==> Pushed $(REGISTRY_IMAGE):$(BUILD_EPOCH) and :latest (+ base-tools)"
 
 # Pull builder image from registry and tag locally
 pull-image:
@@ -209,16 +206,16 @@ pull-image:
 		echo "Error: set REGISTRY=<registry/repo> — e.g. REGISTRY=ghcr.io/youruser make pull-image"; \
 		exit 1; \
 	fi
-	docker pull $(REGISTRY_IMAGE):$(IMAGE_VERSION)
-	docker tag $(REGISTRY_IMAGE):$(IMAGE_VERSION) $(IMAGE_NAME)
+	docker pull $(REGISTRY_IMAGE):$(BUILD_EPOCH)
+	docker tag $(REGISTRY_IMAGE):$(BUILD_EPOCH) $(IMAGE_NAME)
 	docker pull $(REGISTRY_IMAGE)-base-tools:latest || true
 	docker tag $(REGISTRY_IMAGE)-base-tools:latest $(BASE_TOOLS_IMAGE) || true
 	@echo "==> Pulled and tagged as $(IMAGE_NAME) (+ base-tools)"
 
 # Sync portage tree in volume
 sync-portage: ensure-volume ensure-dirs
-	@echo "==> Syncing portage tree (pinned: $(PORTAGE_DATE))"
-	$(DOCKER_RUN) $(IMAGE_NAME) emerge-webrsync --revert=$(PORTAGE_DATE)
+	@echo "==> Syncing portage tree (pinned: $(BUILD_EPOCH))"
+	$(DOCKER_RUN) $(IMAGE_NAME) emerge-webrsync --revert=$(BUILD_EPOCH)
 
 # Build all packages: kernel, busybox, and userland (with parallel jobs)
 build-packages: ensure-volume ensure-dirs
