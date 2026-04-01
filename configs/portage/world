@@ -121,7 +121,6 @@ net-analyzer/nethogs
 
 # Hardware info
 sys-apps/pciutils
-sys-apps/usbutils
 sys-apps/smartmontools
 sys-apps/hdparm
 sys-apps/dmidecode

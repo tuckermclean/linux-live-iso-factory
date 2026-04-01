@@ -84,7 +84,7 @@ app-shells/dash static
 
 # Core libraries - static-libs for development use
 sys-libs/readline static static-libs
-sys-libs/ncurses static static-libs -gpm -minimal unicode
+sys-libs/ncurses static static-libs cxx -gpm -minimal unicode
 sys-libs/zlib static-libs
 dev-libs/libpcre2 static static-libs
 dev-libs/openssl static static-libs
@@ -147,7 +147,7 @@ app-admin/sysklogd static
 sys-process/dcron static
 
 # e2fsprogs - ext2/3/4 tools (mkfs, fsck, tune2fs)
-sys-fs/e2fsprogs static static-libs -nls
+sys-fs/e2fsprogs static static-libs tools -nls
 
 # dosfstools - FAT filesystem tools (mkfs.fat, fsck.fat)
 sys-fs/dosfstools static -nls
