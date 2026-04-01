@@ -265,6 +265,13 @@ if [ ${FAIL_COUNT} -gt 0 ]; then
     echo "    Check logs in: ${LOGS_DIR}/"
 fi
 
+# Create binpkgs for any installed sysroot packages that emerge skipped because
+# they were already present (e.g. acct-user/* installed by crossdev setup).
+# quickpkg tarballs installed files without recompiling — fast and idempotent.
+echo "==> Creating binpkgs for pre-installed sysroot packages"
+ROOT="/usr/${CROSS_TARGET}" PKGDIR="${BINPKG_DIR}" quickpkg --include-config=n "*/*" 2>/dev/null || true
+PKGDIR="${BINPKG_DIR}" emaint binhost --fix
+
 # Copy kernel image to OUTPUT_DIR so it escapes the container.
 # The linux-live ebuild uses insinto /output but ROOT=/usr/${CROSS_TARGET}, so
 # the image lands at /usr/${CROSS_TARGET}/output/vmlinuz instead of /output/vmlinuz.
