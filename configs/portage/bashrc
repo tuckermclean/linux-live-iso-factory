@@ -101,6 +101,15 @@ fi
 #      ./objects.o (with OBJDIR=.) will also compile with the host gcc.
 if [[ ${EBUILD_PHASE} == "compile" ]]; then
 	pre_src_compile() {
+		# iproute2: tc/Makefile calls 'yacc-reference' as a bare command, but the
+		# script lives in ${S} (the source root) and isn't in PATH. Adding ${S}
+		# to PATH lets the tc sub-make find it without patching the Makefile.
+		if [[ ${CATEGORY}/${PN} == "sys-apps/iproute2" ]]; then
+			einfo "iproute2: adding source dir to PATH for yacc-reference"
+			export PATH="${S}:${PATH}"
+			return 0
+		fi
+
 		[[ ${CATEGORY}/${PN} == "games-roguelike/nethack" ]] || return 0
 
 		# configure copies sys/unix/Makefile.utl → util/Makefile; patch the copy

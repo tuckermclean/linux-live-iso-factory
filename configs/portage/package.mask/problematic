@@ -22,6 +22,25 @@ sys-apps/man-db
 # Re-enable by installing fortune-mod natively in the Dockerfile first.
 games-misc/fortune-mod
 
+# pciutils: cross-linker includes crt1.o (exe startup) when building libpci.so;
+# build system incompatibility with the musl cross-compile toolchain.
+sys-apps/pciutils
+
+# zstd: meson + multilib-minimal eclass fails cross-compilation with same crt1.o error.
+# jq pulls bison → gettext → libxml2 which has the same meson/multilib failure.
+# Re-enable by providing a meson cross-file for i486-linux-musl.
+app-arch/zstd
+dev-libs/libxml2
+
+# libcaca: uses C++ exceptions with -fno-exceptions; toilet depends on libcaca.
+# Fixing requires per-package fexceptions override AND shared lib cross-compile fix.
+media-libs/libcaca
+app-misc/toilet
+
+# nethogs requires ncurses[cxx]; building ncurses with cxx breaks the ncurses build
+# entirely in the musl cross-compile context, cascading to ~20 dependents.
+net-analyzer/nethogs
+
 # usbutils → virtual/libudev → systemd-utils has an unconditional REQUIRED_USE on
 # python_single_target. Same root cause as nmap. Re-enable by adding Python to world.
 sys-apps/usbutils

@@ -111,22 +111,18 @@ sys-apps/the_silver_searcher
 # Additional compression
 app-arch/zip
 app-arch/unzip
-app-arch/zstd
 
 # Network analysis
 net-misc/socat
 net-analyzer/iftop
 net-analyzer/tcpdump
-net-analyzer/nethogs
 
 # Hardware info
-sys-apps/pciutils
 sys-apps/smartmontools
 sys-apps/hdparm
 sys-apps/dmidecode
 
 # Data tools
-app-misc/jq
 
 # Amusements
 games-misc/bsd-games
