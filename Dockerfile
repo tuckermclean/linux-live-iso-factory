@@ -8,7 +8,7 @@
 #   make build-packages     # Cross-compile all packages (kernel, busybox, userland)
 #   make iso                # Build initrd + rootfs + ISO from compiled packages
 
-ARG STAGE3_DATE=20260323
+ARG STAGE3_DATE=20260330
 # Portage snapshot date — must match an available gentoo-YYYYMMDD.tar.xz on distfiles.
 # Pinned independently of STAGE3_DATE so both can be updated and attested separately.
 # Verified at build time against Gentoo's release signing key (GPG).
@@ -20,7 +20,7 @@ LABEL maintainer="monolith-builder"
 LABEL description="Gentoo crossdev environment for i486-linux-musl + ISO tools"
 
 # Reproducibility: clamp all build output timestamps to the stage3 date
-ENV SOURCE_DATE_EPOCH=1774224000
+ENV SOURCE_DATE_EPOCH=1774828800
 
 ENV CROSS_TARGET=i486-linux-musl
 ENV CROSS_COMPILE=i486-linux-musl-
