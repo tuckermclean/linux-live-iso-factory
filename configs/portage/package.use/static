@@ -150,8 +150,9 @@ sys-process/dcron static
 # tools USE flag builds static exes linked against libext2fs.so → linker error; drop it
 sys-fs/e2fsprogs static static-libs -nls
 
-# shadow - passwd, useradd, etc.; -static-libs avoids libsubid.a landing in /lib* (QA fail)
-sys-apps/shadow static -static-libs -pam -cracklib
+# shadow - passwd, useradd, etc.; -libsubid prevents libsubid.a from building (it installs
+# to /lib/ not /usr/lib/, causing a QA failure with no container runtime to justify it)
+sys-apps/shadow static -static-libs -libsubid -pam -cracklib
 
 # dosfstools - FAT filesystem tools (mkfs.fat, fsck.fat)
 sys-fs/dosfstools static -nls
