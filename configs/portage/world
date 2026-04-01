@@ -104,7 +104,6 @@ app-shells/zsh
 app-shells/bash-completion
 
 # File managers and search
-app-misc/mc
 net-misc/rsync
 sys-apps/the_silver_searcher
 

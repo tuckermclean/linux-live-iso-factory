@@ -22,6 +22,10 @@ sys-apps/man-db
 # Re-enable by installing fortune-mod natively in the Dockerfile first.
 games-misc/fortune-mod
 
+# mc hard-requires e2fsprogs[tools], but e2fsprogs+tools fails to build statically
+# (tools link against libext2fs.so rather than libext2fs.a).
+app-misc/mc
+
 # pciutils: cross-linker includes crt1.o (exe startup) when building libpci.so;
 # build system incompatibility with the musl cross-compile toolchain.
 sys-apps/pciutils
