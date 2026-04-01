@@ -192,7 +192,7 @@ if ${EMERGE_CMD} \
     --jobs=${JOBS} \
     --load-average=${LOAD_AVG} \
     --keep-going \
-    --buildpkgonly \
+    --buildpkg \
     --usepkg \
     --verbose \
     "${ATOMS[@]}" \
