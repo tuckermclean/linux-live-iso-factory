@@ -21,6 +21,10 @@ PROJECT_DIR := $(shell pwd)
 # Image version derived from the pinned stage3 date in Dockerfile
 IMAGE_VERSION := $(shell grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)
 
+# Build artifact version — override with BUILD_VERSION=x.y.z for CI
+BUILD_VERSION ?= $(IMAGE_VERSION)
+VERSION_ENV := -e BUILD_VERSION=$(BUILD_VERSION)
+
 # Portage snapshot date — must match PORTAGE_DATE in Dockerfile
 PORTAGE_DATE := $(shell grep '^ARG PORTAGE_DATE=' Dockerfile | cut -d= -f2)
 
@@ -64,7 +68,8 @@ DOCKER_RUN_IT := docker run --rm -it \
 	$(PARALLEL_ENV)
 
 .PHONY: help build-image push-image pull-image \
-        sync-portage build-packages build-packages-resume extract \
+        sync-portage build-packages build-packages-resume \
+        extract build-rootfs \
         menuconfig-kernel menuconfig-busybox \
         iso all test shell \
         check-updates update-versions update-build-pins update-all \
@@ -84,17 +89,18 @@ help:
 	@echo ""
 	@echo "Packages (Gentoo cross-compilation — kernel, busybox, userland):"
 	@echo "  sync-portage          - Sync portage tree in cache volume"
-	@echo "  build-packages        - Cross-compile all packages (JOBS=$(JOBS))"
+	@echo "  build-packages        - Step 1: cross-compile packages → binpkgs (JOBS=$(JOBS))"
 	@echo "  build-packages-resume - Resume build, skip already-built"
-	@echo "  extract               - Copy live sysroot to output/sysroot/"
+	@echo "  build-rootfs          - Step 2: install binpkgs → squashfs + initrd"
+	@echo "  extract               - Alias for build-rootfs install step only"
 	@echo ""
 	@echo "Configuration:"
 	@echo "  menuconfig-kernel    - Configure kernel interactively"
 	@echo "  menuconfig-busybox   - Configure BusyBox interactively"
 	@echo ""
 	@echo "ISO:"
-	@echo "  iso                  - Create bootable ISO (initrd + rootfs + iso)"
-	@echo "  all                  - Full build: image → packages → extract → iso"
+	@echo "  iso                  - Step 3: assemble ISO from squashfs + initrd + vmlinuz"
+	@echo "  all                  - Full build: image → packages → rootfs → iso"
 	@echo ""
 	@echo "Testing:"
 	@echo "  test                 - Boot ISO in QEMU (requires qemu-system-i386)"
@@ -224,10 +230,10 @@ build-packages-resume: ensure-volume ensure-dirs
 	@echo "==> Resuming package build ($(JOBS) parallel jobs)"
 	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/build-packages.sh --resume
 
-# Extract packages to sysroot
-extract: ensure-dirs
-	@echo "==> Extracting packages to sysroot"
-	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/extract-packages.sh
+# Install pre-built packages into the sysroot (step 2a)
+extract: ensure-volume ensure-dirs
+	@echo "==> Installing packages from binpkgs"
+	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/extract-packages.sh
 
 # Interactive kernel menuconfig — saves result to configs/kernel.config
 menuconfig-kernel: ensure-volume ensure-dirs
@@ -239,28 +245,33 @@ menuconfig-busybox: ensure-volume ensure-dirs
 	@echo "==> Running BusyBox menuconfig"
 	$(DOCKER_RUN_IT) $(IMAGE_NAME) i486-linux-musl-emerge --config sys-apps/busybox
 
-# Create bootable ISO (initrd + rootfs + iso)
-iso: ensure-dirs
-	@echo "==> Building initramfs"
-	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/build-initrd.sh
+# Install packages + build squashfs + initrd (step 2)
+build-rootfs: ensure-volume ensure-dirs
+	@echo "==> Installing packages from binpkgs"
+	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/extract-packages.sh
 	@echo "==> Building root filesystem"
-	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/build-rootfs.sh
-	@echo "==> Creating bootable ISO"
-	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/build-iso.sh
+	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/build-rootfs.sh
+	@echo "==> Building initramfs"
+	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/build-initrd.sh
 
-# Build everything: image → packages → extract → iso
-all: build-image sync-portage build-packages extract iso
+# Assemble bootable ISO from squashfs + initrd + vmlinuz (step 3)
+iso: ensure-dirs
+	@echo "==> Creating bootable ISO"
+	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/build-iso.sh
+
+# Build everything: image → packages → rootfs → iso
+all: build-image sync-portage build-packages build-rootfs iso
 
 # Test ISO in QEMU (on host)
 test:
-	@if [ ! -f "$(PROJECT_DIR)/output/boot.iso" ]; then \
-		echo "Error: output/boot.iso not found. Run 'make iso' first."; \
+	@if [ ! -f "$(PROJECT_DIR)/output/themonolith-$(BUILD_VERSION).iso" ]; then \
+		echo "Error: output/themonolith-$(BUILD_VERSION).iso not found. Run 'make iso' first."; \
 		exit 1; \
 	fi
 	@echo "==> Booting ISO in QEMU (Ctrl+A X to exit)"
-	@echo "    For graphical: qemu-system-i386 -cdrom output/boot.iso -m 64M"
+	@echo "    For graphical: qemu-system-i386 -cdrom output/themonolith-$(BUILD_VERSION).iso -m 64M"
 	qemu-system-i386 \
-		-cdrom $(PROJECT_DIR)/output/boot.iso \
+		-cdrom $(PROJECT_DIR)/output/themonolith-$(BUILD_VERSION).iso \
 		-m 64M \
 		-cpu 486 \
 		-nographic \

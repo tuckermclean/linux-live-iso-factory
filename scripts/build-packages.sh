@@ -192,7 +192,7 @@ if ${EMERGE_CMD} \
     --jobs=${JOBS} \
     --load-average=${LOAD_AVG} \
     --keep-going \
-    --buildpkg \
+    --buildpkgonly \
     --usepkg \
     --verbose \
     "${ATOMS[@]}" \
@@ -264,14 +264,6 @@ if [ ${FAIL_COUNT} -gt 0 ]; then
     echo ""
     echo "    Check logs in: ${LOGS_DIR}/"
 fi
-
-# Save the live sysroot to the output volume.
-# Binary packages only contain what src_install puts in ${D}; files created by
-# pkg_postinst (e.g. /var/games/nethack/perm) are only in the live sysroot.
-# extract-packages.sh uses this as its source instead of the binary packages.
-echo "==> Saving live sysroot /usr/${CROSS_TARGET}/ to ${OUTPUT_DIR}/live-sysroot/"
-mkdir -p "${OUTPUT_DIR}/live-sysroot"
-rsync -a "/usr/${CROSS_TARGET}/" "${OUTPUT_DIR}/live-sysroot/"
 
 # Exit with error if any packages failed
 [ ${FAIL_COUNT} -eq 0 ]

@@ -23,7 +23,7 @@ SYSROOT="/usr/${CROSS_TARGET:-i486-linux-musl}"
 BUSYBOX_BIN="${OUTPUT_DIR}/sysroot/bin/busybox"
 
 # Output file
-INITRD_IMAGE="${OUTPUT_DIR}/initrd.img"
+INITRD_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.initrd"
 
 # Colors for output
 RED='\033[0;31m'

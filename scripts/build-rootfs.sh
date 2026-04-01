@@ -20,7 +20,7 @@ CONFIGS_DIR="${CONFIGS_DIR:-/configs}"
 BUILD_DIR="${BUILD_DIR:-/build}"
 
 # Output
-SQUASHFS_IMAGE="${OUTPUT_DIR}/rootfs.squashfs"
+SQUASHFS_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.squashfs"
 
 # Colors for output
 RED='\033[0;31m'

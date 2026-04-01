@@ -18,12 +18,12 @@ OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 ISO_DIR="/tmp/iso"
 
 # Input files
-KERNEL_IMAGE="${OUTPUT_DIR}/vmlinuz"
-INITRD_IMAGE="${OUTPUT_DIR}/initrd.img"
-SQUASHFS_IMAGE="${OUTPUT_DIR}/rootfs.squashfs"
+KERNEL_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.vmlinuz"
+INITRD_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.initrd"
+SQUASHFS_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.squashfs"
 
 # Output file
-ISO_IMAGE="${OUTPUT_DIR}/boot.iso"
+ISO_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.iso"
 
 # ISOLINUX files - auto-detect Gentoo vs Debian layout
 # Gentoo: /usr/share/syslinux/

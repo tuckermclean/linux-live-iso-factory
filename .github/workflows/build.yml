@@ -105,6 +105,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set build version
+        run: |
+          echo "BUILD_VERSION=$(grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -143,13 +147,17 @@ jobs:
 
       - name: Save build logs to S3
         if: always()
-        run: aws s3 sync output/logs/ s3://${{ secrets.S3_BUCKET }}/logs/
+        run: aws s3 sync output/logs/ s3://${{ secrets.S3_BUCKET }}/builds/$BUILD_VERSION/logs/
 
-      - name: Save live sysroot to S3
+      - name: Save kernel image to S3
         if: always()
-        run: aws s3 sync output/live-sysroot/ s3://${{ secrets.S3_BUCKET }}/live-sysroot/
+        run: |
+          if [ -f output/vmlinuz ]; then
+            aws s3 cp output/vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz
+            aws s3 cp output/vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
+          fi
 
-  build-iso:
+  build-rootfs:
     runs-on: ubuntu-latest
     needs: [build-image, build-packages]
     permissions:
@@ -161,6 +169,73 @@ jobs:
       (needs.build-packages.result == 'success' || needs.build-packages.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set build version
+        run: |
+          echo "BUILD_VERSION=$(grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull images
+        run: make pull-image
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+
+      - run: make ensure-dirs ensure-volume
+
+      - name: Sync portage
+        run: make sync-portage
+
+      - name: Restore binary package cache from S3
+        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/ output/packages/
+
+      - name: Build rootfs
+        run: make build-rootfs JOBS=2 LOAD_AVG=2
+
+      - name: Save squashfs to S3
+        if: always()
+        run: |
+          if [ -f output/themonolith-$BUILD_VERSION.squashfs ]; then
+            aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs
+            aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
+          fi
+
+      - name: Save initrd to S3
+        if: always()
+        run: |
+          if [ -f output/themonolith-$BUILD_VERSION.initrd ]; then
+            aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd
+            aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
+          fi
+
+  build-iso:
+    runs-on: ubuntu-latest
+    needs: [build-image, build-rootfs]
+    permissions:
+      contents: read
+      packages: read
+    if: >
+      always() &&
+      needs.build-image.result == 'success' &&
+      needs.build-rootfs.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set build version
+        run: |
+          echo "BUILD_VERSION=$(grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -183,16 +258,20 @@ jobs:
 
       - run: make ensure-dirs
 
-      - name: Restore live sysroot from S3
-        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/live-sysroot/ output/live-sysroot/
+      - name: Restore squashfs from S3
+        run: aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs output/themonolith-$BUILD_VERSION.squashfs
+
+      - name: Restore initrd from S3
+        run: aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd output/themonolith-$BUILD_VERSION.initrd
+
+      - name: Restore kernel image from S3
+        run: aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
 
       - name: Build ISO
-        run: make extract iso
+        run: make iso
 
       - name: Upload ISO to S3
         run: |
-          STAGE3_DATE=$(grep '^ARG STAGE3_DATE=' Dockerfile | cut -d= -f2)
-          SHA=$(git rev-parse --short HEAD)
-          aws s3 cp output/boot.iso s3://${{ secrets.S3_BUCKET }}/boot.iso
-          aws s3 cp output/boot.iso s3://${{ secrets.S3_BUCKET }}/boot-${STAGE3_DATE}-${SHA}.iso
-          echo "==> Uploaded boot.iso and boot-${STAGE3_DATE}-${SHA}.iso"
+          aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.iso
+          aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
+          echo "==> Uploaded themonolith-$BUILD_VERSION.iso and themonolith.iso (latest)"
