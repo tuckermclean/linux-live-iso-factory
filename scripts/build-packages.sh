@@ -273,13 +273,11 @@ ROOT="/usr/${CROSS_TARGET}" PKGDIR="${BINPKG_DIR}" quickpkg --include-config=n "
 PKGDIR="${BINPKG_DIR}" emaint binhost --fix
 
 # Copy kernel image to OUTPUT_DIR so it escapes the container.
-# The linux-live ebuild uses insinto /output but ROOT=/usr/${CROSS_TARGET}, so
-# the image lands at /usr/${CROSS_TARGET}/output/vmlinuz instead of /output/vmlinuz.
-# TODO: fix the ebuild to install vmlinuz correctly as a proper sysroot package.
-KERNEL_STAGED="/usr/${CROSS_TARGET}/output/vmlinuz"
-if [ -f "${KERNEL_STAGED}" ]; then
+# monolith-kernel installs vmlinuz-${PV} + vmlinuz symlink to /boot in the sysroot.
+KERNEL_STAGED="/usr/${CROSS_TARGET}/boot/vmlinuz"
+if [ -f "${KERNEL_STAGED}" ] || [ -L "${KERNEL_STAGED}" ]; then
     echo "==> Copying kernel image to ${OUTPUT_DIR}/vmlinuz"
-    cp "${KERNEL_STAGED}" "${OUTPUT_DIR}/vmlinuz"
+    cp -L "${KERNEL_STAGED}" "${OUTPUT_DIR}/vmlinuz"
 else
     echo "WARNING: Kernel image not found at ${KERNEL_STAGED} — vmlinuz will not be saved"
 fi

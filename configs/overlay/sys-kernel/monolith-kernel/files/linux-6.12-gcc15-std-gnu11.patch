@@ -1,0 +1,15 @@
+GCC 15 fix: add '-std=gnu11' to EFI stub Makefile.
+The EFI stub Makefile resets KBUILD_CFLAGS without carrying over '-std=gnu11',
+causing conflicts with C23 keywords (bool, false, true) that the kernel
+defines itself. The arch/x86/boot/compressed/Makefile fix was merged upstream
+in 6.12.80 and is not included here.
+
+--- a/drivers/firmware/efi/libstub/Makefile
++++ b/drivers/firmware/efi/libstub/Makefile
+@@ -37,5 +37,6 @@
+ KBUILD_CFLAGS			:= $(subst $(CC_FLAGS_FTRACE),,$(cflags-y)) \
+ 				   -Os -DDISABLE_BRANCH_PROFILING \
++				   -std=gnu11 \
+ 				   -include $(srctree)/include/linux/hidden.h \
+ 				   -D__NO_FORTIFY \
+ 				   -ffreestanding \

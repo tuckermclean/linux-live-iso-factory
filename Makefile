@@ -21,13 +21,15 @@ PROJECT_DIR := $(shell pwd)
 # Single build epoch — pins stage3 base image and portage snapshot to the same date
 BUILD_EPOCH := $(shell grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
 
+# Kernel version — read from versions.lock so targets stay in sync with the pin
+KERNEL_VERSION := $(shell grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2)
+
 # Build artifact version — override with BUILD_VERSION=x.y.z for CI
 BUILD_VERSION ?= $(BUILD_EPOCH)
 VERSION_ENV := -e BUILD_VERSION=$(BUILD_VERSION)
 
 # Container registry — set REGISTRY to push/pull the builder image
-# e.g.: make push-image REGISTRY=ghcr.io/youruser
-REGISTRY ?=
+REGISTRY ?= ghcr.io/tuckermclean
 REGISTRY_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME),$(IMAGE_NAME))
 
 # Parallelism settings (passed to container)
@@ -36,8 +38,9 @@ LOAD_AVG ?= $(shell nproc)
 PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG)
 
 # Named volumes for persistent build state
-BUILD_VOLUME := monolith-build
-PORTAGE_VOLUME := monolith-portage-cache
+BUILD_VOLUME    := monolith-build
+PORTAGE_VOLUME  := monolith-repos
+DISTFILES_VOLUME := monolith-distfiles
 
 # Bind mounts
 CONFIGS_MOUNT := -v $(PROJECT_DIR)/configs:/configs
@@ -46,8 +49,9 @@ SCRIPTS_MOUNT := -v $(PROJECT_DIR)/scripts:/scripts:ro
 ROOTFS_MOUNT := -v $(PROJECT_DIR)/rootfs:/rootfs:ro
 
 # Volume mounts
-BUILD_MOUNT := -v $(BUILD_VOLUME):/build
-PORTAGE_MOUNT := -v $(PORTAGE_VOLUME):/var/db/repos/gentoo
+BUILD_MOUNT      := -v $(BUILD_VOLUME):/build
+PORTAGE_MOUNT    := -v $(PORTAGE_VOLUME):/var/db/repos
+DISTFILES_MOUNT  := -v $(DISTFILES_VOLUME):/var/cache/distfiles
 
 # Portage log mount
 LOGS_MOUNT := -v $(PROJECT_DIR)/output/portage-logs:/var/log/portage
@@ -56,12 +60,12 @@ LOGS_MOUNT := -v $(PROJECT_DIR)/output/portage-logs:/var/log/portage
 DOCKER_RUN := docker run --rm \
 	$(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(SCRIPTS_MOUNT) \
 	$(ROOTFS_MOUNT) $(LOGS_MOUNT) \
-	$(BUILD_MOUNT) $(PORTAGE_MOUNT) \
+	$(BUILD_MOUNT) $(PORTAGE_MOUNT) $(DISTFILES_MOUNT) \
 	$(PARALLEL_ENV)
 DOCKER_RUN_IT := docker run --rm -it \
 	$(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(SCRIPTS_MOUNT) \
 	$(ROOTFS_MOUNT) $(LOGS_MOUNT) \
-	$(BUILD_MOUNT) $(PORTAGE_MOUNT) \
+	$(BUILD_MOUNT) $(PORTAGE_MOUNT) $(DISTFILES_MOUNT) \
 	$(PARALLEL_ENV)
 
 .PHONY: help build-image push-image pull-image \
@@ -130,11 +134,14 @@ ensure-dirs:
 	@mkdir -p $(PROJECT_DIR)/output/{packages,logs,sysroot,portage-logs}
 	@mkdir -p $(PROJECT_DIR)/configs
 
-# Ensure portage volume exists
+# Ensure persistent volumes exist
 ensure-volume:
 	@docker volume inspect $(PORTAGE_VOLUME) >/dev/null 2>&1 || \
-		(echo "==> Creating portage cache volume" && \
+		(echo "==> Creating repos volume" && \
 		 docker volume create $(PORTAGE_VOLUME))
+	@docker volume inspect $(DISTFILES_VOLUME) >/dev/null 2>&1 || \
+		(echo "==> Creating distfiles volume" && \
+		 docker volume create $(DISTFILES_VOLUME))
 
 # Intermediate image name for the pre-crossdev stage
 BASE_TOOLS_IMAGE := $(IMAGE_NAME)-base-tools
@@ -233,9 +240,23 @@ extract: ensure-volume ensure-dirs
 	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/extract-packages.sh
 
 # Interactive kernel menuconfig — saves result to configs/kernel.config
+# Bypasses portage's environment sanitization (which breaks ncurses TUI) by
+# driving tar/patch/make directly. CROSS_COMPILE not needed for menuconfig.
 menuconfig-kernel: ensure-volume ensure-dirs
 	@echo "==> Running kernel menuconfig"
-	$(DOCKER_RUN_IT) $(IMAGE_NAME) emerge --config sys-kernel/linux-live
+	$(DOCKER_RUN_IT) -e TERM $(IMAGE_NAME) sh -c \
+	    'set -e; \
+	     KVER=$(KERNEL_VERSION); \
+	     PATCH=/configs/overlay/sys-kernel/monolith-kernel/files/linux-$${KVER%.*}-gcc15-std-gnu11.patch; \
+	     SRCDIR=/tmp/kernel-menuconfig; \
+	     rm -rf "$$SRCDIR" && mkdir -p "$$SRCDIR"; \
+	     echo "==> Extracting linux-$${KVER}.tar.xz ..."; \
+	     tar xf /var/cache/distfiles/linux-$${KVER}.tar.xz -C "$$SRCDIR" --strip-components=1; \
+	     cd "$$SRCDIR"; \
+	     patch -p1 < "$$PATCH"; \
+	     [ -f /configs/kernel.config ] && cp /configs/kernel.config .config || make ARCH=i386 allnoconfig; \
+	     make ARCH=i386 olddefconfig; \
+	     make ARCH=i386 menuconfig && cp .config /configs/kernel.config && echo "==> Config saved to configs/kernel.config"'
 
 # Interactive BusyBox menuconfig — saves result to configs/portage/savedconfig/sys-apps/busybox
 menuconfig-busybox: ensure-volume ensure-dirs
@@ -305,10 +326,10 @@ show-failed:
 	@echo ""
 	@echo "==> Logs available in: output/logs/"
 
-# Regenerate linux-live Manifest with kernel tarball checksums (run once after changing the ebuild)
+# Regenerate monolith-kernel Manifest (run once after changing the ebuild)
 regen-manifest: ensure-dirs
 	$(DOCKER_RUN_IT) $(IMAGE_NAME) \
-	    ebuild /configs/overlay/sys-kernel/linux-live/linux-live-6.12.11.ebuild manifest
+	    ebuild /configs/overlay/sys-kernel/monolith-kernel/monolith-kernel-$(KERNEL_VERSION).ebuild manifest
 
 # Drop into container shell
 shell: ensure-volume ensure-dirs
@@ -327,7 +348,9 @@ clean-build: clean
 
 # Clean everything including Docker image and all volumes
 clean-all: clean-build
-	@echo "==> Removing portage cache volume"
+	@echo "==> Removing repos volume"
 	docker volume rm $(PORTAGE_VOLUME) 2>/dev/null || true
+	@echo "==> Removing distfiles volume"
+	docker volume rm $(DISTFILES_VOLUME) 2>/dev/null || true
 	@echo "==> Removing Docker image"
 	docker rmi $(IMAGE_NAME) 2>/dev/null || true

@@ -1,0 +1,82 @@
+# Copyright 2024 the-monolith
+# Distributed under the terms of the GNU General Public License v2
+
+EAPI=8
+
+DESCRIPTION="Linux kernel cross-compiled for i486 — The Monolith"
+HOMEPAGE="https://kernel.org"
+SRC_URI="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${PV}.tar.xz"
+
+LICENSE="GPL-2"
+SLOT="0"
+KEYWORDS="~amd64"
+
+S="${WORKDIR}/linux-${PV}"
+
+BDEPEND="
+	sys-devel/bc
+	sys-devel/flex
+	app-alternatives/lex
+	sys-devel/bison
+	dev-libs/elfutils
+"
+
+PATCHES=( "${FILESDIR}/linux-${PV%.*}-gcc15-std-gnu11.patch" )
+
+src_configure() {
+	# Load pinned config from bind-mounted /configs, fall back to allnoconfig
+	if [[ -f "${CONFIGS_DIR}/kernel.config" ]]; then
+		cp "${CONFIGS_DIR}/kernel.config" .config
+		einfo "Loaded kernel config from ${CONFIGS_DIR}/kernel.config"
+	else
+		ewarn "No kernel.config found at ${CONFIGS_DIR}/kernel.config — using allnoconfig"
+		make ARCH=i386 allnoconfig
+	fi
+	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig
+}
+
+src_compile() {
+	# -j1: cross-gcc is memory-heavy; higher parallelism OOMs CI runners
+	emake -j1 ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" bzImage
+}
+
+src_install() {
+	insinto /boot
+	newins arch/x86/boot/bzImage vmlinuz-${PV}
+	dosym vmlinuz-${PV} /boot/vmlinuz
+	# Save final config back to /configs
+	cp .config "${CONFIGS_DIR}/kernel.config" || true
+}
+
+pkg_config() {
+	# Run menuconfig interactively and save result back to /configs/kernel.config
+	# Re-extracts source into T to avoid needing the build workdir to persist
+	einfo "Setting up kernel source for menuconfig..."
+	local src="${T}/linux-${PV}"
+	mkdir -p "${src}"
+	local distfiles
+	distfiles=$(portageq distdir 2>/dev/null || echo "/var/cache/distfiles")
+	tar xf "${distfiles}/linux-${PV}.tar.xz" -C "${src}" --strip-components=1
+
+	pushd "${src}" >/dev/null || die
+
+	# Apply patches — use EBUILD path since FILESDIR/DISTDIR aren't populated for pkg_* phases
+	eapply "${EBUILD%/*}/files/linux-${PV%.*}-gcc15-std-gnu11.patch"
+
+	# Load existing config
+	if [[ -f "${CONFIGS_DIR}/kernel.config" ]]; then
+		cp "${CONFIGS_DIR}/kernel.config" .config
+	else
+		make ARCH=i386 allnoconfig
+	fi
+	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig
+
+	# Interactive menuconfig
+	make ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" menuconfig
+
+	# Save result
+	cp .config "${CONFIGS_DIR}/kernel.config" || die "Failed to save kernel config"
+	einfo "Kernel config saved to ${CONFIGS_DIR}/kernel.config"
+
+	popd >/dev/null || die
+}
