@@ -1,6 +1,6 @@
-# Minimal i486 Linux Build System
+# The Monolith
 
-A Docker-based build environment for creating minimal bootable Linux systems targeting Pentium-class machines (i486 instruction set). Uses Gentoo crossdev cross-compilation with musl libc to produce a SquashFS-based live ISO with overlayfs.
+A Docker-based build system for a minimal bootable Linux targeting Pentium-class machines (i486). Uses Gentoo crossdev cross-compilation with musl libc to produce a SquashFS-based live ISO with overlayfs.
 
 ## Features
 

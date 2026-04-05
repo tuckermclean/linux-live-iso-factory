@@ -141,7 +141,13 @@ EOF
 EOF
 
     # /etc/hostname
-    echo "i486-linux" > "$ROOTFS_DIR/etc/hostname"
+    echo "monolith" > "$ROOTFS_DIR/etc/hostname"
+
+    # /etc/motd - ANSI art banner (strip 128-byte SAUCE record from .ans file)
+    head -c -128 /configs/themonolith.ans > "$ROOTFS_DIR/etc/motd"
+
+    # /etc/issue - shown before login prompt
+    printf 'The Monolith - \\l\n' > "$ROOTFS_DIR/etc/issue"
 
     # /etc/resolv.conf (empty, populated by DHCP)
     touch "$ROOTFS_DIR/etc/resolv.conf"
@@ -167,6 +173,9 @@ fi
 
 # Source local profile if it exists
 [ -f /etc/profile.local ] && . /etc/profile.local
+
+PS1='\[\e[90m\]■\[\e[0m\] \[\e[92m\]tHE m0n0LiTH\[\e[0m\] \[\e[96m\]\w\[\e[91m\]\$\[\e[0m\] '
+export PS1
 EOF
 
     # /etc/securetty - ttys on which root is allowed to log in

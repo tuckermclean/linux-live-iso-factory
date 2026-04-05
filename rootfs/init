@@ -89,7 +89,7 @@ rescue_shell() {
     err "Type 'exit' to continue booting (if possible)"
     echo
     echo "=========================================="
-    echo "  Minimal i486 Linux - Rescue Shell"
+    echo "  tHE m0n0LiTH - rescue shell"
     echo "=========================================="
     echo
     echo "Available commands: $(busybox --list | tr '\n' ' ' | head -c 60)..."

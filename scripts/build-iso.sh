@@ -137,7 +137,7 @@ PROMPT 1
 # Display message
 SAY
 SAY =========================================
-SAY   Minimal i486 Linux
+SAY   tHE m0n0LiTH
 SAY =========================================
 SAY
 SAY Press ENTER to boot, or type a label:
