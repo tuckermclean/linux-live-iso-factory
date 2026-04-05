@@ -92,7 +92,7 @@ jobs:
         env:
           REGISTRY: ${{ env.REGISTRY }}
 
-  build-packages:
+  build:
     runs-on: ubuntu-latest
     needs: [changes, build-image]
     permissions:
@@ -165,56 +165,6 @@ jobs:
             aws s3 cp output/vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
           fi
 
-  build-rootfs:
-    runs-on: ubuntu-latest
-    needs: [build-image, build-packages]
-    permissions:
-      contents: read
-      packages: read
-    if: >
-      always() &&
-      needs.build-image.result == 'success' &&
-      (needs.build-packages.result == 'success' || needs.build-packages.result == 'skipped')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set build version
-        run: |
-          BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
-          echo "BUILD_EPOCH=$BUILD_EPOCH" >> "$GITHUB_ENV"
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "BUILD_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
-          else
-            echo "BUILD_VERSION=$BUILD_EPOCH-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
-          fi
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull images
-        run: make pull-image
-        env:
-          REGISTRY: ${{ env.REGISTRY }}
-
-      - run: make ensure-dirs ensure-volume
-
-      - name: Sync portage
-        run: make sync-portage
-
-      - name: Restore binary package cache from S3
-        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/ output/packages/
-
       - name: Build rootfs
         run: make build-rootfs JOBS=2 LOAD_AVG=2
 
@@ -234,61 +184,6 @@ jobs:
             aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
           fi
 
-  build-iso:
-    runs-on: ubuntu-latest
-    needs: [build-image, build-rootfs]
-    permissions:
-      contents: read
-      packages: read
-    if: >
-      always() &&
-      needs.build-image.result == 'success' &&
-      needs.build-rootfs.result == 'success'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set build version
-        run: |
-          BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
-          echo "BUILD_EPOCH=$BUILD_EPOCH" >> "$GITHUB_ENV"
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "BUILD_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
-          else
-            echo "BUILD_VERSION=$BUILD_EPOCH-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
-          fi
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull images
-        run: make pull-image
-        env:
-          REGISTRY: ${{ env.REGISTRY }}
-
-      - run: make ensure-dirs
-
-      - name: Restore squashfs from S3
-        run: aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs output/themonolith-$BUILD_VERSION.squashfs
-
-      - name: Restore initrd from S3
-        run: aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd output/themonolith-$BUILD_VERSION.initrd
-
-      - name: Restore kernel image from S3
-        run: |
-          aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz \
-            || aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
-
       - name: Build ISO
         run: make iso
 
@@ -300,14 +195,14 @@ jobs:
 
   attestation:
     runs-on: ubuntu-latest
-    needs: [build-image, build-iso]
+    needs: [build-image, build]
     permissions:
       contents: read
       packages: read
     if: >
       always() &&
       needs.build-image.result == 'success' &&
-      needs.build-iso.result == 'success'
+      needs.build.result == 'success'
     steps:
       - uses: actions/checkout@v4
 
