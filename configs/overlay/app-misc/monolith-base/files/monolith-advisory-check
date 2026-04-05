@@ -1,0 +1,57 @@
+#!/bin/sh
+#
+# monolith-advisory-check
+#
+# Runs after network is up (called from /etc/init.d/S50advisory).
+# Fetches the advisory status for this build from ADVISORY_BASE_URL.
+# If the build has been revoked due to new CVEs, writes a warning file
+# to /run/monolith-advisory so the login banner can display it.
+#
+# Designed for i486 with 16 MB RAM: POSIX sh only, no Python, no jq.
+# All failures are silent — the ISO works fine without network access.
+#
+# Configuration:
+#   /etc/monolith-release     — contains the BUILD_TAG (baked in at ISO build time)
+#   ADVISORY_BASE_URL         — base URL for status files (default below)
+
+ADVISORY_BASE_URL="${ADVISORY_BASE_URL:-https://themonolith.s3.amazonaws.com}"
+
+# Read build tag from /etc/monolith-release
+if [ ! -f /etc/monolith-release ]; then
+    exit 0
+fi
+
+BUILD_TAG="$(cat /etc/monolith-release 2>/dev/null)"
+if [ -z "$BUILD_TAG" ]; then
+    exit 0
+fi
+
+STATUS_URL="${ADVISORY_BASE_URL}/status/${BUILD_TAG}.json"
+
+# Fetch the status JSON into a temp file
+# Try curl first (preferred), fall back to wget
+TMPFILE=""
+TMPFILE="$(mktemp /tmp/advisory.XXXXXX 2>/dev/null)" || exit 0
+
+# Ensure cleanup on exit
+cleanup() { rm -f "$TMPFILE"; }
+trap cleanup EXIT
+
+FETCH_OK=0
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --max-time 5 --retry 1 -o "$TMPFILE" "$STATUS_URL" 2>/dev/null && FETCH_OK=1
+elif command -v wget >/dev/null 2>&1; then
+    wget -q --timeout=5 -O "$TMPFILE" "$STATUS_URL" 2>/dev/null && FETCH_OK=1
+fi
+
+if [ "$FETCH_OK" != "1" ]; then
+    exit 0
+fi
+
+# Check if status is "revoked" — simple grep, no jq, no extended regex
+if grep -q '"status"[^"]*"revoked"' "$TMPFILE" 2>/dev/null; then
+    # Copy the full JSON to /run/monolith-advisory for the login banner to display
+    cp "$TMPFILE" /run/monolith-advisory 2>/dev/null || true
+fi
+
+exit 0

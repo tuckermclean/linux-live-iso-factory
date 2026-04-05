@@ -1,0 +1,26 @@
+# cpe-overrides.yaml
+#
+# Exception list of CPE corrections for packages where Syft's automatic
+# CPE detection is wrong or absent. This is NOT a full package→CPE map —
+# only add entries here for packages that Syft gets wrong.
+#
+# To bootstrap: run `make attestation` once, then check the gap report
+# in the enrich-sbom.py stderr output and add corrections as needed.
+#
+# Format:
+#   bare-package-name:
+#     vendor: <CPE vendor field>
+#     product: <CPE product field>
+#
+# OR as a full CPE 2.3 string (version will be substituted by enrich-sbom.py):
+#   bare-package-name: "cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*"
+#
+# Keys are bare package names without category prefix (e.g. "bash" not "app-shells/bash").
+
+overrides:
+  busybox:         "cpe:2.3:a:busybox:busybox:*:*:*:*:*:*:*:*"
+  musl:            "cpe:2.3:a:musl-libc:musl:*:*:*:*:*:*:*:*"
+  dropbear:        "cpe:2.3:a:matt_johnston:dropbear_ssh:*:*:*:*:*:*:*:*"
+  monolith-kernel: "cpe:2.3:o:linux:linux_kernel:*:*:*:*:*:*:*:*"
+  openssl:         "cpe:2.3:a:openssl:openssl:*:*:*:*:*:*:*:*"
+  curl:            "cpe:2.3:a:haxx:curl:*:*:*:*:*:*:*:*"

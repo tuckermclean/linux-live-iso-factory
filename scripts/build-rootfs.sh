@@ -143,6 +143,9 @@ EOF
     # /etc/hostname
     echo "monolith" > "$ROOTFS_DIR/etc/hostname"
 
+    # /etc/monolith-release - baked-in build version for advisory check
+    echo "${BUILD_VERSION:-unknown}" > "$ROOTFS_DIR/etc/monolith-release"
+
     # /etc/motd - ANSI art banner (strip 128-byte SAUCE record from .ans file)
     head -c -128 /configs/themonolith.ans > "$ROOTFS_DIR/etc/motd"
 
@@ -364,6 +367,36 @@ esac
 exit 0
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/S20keygen"
+
+    # /usr/sbin/monolith-advisory-check - boot-time advisory fetch script
+    install -m 755 \
+        "${CONFIGS_DIR}/overlay/app-misc/monolith-base/files/monolith-advisory-check" \
+        "$ROOTFS_DIR/usr/sbin/monolith-advisory-check"
+
+    # /etc/init.d/S50advisory - runs after S40network to check for advisories
+    cat > "$ROOTFS_DIR/etc/init.d/S50advisory" << 'EOF'
+#!/bin/sh
+# S50advisory - Check for security advisories after network is up
+case "$1" in
+    start)
+        /usr/sbin/monolith-advisory-check
+        ;;
+    stop|restart)
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+exit 0
+EOF
+    chmod 755 "$ROOTFS_DIR/etc/init.d/S50advisory"
+
+    # /etc/profile.d/monolith-advisory.sh - login banner for revoked builds
+    mkdir -p "$ROOTFS_DIR/etc/profile.d"
+    install -m 644 \
+        "${CONFIGS_DIR}/overlay/app-misc/monolith-base/files/monolith-advisory.sh" \
+        "$ROOTFS_DIR/etc/profile.d/monolith-advisory.sh"
 
     log_info "/etc configuration files created"
 }

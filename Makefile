@@ -41,6 +41,7 @@ PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG)
 BUILD_VOLUME    := monolith-build
 PORTAGE_VOLUME  := monolith-repos
 DISTFILES_VOLUME := monolith-distfiles
+GRYPE_VOLUME    := monolith-grype-db
 
 # Bind mounts
 CONFIGS_MOUNT := -v $(PROJECT_DIR)/configs:/configs
@@ -52,6 +53,7 @@ ROOTFS_MOUNT := -v $(PROJECT_DIR)/rootfs:/rootfs:ro
 BUILD_MOUNT      := -v $(BUILD_VOLUME):/build
 PORTAGE_MOUNT    := -v $(PORTAGE_VOLUME):/var/db/repos
 DISTFILES_MOUNT  := -v $(DISTFILES_VOLUME):/var/cache/distfiles
+GRYPE_MOUNT      := -v $(GRYPE_VOLUME):/root/.cache/grype
 
 # Portage log mount
 LOGS_MOUNT := -v $(PROJECT_DIR)/output/portage-logs:/var/log/portage
@@ -61,11 +63,13 @@ DOCKER_RUN := docker run --rm \
 	$(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(SCRIPTS_MOUNT) \
 	$(ROOTFS_MOUNT) $(LOGS_MOUNT) \
 	$(BUILD_MOUNT) $(PORTAGE_MOUNT) $(DISTFILES_MOUNT) \
+	$(GRYPE_MOUNT) \
 	$(PARALLEL_ENV)
 DOCKER_RUN_IT := docker run --rm -it \
 	$(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(SCRIPTS_MOUNT) \
 	$(ROOTFS_MOUNT) $(LOGS_MOUNT) \
 	$(BUILD_MOUNT) $(PORTAGE_MOUNT) $(DISTFILES_MOUNT) \
+	$(GRYPE_MOUNT) \
 	$(PARALLEL_ENV)
 
 .PHONY: help build-image push-image pull-image \
@@ -75,6 +79,7 @@ DOCKER_RUN_IT := docker run --rm -it \
         iso all test shell \
         check-updates update-versions update-build-pins update-all \
         list-packages show-failed regen-manifest \
+        attestation dashboard grype-db-update \
         clean clean-build clean-all ensure-dirs ensure-volume
 
 help:
@@ -106,6 +111,11 @@ help:
 	@echo "Testing:"
 	@echo "  test                 - Boot ISO in QEMU (requires qemu-system-i386)"
 	@echo ""
+	@echo "Attestation:"
+	@echo "  attestation          - Run SBOM + license + CVE checks (requires build-rootfs first)"
+	@echo "  dashboard            - Generate static HTML dashboard from local attestation artifacts"
+	@echo "  grype-db-update      - Update Grype CVE database (stored in Docker volume)"
+	@echo ""
 	@echo "Version Management:"
 	@echo "  check-updates        - Show available updates vs pinned versions"
 	@echo "  update-versions      - Update versions.lock with latest versions"
@@ -131,7 +141,7 @@ help:
 
 # Ensure output directories exist
 ensure-dirs:
-	@mkdir -p $(PROJECT_DIR)/output/{packages,logs,sysroot,portage-logs}
+	@mkdir -p $(PROJECT_DIR)/output/{packages,logs,sysroot,portage-logs,attestation,dashboard}
 	@mkdir -p $(PROJECT_DIR)/configs
 
 # Ensure persistent volumes exist
@@ -142,6 +152,9 @@ ensure-volume:
 	@docker volume inspect $(DISTFILES_VOLUME) >/dev/null 2>&1 || \
 		(echo "==> Creating distfiles volume" && \
 		 docker volume create $(DISTFILES_VOLUME))
+	@docker volume inspect $(GRYPE_VOLUME) >/dev/null 2>&1 || \
+		(echo "==> Creating grype DB volume" && \
+		 docker volume create $(GRYPE_VOLUME))
 
 # Intermediate image name for the pre-crossdev stage
 BASE_TOOLS_IMAGE := $(IMAGE_NAME)-base-tools
@@ -280,6 +293,31 @@ iso: ensure-dirs
 # Build everything: image → packages → rootfs → iso
 all: build-image sync-portage build-packages build-rootfs iso
 
+# Run the three-pillar attestation pipeline (SBOM + licenses + CVEs)
+# Requires: output/sysroot/ must exist (run build-rootfs first)
+# All pillars always run — never stops on failure — artifacts always written
+attestation: ensure-volume ensure-dirs
+	@echo "==> Running attestation pipeline (build: $(BUILD_VERSION))"
+	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/attestation.sh \
+		--sysroot /output/sysroot \
+		--iso /output/themonolith-$(BUILD_VERSION).iso \
+		--build-tag $(BUILD_VERSION) \
+		--overrides /configs/attestation/cpe-overrides.yaml \
+		--policy /configs/attestation/license-policy.yaml \
+		--output-dir /output/attestation
+
+# Generate static HTML attestation dashboard from local attestation artifacts
+dashboard: ensure-dirs
+	@echo "==> Generating attestation dashboard"
+	$(DOCKER_RUN) $(IMAGE_NAME) python3 /scripts/generate-dashboard.py \
+		--input-dir /output/attestation \
+		--output-dir /output/dashboard
+
+# Update the Grype vulnerability database (stored in monolith-grype-db volume)
+grype-db-update: ensure-volume
+	@echo "==> Updating Grype vulnerability database"
+	$(DOCKER_RUN) $(IMAGE_NAME) grype db update
+
 # Test ISO in QEMU (on host)
 test:
 	@if [ ! -f "$(PROJECT_DIR)/output/themonolith-$(BUILD_VERSION).iso" ]; then \
@@ -352,5 +390,7 @@ clean-all: clean-build
 	docker volume rm $(PORTAGE_VOLUME) 2>/dev/null || true
 	@echo "==> Removing distfiles volume"
 	docker volume rm $(DISTFILES_VOLUME) 2>/dev/null || true
+	@echo "==> Removing grype DB volume"
+	docker volume rm $(GRYPE_VOLUME) 2>/dev/null || true
 	@echo "==> Removing Docker image"
 	docker rmi $(IMAGE_NAME) 2>/dev/null || true

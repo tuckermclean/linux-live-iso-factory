@@ -62,6 +62,17 @@ RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace \
     eix-update && \
     rm -rf /var/cache/distfiles/*
 
+# Attestation tools: Syft (SBOM generation) + Grype (CVE scanning) + pyyaml
+# These are installed into the builder image so CI doesn't re-download them
+# on every run. The Grype vulnerability database is stored in a separate
+# Docker volume (monolith-grype-db) and updated via `make grype-db-update`.
+RUN emerge dev-python/pyyaml && \
+    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+        | sh -s -- -b /usr/local/bin && \
+    curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+        | sh -s -- -b /usr/local/bin && \
+    rm -rf /var/cache/distfiles/*
+
 # Configure portage overlays and policy
 RUN mkdir -p /var/db/repos/crossdev/{profiles,metadata} && \
     echo 'crossdev' > /var/db/repos/crossdev/profiles/repo_name && \
