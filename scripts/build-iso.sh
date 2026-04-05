@@ -264,7 +264,9 @@ rm -f "$GRUB_CFG"
 
 log_info "Creating EFI System Partition image..."
 EFI_IMG="${ISO_DIR}/boot/efi.img"
-dd if=/dev/zero of="$EFI_IMG" bs=1M count=8 2>/dev/null
+# GRUB standalone EFI binaries (bootia32.efi + bootx64.efi with all_video) can
+# easily exceed 8 MB together. Use 32 MB to give comfortable headroom.
+dd if=/dev/zero of="$EFI_IMG" bs=1M count=32 2>/dev/null
 mkfs.vfat -F 32 -n "EFIBOOT" "$EFI_IMG" >/dev/null
 mmd  -i "$EFI_IMG" ::/EFI
 mmd  -i "$EFI_IMG" ::/EFI/BOOT
