@@ -384,18 +384,13 @@ jobs:
 
       - name: Fail if attestation failed
         run: |
-          OVERALL=$(docker run --rm \
-            -v $(pwd)/output:/output \
-            ${{ env.REGISTRY }}/monolith-builder:$BUILD_EPOCH \
-            python3 -c "
-import json, sys
-try:
-    d = json.load(open('/output/attestation/attestation-summary.json'))
-    print(d.get('overall', 'fail'))
-except Exception:
-    print('fail')
-" 2>/dev/null || echo fail)
+          SUMMARY=output/attestation/attestation-summary.json
+          if [ ! -f "$SUMMARY" ]; then
+            echo "::error::attestation-summary.json not found — attestation did not produce output"
+            exit 1
+          fi
+          OVERALL=$(python3 -c "import json; print(json.load(open('$SUMMARY')).get('overall','fail'))")
           if [ "$OVERALL" != "pass" ]; then
-            echo "::error::Attestation failed (overall=$OVERALL) — see artifacts at s3://${{ secrets.S3_BUCKET }}/attestation/$BUILD_VERSION/"
+            echo "::error::Attestation failed (overall=$OVERALL) — see s3://${{ secrets.S3_BUCKET }}/attestation/$BUILD_VERSION/"
             exit 1
           fi
