@@ -63,9 +63,14 @@ DOCKER_RUN := docker run --rm \
 	$(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(SCRIPTS_MOUNT) \
 	$(ROOTFS_MOUNT) $(LOGS_MOUNT) \
 	$(BUILD_MOUNT) $(PORTAGE_MOUNT) $(DISTFILES_MOUNT) \
-	$(GRYPE_MOUNT) \
 	$(PARALLEL_ENV)
 DOCKER_RUN_IT := docker run --rm -it \
+	$(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(SCRIPTS_MOUNT) \
+	$(ROOTFS_MOUNT) $(LOGS_MOUNT) \
+	$(BUILD_MOUNT) $(PORTAGE_MOUNT) $(DISTFILES_MOUNT) \
+	$(PARALLEL_ENV)
+# Attestation-specific run: same as DOCKER_RUN but with the Grype DB volume
+DOCKER_RUN_ATTEST := docker run --rm \
 	$(CONFIGS_MOUNT) $(OUTPUT_MOUNT) $(SCRIPTS_MOUNT) \
 	$(ROOTFS_MOUNT) $(LOGS_MOUNT) \
 	$(BUILD_MOUNT) $(PORTAGE_MOUNT) $(DISTFILES_MOUNT) \
@@ -298,7 +303,7 @@ all: build-image sync-portage build-packages build-rootfs iso
 # All pillars always run — never stops on failure — artifacts always written
 attestation: ensure-volume ensure-dirs
 	@echo "==> Running attestation pipeline (build: $(BUILD_VERSION))"
-	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/attestation.sh \
+	$(DOCKER_RUN_ATTEST) $(VERSION_ENV) $(IMAGE_NAME) /scripts/attestation.sh \
 		--sysroot /output/sysroot \
 		--iso /output/themonolith-$(BUILD_VERSION).iso \
 		--build-tag $(BUILD_VERSION) \
@@ -309,14 +314,14 @@ attestation: ensure-volume ensure-dirs
 # Generate static HTML attestation dashboard from local attestation artifacts
 dashboard: ensure-dirs
 	@echo "==> Generating attestation dashboard"
-	$(DOCKER_RUN) $(IMAGE_NAME) python3 /scripts/generate-dashboard.py \
+	$(DOCKER_RUN_ATTEST) $(IMAGE_NAME) python3 /scripts/generate-dashboard.py \
 		--input-dir /output/attestation \
 		--output-dir /output/dashboard
 
 # Update the Grype vulnerability database (stored in monolith-grype-db volume)
 grype-db-update: ensure-volume
 	@echo "==> Updating Grype vulnerability database"
-	$(DOCKER_RUN) $(IMAGE_NAME) grype db update
+	$(DOCKER_RUN_ATTEST) $(IMAGE_NAME) grype db update
 
 # Test ISO in QEMU (on host)
 test:
