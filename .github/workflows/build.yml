@@ -285,7 +285,9 @@ jobs:
         run: aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd output/themonolith-$BUILD_VERSION.initrd
 
       - name: Restore kernel image from S3
-        run: aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
+        run: |
+          aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz \
+            || aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
 
       - name: Build ISO
         run: make iso
