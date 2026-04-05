@@ -91,13 +91,11 @@ log_info "Creating bootable ISO..."
 rm -rf "${ISO_DIR}"
 mkdir -p "${ISO_DIR}"/{isolinux,boot}
 
-# Symlink large files into the ISO tree instead of copying.
-# xorriso -as mkisofs dereferences symlinks, so the ISO content is identical —
-# but Docker overlay doesn't store a second copy of the squashfs/kernel/initrd.
-log_info "Linking kernel, initrd, and rootfs into ISO tree..."
-ln -s "$KERNEL_IMAGE"   "${ISO_DIR}/boot/vmlinuz"
-ln -s "$INITRD_IMAGE"   "${ISO_DIR}/boot/initrd.img"
-ln -s "$SQUASHFS_IMAGE" "${ISO_DIR}/rootfs.squashfs"
+# Copy kernel, initrd, and squashfs into the ISO tree
+log_info "Copying kernel, initrd, and rootfs..."
+cp "$KERNEL_IMAGE"   "${ISO_DIR}/boot/vmlinuz"
+cp "$INITRD_IMAGE"   "${ISO_DIR}/boot/initrd.img"
+cp "$SQUASHFS_IMAGE" "${ISO_DIR}/rootfs.squashfs"
 
 # Copy ISOLINUX bootloader
 log_info "Installing ISOLINUX bootloader..."
