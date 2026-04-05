@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [master]
+    tags: ['*']
   workflow_dispatch:
   schedule:
     - cron: '0 3 * * 1'
@@ -101,14 +102,20 @@ jobs:
       needs.changes.outputs.packages == 'true' ||
       needs.build-image.outputs.image-changed == 'true' ||
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+      github.event_name == 'schedule' ||
+      startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
 
       - name: Set build version
         run: |
-          echo "BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)" >> "$GITHUB_ENV"
-          echo "BUILD_VERSION=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
+          echo "BUILD_EPOCH=$BUILD_EPOCH" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "BUILD_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_VERSION=$BUILD_EPOCH-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -173,8 +180,13 @@ jobs:
 
       - name: Set build version
         run: |
-          echo "BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)" >> "$GITHUB_ENV"
-          echo "BUILD_VERSION=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
+          echo "BUILD_EPOCH=$BUILD_EPOCH" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "BUILD_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_VERSION=$BUILD_EPOCH-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -237,8 +249,13 @@ jobs:
 
       - name: Set build version
         run: |
-          echo "BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)" >> "$GITHUB_ENV"
-          echo "BUILD_VERSION=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
+          echo "BUILD_EPOCH=$BUILD_EPOCH" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "BUILD_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_VERSION=$BUILD_EPOCH-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
