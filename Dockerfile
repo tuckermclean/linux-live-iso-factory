@@ -37,7 +37,7 @@ RUN emerge-webrsync --revert=${BUILD_EPOCH}
 # cmake:   prevents BDEPEND from pulling in cmake-9999 (live ebuild)
 # mandoc:  host makewhatis called by bashrc hook to build whatis DB in sysroot
 # ncurses: host tic needed to install terminfo DB into sysroot during cross-compile
-RUN emerge --noreplace \
+RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace \
         sys-devel/crossdev \
         app-portage/gentoolkit \
         app-portage/eix \
@@ -46,6 +46,7 @@ RUN emerge --noreplace \
         sys-devel/bc \
         dev-libs/elfutils \
         sys-boot/syslinux \
+        sys-boot/grub \
         dev-libs/libisoburn \
         sys-fs/mtools \
         sys-fs/dosfstools \

@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# build-iso.sh - Create bootable ISO image
+# build-iso.sh - Create bootable ISO image (BIOS + UEFI)
 #
-# This script creates a BIOS-bootable ISO using ISOLINUX.
-# A stub EFI partition creates a hybrid MBR+GPT layout for Hyper-V compatibility.
+# This script creates a hybrid ISO bootable via BIOS (ISOLINUX) and UEFI (GRUB).
+# The EFI System Partition contains bootia32.efi and bootx64.efi for 32/64-bit UEFI.
 #
 # The ISO can be tested with:
 #   qemu-system-i386 -cdrom boot.iso -m 64M
@@ -197,14 +197,78 @@ LABEL rescue
     APPEND initrd=/boot/initrd.img rescue
 EOF
 
-# Create stub EFI partition image for GPT hybrid structure.
-# Hyper-V Gen 1 (BIOS mode) needs a GPT partition table in the ISO to boot.
-# A minimal empty FAT image triggers xorriso's hybrid MBR+GPT layout via
-# -isohybrid-gpt-basdat. The EFI partition is non-functional — boot is BIOS only.
-log_info "Creating stub EFI partition for GPT hybrid layout..."
+# Create GRUB UEFI boot images and a real EFI System Partition.
+# grub-mkstandalone embeds grub.cfg directly into the EFI binary — no grub.cfg
+# on the ISO tree needed. search --file finds the ISO9660 root on CD and USB alike.
+log_info "Building GRUB EFI images..."
+
+GRUB_CFG=$(mktemp)
+cat > "$GRUB_CFG" << 'GRUBEOF'
+search --no-floppy --file --set=root /boot/vmlinuz
+
+set default=0
+set timeout=5
+
+menuentry "Boot The Monolith" {
+    linux /boot/vmlinuz quiet
+    initrd /boot/initrd.img
+}
+
+menuentry "Boot with Framebuffer" {
+    linux /boot/vmlinuz video=efifb quiet
+    initrd /boot/initrd.img
+}
+
+menuentry "Boot with Serial Console" {
+    linux /boot/vmlinuz console=ttyS0,115200n8
+    initrd /boot/initrd.img
+}
+
+menuentry "Debug Boot" {
+    linux /boot/vmlinuz debug
+    initrd /boot/initrd.img
+}
+
+menuentry "Rescue Shell" {
+    linux /boot/vmlinuz rescue
+    initrd /boot/initrd.img
+}
+
+menuentry "Boot to RAM" {
+    linux /boot/vmlinuz toram quiet
+    initrd /boot/initrd.img
+}
+GRUBEOF
+
+GRUB_MODULES="part_gpt part_msdos fat iso9660 linux normal echo all_video search search_fs_uuid search_fs_file configfile"
+
+BOOTIA32=$(mktemp)
+grub-mkstandalone \
+    --format i386-efi \
+    --output "$BOOTIA32" \
+    --compress xz \
+    --modules "$GRUB_MODULES" \
+    "boot/grub/grub.cfg=${GRUB_CFG}"
+
+BOOTX64=$(mktemp)
+grub-mkstandalone \
+    --format x86_64-efi \
+    --output "$BOOTX64" \
+    --compress xz \
+    --modules "$GRUB_MODULES" \
+    "boot/grub/grub.cfg=${GRUB_CFG}"
+
+rm -f "$GRUB_CFG"
+
+log_info "Creating EFI System Partition image..."
 EFI_IMG="${ISO_DIR}/boot/efi.img"
-dd if=/dev/zero of="$EFI_IMG" bs=1K count=512 2>/dev/null
-mkfs.vfat -F 12 "$EFI_IMG" >/dev/null
+dd if=/dev/zero of="$EFI_IMG" bs=1M count=8 2>/dev/null
+mkfs.vfat -F 32 -n "EFIBOOT" "$EFI_IMG" >/dev/null
+mmd  -i "$EFI_IMG" ::/EFI
+mmd  -i "$EFI_IMG" ::/EFI/BOOT
+mcopy -i "$EFI_IMG" "$BOOTIA32" ::/EFI/BOOT/bootia32.efi
+mcopy -i "$EFI_IMG" "$BOOTX64"  ::/EFI/BOOT/bootx64.efi
+rm -f "$BOOTIA32" "$BOOTX64"
 
 # Show ISO directory structure
 log_info "ISO directory structure:"
@@ -272,7 +336,9 @@ log_info "Size: ${ISO_SIZE_KB} KB (${ISO_SIZE_MB} MB)"
 log_info ""
 log_info "Boot support:"
 log_info "  - BIOS (ISOLINUX): Yes"
-log_info "  - GPT hybrid:      Yes (Hyper-V Gen 1 compatible)"
+log_info "  - UEFI 32-bit:     Yes (bootia32.efi)"
+log_info "  - UEFI 64-bit:     Yes (bootx64.efi)"
+log_info "  - GPT hybrid:      Yes"
 log_info "  - USB hybrid:      Yes"
 log_info ""
 log_info "Test with QEMU:"
