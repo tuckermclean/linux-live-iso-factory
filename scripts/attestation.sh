@@ -171,7 +171,14 @@ echo ""
 
 # ── Pillar 1a: Syft SBOM generation ─────────────────────────────────────────
 log "--- Pillar 1: SBOM Generation (Syft) ---"
-syft "dir:${SYSROOT}" -o cyclonedx-json --file "${SBOM_FILE}" 2>&1 || SBOM_RC=$?
+# Restrict to the portage-db cataloger. The sysroot is a pure Portage-managed
+# filesystem — /var/db/pkg is authoritative for all installed packages.
+# The binary classifier runs by default and produces extra components named by
+# file path with no CPE; the portage catalog already covers everything they'd find.
+syft "dir:${SYSROOT}" \
+    --override-default-catalogers portage-db-cataloger \
+    -o cyclonedx-json \
+    --file "${SBOM_FILE}" 2>&1 || SBOM_RC=$?
 
 if [[ $SBOM_RC -eq 0 ]]; then
     PKG_COUNT=$(python3 -c "import json; d=json.load(open('${SBOM_FILE}')); print(len(d.get('components', [])))" 2>/dev/null || echo 0)

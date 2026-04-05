@@ -282,5 +282,36 @@ else
     echo "WARNING: Kernel image not found at ${KERNEL_STAGED} — vmlinuz will not be saved"
 fi
 
+# Export the live sysroot to output/sysroot/ while packages are already installed.
+# This avoids a second emerge --usepkgonly pass in extract-packages.sh.
+SYSROOT_DIR="${OUTPUT_DIR}/sysroot"
+echo "==> Populating ${SYSROOT_DIR} from live sysroot"
+rm -rf "${SYSROOT_DIR}"
+mkdir -p "${SYSROOT_DIR}"
+rsync -a "/usr/${CROSS_TARGET}/" "${SYSROOT_DIR}/"
+
+# Fix the musl dynamic linker. The crossdev sysroot installs it as a symlink
+# pointing to an absolute crossdev path (/usr/i486-linux-musl/usr/lib/libc.so)
+# which is dangling on the live system. Replace with the actual binary.
+echo "==> Installing musl dynamic linker..."
+MUSL_LIBC="/usr/${CROSS_TARGET}/usr/lib/libc.so"
+if [ -f "${MUSL_LIBC}" ]; then
+    rm -f "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
+    cp "${MUSL_LIBC}" "${SYSROOT_DIR}/lib/ld-musl-i386.so.1"
+else
+    echo "WARNING: musl libc not found at ${MUSL_LIBC}"
+    echo "  Dynamically-linked binaries will fail to execute at runtime!"
+fi
+
+# Decompress bzip2-compressed man pages.
+# Gentoo installs man pages as .bz2; mandoc is built without libbz2 support.
+echo "==> Decompressing bzip2 man pages..."
+find "${SYSROOT_DIR}/usr/share/man" -name "*.bz2" -print0 2>/dev/null | \
+    xargs -0 -r bunzip2 2>/dev/null || true
+
+TOTAL_SIZE=$(du -sh "${SYSROOT_DIR}" | cut -f1)
+TOTAL_FILES=$(find "${SYSROOT_DIR}" -type f | wc -l)
+echo "==> Sysroot: ${TOTAL_SIZE} across ${TOTAL_FILES} files → ${SYSROOT_DIR}"
+
 # Exit with error if any packages failed
 [ ${FAIL_COUNT} -eq 0 ]

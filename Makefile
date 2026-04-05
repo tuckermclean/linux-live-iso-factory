@@ -281,10 +281,10 @@ menuconfig-busybox: ensure-volume ensure-dirs
 	@echo "==> Running BusyBox menuconfig"
 	$(DOCKER_RUN_IT) $(IMAGE_NAME) i486-linux-musl-emerge --config sys-apps/busybox
 
-# Install packages + build squashfs + initrd (step 2)
+# Build squashfs + initrd from sysroot populated by build-packages (step 2)
+# build-packages exports output/sysroot/ directly, so no extract step needed here.
+# To re-extract from binpkgs without rebuilding, use: make extract
 build-rootfs: ensure-volume ensure-dirs
-	@echo "==> Installing packages from binpkgs"
-	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/extract-packages.sh
 	@echo "==> Building root filesystem"
 	$(DOCKER_RUN) $(VERSION_ENV) $(IMAGE_NAME) /scripts/build-rootfs.sh
 	@echo "==> Building initramfs"

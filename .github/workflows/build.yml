@@ -161,8 +161,9 @@ jobs:
         if: always()
         run: |
           if [ -f output/vmlinuz ]; then
-            aws s3 cp output/vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz
-            aws s3 cp output/vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
+            cp output/vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
+            aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz
+            aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
           fi
 
       - name: Build rootfs
