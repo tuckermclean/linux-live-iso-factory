@@ -193,10 +193,10 @@ log "--- Pillar 1: SBOM Generation (Syft) ---"
 #                     Contains artifacts[].metadata.Files[] (CONTENTS-owned paths)
 #                     and files[] (all paths found on disk). Diff = unowned files.
 #
-# file.metadata.selection=all: enable file cataloger so files[] is populated.
-syft "dir:${SYSROOT}" \
+# SYFT_FILE_METADATA_SELECTION=all: enable file cataloger so files[] is populated.
+# (-c takes a config file path, not inline key=value; use env var instead)
+SYFT_FILE_METADATA_SELECTION=all syft "dir:${SYSROOT}" \
     --override-default-catalogers portage-cataloger \
-    -c 'file.metadata.selection=all' \
     -o "cyclonedx-json=${SBOM_FILE}" \
     -o "json=${SYFT_JSON_FILE}" \
     2>&1 || SBOM_RC=$?
