@@ -80,7 +80,6 @@ net-analyzer/traceroute
 
 # Network clients
 www-client/lynx
-mail-client/mutt
 
 # Terminal multiplexer
 app-misc/tmux
