@@ -116,6 +116,7 @@ def _parse_alternatives(tokens: list, pos: int) -> tuple:
     """
     # Start with one empty conjunction (the "current" running conjunction)
     current_conjunctions = [[]]  # list of running conjunctions
+    completed_alternatives = []  # alternatives finished by OR operators
 
     while pos < len(tokens):
         tok = tokens[pos]
@@ -148,12 +149,23 @@ def _parse_alternatives(tokens: list, pos: int) -> tuple:
             inner_flat = [lic for alt in inner_alts for lic in alt]
             current_conjunctions = [cur + inner_flat for cur in current_conjunctions]
 
+        elif tok == "AND":
+            # SPDX conjunctive operator — same semantics as a space; skip it
+            pos += 1
+
+        elif tok == "OR":
+            # SPDX disjunctive operator — flush current conjunctions as completed
+            # alternatives and start a fresh conjunction set
+            completed_alternatives.extend(current_conjunctions)
+            current_conjunctions = [[]]
+            pos += 1
+
         else:
             # Plain license identifier — conjunctive with everything so far
             current_conjunctions = [cur + [tok] for cur in current_conjunctions]
             pos += 1
 
-    return current_conjunctions, pos
+    return completed_alternatives + current_conjunctions, pos
 
 
 def extract_license_string(component: dict):
