@@ -300,7 +300,10 @@ Exit codes:
         sbom = json.load(f)
 
     policy = load_policy(args.policy)
-    components = sbom.get("components", [])
+    # Skip file-cataloger entries (type: "file") — these are individual filesystem
+    # files that Syft emits when file.metadata.selection=all is enabled. They have
+    # no license fields and are not packages; license checking them is meaningless.
+    components = [c for c in sbom.get("components", []) if c.get("type") != "file"]
 
     results = [check_component(c, policy) for c in components]
 

@@ -55,6 +55,12 @@ allowed_spdx:
   - BEER-WARE      # Poul-Henning Kamp beerware (permissive)
   - nethack        # NetHack General Public License
   - tcp_wrappers_license  # Wietse Venema BSD-like
+  - CC-BY-SA-4.0   # Creative Commons Attribution-ShareAlike 4.0 (eselect docs)
+  - Toyoda         # Toyoda license used by sl (permissive)
+  - netcat         # netcat license (permissive, Hobbit)
+  - BSD-with-attribution  # BSD + attribution clause (libpcap)
+  - man-pages      # man-pages license (permissive, used by sys-apps/man-pages)
+  - lsof           # lsof license (permissive, Purdue/Vic Abell)
 
 # Gentoo uses non-SPDX names for many common licenses. This table maps
 # Gentoo names to SPDX identifiers for policy matching.
@@ -104,6 +110,12 @@ gentoo_to_spdx:
   "MPL-2.0":        "MPL-2.0"
   "FDL-1.3+":       "FDL-1.3-or-later"
   "FDL-1.2+":       "FDL-1.2-or-later"
+  "CC-BY-SA-4.0":   "CC-BY-SA-4.0"
+  "Toyoda":         "Toyoda"
+  "netcat":         "netcat"
+  "BSD-with-attribution": "BSD-with-attribution"
+  "man-pages":      "man-pages"
+  "lsof":           "lsof"
 
 # Licenses that are explicitly prohibited regardless of allowed_spdx.
 # An empty list means no additional denials beyond "not in allowed_spdx".
