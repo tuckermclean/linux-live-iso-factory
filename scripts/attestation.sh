@@ -1,12 +1,13 @@
 #!/bin/bash
 #
-# attestation.sh — Three-pillar attestation pipeline for The Monolith ISO.
+# attestation.sh — Four-pillar attestation pipeline for The Monolith ISO.
 #
 # Pillar 1: SBOM generation (Syft) + CPE enrichment (enrich-sbom.py)
 # Pillar 2: License compliance (check-licenses.py)
 # Pillar 3: CVE scanning (Grype via check-cves.sh)
+# Pillar 4: Unowned files audit (check-unowned.py)
 #
-# IMPORTANT: All three pillars always run to completion regardless of
+# IMPORTANT: All pillars always run to completion regardless of
 # earlier failures. You want every red light visible at once.
 #
 # Usage:
@@ -19,13 +20,17 @@
 #   --output-dir PATH    Directory for attestation artifacts [default: <iso-dir>/attestation]
 #   --overrides PATH     CPE overrides YAML [default: /configs/attestation/cpe-overrides.yaml]
 #   --policy PATH        License policy YAML [default: /configs/attestation/license-policy.yaml]
+#   --unowned-allowlist PATH
+#                        Unowned files allowlist YAML [default: /configs/attestation/unowned-allowlist.yaml]
 #   --help               Show this help
 #
 # Output files (in output-dir):
-#   sbom.cdx.json              Raw Syft SBOM
+#   sbom.cdx.json              Raw Syft SBOM (CycloneDX — for pillars 2 and 3)
+#   sbom.syft.json             Raw Syft SBOM (native JSON — for pillar 4)
 #   sbom-enriched.cdx.json     SBOM with CPE overrides applied
 #   license-report.json        License compliance report
 #   cve-report.json            Grype CVE findings
+#   unowned-report.json        Files not owned by any Portage package
 #   cpe-gap-count.txt          Number of packages with no CPE
 #   attestation-summary.json   Machine-readable summary of all pillar results
 #
@@ -42,6 +47,7 @@ BUILD_TAG=""
 OUTPUT_DIR=""
 OVERRIDES_FILE="/configs/attestation/cpe-overrides.yaml"
 POLICY_FILE="/configs/attestation/license-policy.yaml"
+UNOWNED_ALLOWLIST_FILE="/configs/attestation/unowned-allowlist.yaml"
 
 # ── ANSI colors ──────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -82,8 +88,9 @@ while [[ $# -gt 0 ]]; do
         --iso)          ISO="$2";          shift 2 ;;
         --build-tag)    BUILD_TAG="$2";    shift 2 ;;
         --output-dir)   OUTPUT_DIR="$2";   shift 2 ;;
-        --overrides)    OVERRIDES_FILE="$2"; shift 2 ;;
-        --policy)       POLICY_FILE="$2";  shift 2 ;;
+        --overrides)          OVERRIDES_FILE="$2";         shift 2 ;;
+        --policy)             POLICY_FILE="$2";            shift 2 ;;
+        --unowned-allowlist)  UNOWNED_ALLOWLIST_FILE="$2"; shift 2 ;;
         --help)         usage; exit 0 ;;
         *) echo "[attestation] ERROR: unknown argument: $1" >&2; usage; exit 1 ;;
     esac
@@ -118,6 +125,9 @@ fi
 if [[ ! -f "$POLICY_FILE" && -f "config/license-policy.yaml" ]]; then
     POLICY_FILE="config/license-policy.yaml"
 fi
+if [[ ! -f "$UNOWNED_ALLOWLIST_FILE" && -f "config/unowned-allowlist.yaml" ]]; then
+    UNOWNED_ALLOWLIST_FILE="config/unowned-allowlist.yaml"
+fi
 
 # ── Validate tools ───────────────────────────────────────────────────────────
 TOOLS_OK=1
@@ -134,8 +144,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENRICH_SCRIPT="${SCRIPT_DIR}/enrich-sbom.py"
 LICENSE_SCRIPT="${SCRIPT_DIR}/check-licenses.py"
 CVE_SCRIPT="${SCRIPT_DIR}/check-cves.sh"
+UNOWNED_SCRIPT="${SCRIPT_DIR}/check-unowned.py"
 
-for script in "$ENRICH_SCRIPT" "$LICENSE_SCRIPT" "$CVE_SCRIPT"; do
+for script in "$ENRICH_SCRIPT" "$LICENSE_SCRIPT" "$CVE_SCRIPT" "$UNOWNED_SCRIPT"; do
     if [[ ! -f "$script" ]]; then
         echo "[attestation] ERROR: required script not found: $script" >&2
         exit 1
@@ -156,7 +167,9 @@ SBOM_RC=0
 ENRICH_RC=0
 LICENSE_RC=0
 CVE_RC=0
+UNOWNED_RC=0
 SBOM_FILE="${OUTPUT_DIR}/sbom.cdx.json"
+SYFT_JSON_FILE="${OUTPUT_DIR}/sbom.syft.json"
 ENRICHED_FILE="${OUTPUT_DIR}/sbom-enriched.cdx.json"
 
 # ── Header ───────────────────────────────────────────────────────────────────
@@ -171,14 +184,22 @@ echo ""
 
 # ── Pillar 1a: Syft SBOM generation ─────────────────────────────────────────
 log "--- Pillar 1: SBOM Generation (Syft) ---"
-# Restrict to the portage-db cataloger. The sysroot is a pure Portage-managed
-# filesystem — /var/db/pkg is authoritative for all installed packages.
-# The binary classifier runs by default and produces extra components named by
-# file path with no CPE; the portage catalog already covers everything they'd find.
+# Run Syft with dual output:
+#   cyclonedx-json  — package SBOM for pillars 2 (license) and 3 (CVE).
+#                     CycloneDX only includes package-level artifacts; the file
+#                     cataloger's entries stay in the native JSON, so this output
+#                     is unaffected by enabling file.metadata.selection=all.
+#   json            — Syft native JSON for pillar 4 (unowned files).
+#                     Contains artifacts[].metadata.Files[] (CONTENTS-owned paths)
+#                     and files[] (all paths found on disk). Diff = unowned files.
+#
+# file.metadata.selection=all: enable file cataloger so files[] is populated.
 syft "dir:${SYSROOT}" \
     --override-default-catalogers portage-cataloger \
-    -o cyclonedx-json \
-    --file "${SBOM_FILE}" 2>&1 || SBOM_RC=$?
+    -c 'file.metadata.selection=all' \
+    -o "cyclonedx-json=${SBOM_FILE}" \
+    -o "json=${SYFT_JSON_FILE}" \
+    2>&1 || SBOM_RC=$?
 
 if [[ $SBOM_RC -eq 0 ]]; then
     PKG_COUNT=$(python3 -c "import json; d=json.load(open('${SBOM_FILE}')); print(len(d.get('components', [])))" 2>/dev/null || echo 0)
@@ -262,15 +283,44 @@ except Exception:
 " 2>/dev/null || echo "[]")
 fi
 
+# ── Pillar 4: Unowned files audit ────────────────────────────────────────────
+log "--- Pillar 4: Unowned Files Audit (check-unowned.py) ---"
+if [[ -f "${SYFT_JSON_FILE}" ]]; then
+    UNOWNED_ARGS=(
+        --syft-json "${SYFT_JSON_FILE}"
+        --sysroot   "${SYSROOT}"
+        --output    "${OUTPUT_DIR}/unowned-report.json"
+    )
+    [[ -f "${UNOWNED_ALLOWLIST_FILE}" ]] && UNOWNED_ARGS+=(--allowlist "${UNOWNED_ALLOWLIST_FILE}")
+    python3 "${UNOWNED_SCRIPT}" "${UNOWNED_ARGS[@]}" || UNOWNED_RC=$?
+else
+    warn "Syft native JSON not found at ${SYFT_JSON_FILE} — skipping unowned files check"
+fi
+
+UNOWNED_COUNT=0
+UNOWNED_FILES="[]"
+if [[ -f "${OUTPUT_DIR}/unowned-report.json" ]]; then
+    UNOWNED_COUNT=$(python3 -c "
+import json
+print(json.load(open('${OUTPUT_DIR}/unowned-report.json')).get('summary', {}).get('unowned', 0))
+" 2>/dev/null || echo 0)
+    UNOWNED_FILES=$(python3 -c "
+import json
+print(json.dumps(json.load(open('${OUTPUT_DIR}/unowned-report.json')).get('unowned_files', [])))
+" 2>/dev/null || echo "[]")
+fi
+
 # ── Determine overall status ─────────────────────────────────────────────────
 OVERALL_SBOM_STATUS="pass"
 OVERALL_LICENSE_STATUS="pass"
 OVERALL_CVE_STATUS="pass"
+OVERALL_UNOWNED_STATUS="pass"
 OVERALL_STATUS="pass"
 
 [[ $SBOM_RC -ne 0 ]]    && OVERALL_SBOM_STATUS="fail"    && OVERALL_STATUS="fail"
 [[ $LICENSE_RC -ne 0 ]] && OVERALL_LICENSE_STATUS="fail" && OVERALL_STATUS="fail"
 [[ $CVE_RC -ne 0 ]]     && OVERALL_CVE_STATUS="fail"     && OVERALL_STATUS="fail"
+[[ $UNOWNED_RC -ne 0 ]] && OVERALL_UNOWNED_STATUS="fail" && OVERALL_STATUS="fail"
 
 # ── Write attestation-summary.json ───────────────────────────────────────────
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -289,9 +339,12 @@ summary = {
     "sbom_check": "${OVERALL_SBOM_STATUS}",
     "license_check": "${OVERALL_LICENSE_STATUS}",
     "cve_check": "${OVERALL_CVE_STATUS}",
+    "unowned_check": "${OVERALL_UNOWNED_STATUS}",
+    "unowned_count": ${UNOWNED_COUNT},
     "overall": "${OVERALL_STATUS}",
     "cve_failures": ${CVE_FAILURES},
     "license_failures": ${LICENSE_FAILURES},
+    "unowned_files": ${UNOWNED_FILES},
 }
 
 out = Path("${SUMMARY_FILE}")
@@ -312,9 +365,12 @@ printf "  %-28s %s\n" "License Compliance:" \
     "$([ "$OVERALL_LICENSE_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 printf "  %-28s %s\n" "CVE Check (Grype):" \
     "$([ "$OVERALL_CVE_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+printf "  %-28s %s\n" "Unowned Files:" \
+    "$([ "$OVERALL_UNOWNED_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 echo ""
 printf "  %-28s %s\n" "Packages scanned:" "${PKG_COUNT}"
 printf "  %-28s %s\n" "Unmapped CPEs (unscanned):" "${UNMAPPED_CPE_COUNT}"
+printf "  %-28s %s\n" "Unowned files:" "${UNOWNED_COUNT}"
 printf "  %-28s %s\n" "ISO SHA-256:" "${ISO_SHA256}"
 echo ""
 
@@ -328,12 +384,16 @@ import json
 
 lf = ${LICENSE_FAILURES}
 cf = ${CVE_FAILURES}
+uf = ${UNOWNED_FILES}
 if lf:
     print("\n  License failures:")
     for f in lf: print(f"    {f}")
 if cf:
     print("\n  CVE failures:")
     for f in cf: print(f"    {f}")
+if uf:
+    print("\n  Unowned files (not in allowlist):")
+    for f in uf: print(f"    {f}")
 PYEOF
 fi
 
