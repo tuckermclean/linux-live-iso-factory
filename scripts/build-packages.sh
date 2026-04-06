@@ -269,7 +269,7 @@ fi
 # they were already present (e.g. acct-user/* installed by crossdev setup).
 # quickpkg tarballs installed files without recompiling — fast and idempotent.
 echo "==> Creating binpkgs for pre-installed sysroot packages"
-ROOT="/usr/${CROSS_TARGET}" PKGDIR="${BINPKG_DIR}" quickpkg --include-config=n "*/*" 2>/dev/null || true
+ROOT="/usr/${CROSS_TARGET}" PKGDIR="${BINPKG_DIR}" quickpkg --include-config=y "*/*" 2>/dev/null || true
 PKGDIR="${BINPKG_DIR}" emaint binhost --fix
 
 # Copy kernel image to OUTPUT_DIR so it escapes the container.
