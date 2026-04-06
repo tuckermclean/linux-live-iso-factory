@@ -176,7 +176,7 @@ log "--- Pillar 1: SBOM Generation (Syft) ---"
 # The binary classifier runs by default and produces extra components named by
 # file path with no CPE; the portage catalog already covers everything they'd find.
 syft "dir:${SYSROOT}" \
-    --override-default-catalogers portage-db-cataloger \
+    --override-default-catalogers portage-cataloger \
     -o cyclonedx-json \
     --file "${SBOM_FILE}" 2>&1 || SBOM_RC=$?
 
