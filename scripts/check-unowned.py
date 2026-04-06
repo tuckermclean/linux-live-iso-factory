@@ -58,22 +58,47 @@ def get_file_path(file_entry: dict) -> str | None:
 def get_owned_paths(syft_json: dict) -> set:
     """
     Build the set of paths owned by Portage packages.
-    Reads metadata.Files[] from each portage artifact.
+    Reads the CONTENTS file list from each portage artifact.
 
     Portage CONTENTS paths are target-absolute (e.g. /usr/bin/bash),
     not prefixed with the scan root. Returns them as-is.
+
+    Syft schema variations across versions:
+      metadata.installedFiles[]  — current Syft (camelCase)
+      metadata.Files[]           — older Syft (PascalCase)
+      metadata.files[]           — alternate older schema
     """
     owned = set()
+    portage_pkg_count = 0
     for artifact in syft_json.get("artifacts", []):
         if artifact.get("type", "").lower() != "portage":
             continue
+        portage_pkg_count += 1
         metadata = artifact.get("metadata") or {}
-        # Syft portage cataloger field may be "Files" or "files"
-        files = metadata.get("Files") or metadata.get("files") or []
+        files = (
+            metadata.get("installedFiles")
+            or metadata.get("Files")
+            or metadata.get("files")
+            or []
+        )
         for f in files:
-            p = f.get("Path") or f.get("path")
+            p = f.get("path") or f.get("Path")
             if p:
                 owned.add(p)
+
+    if portage_pkg_count > 0 and not owned:
+        # Dump the metadata keys of the first portage artifact so the field
+        # name mismatch can be diagnosed in CI logs.
+        for artifact in syft_json.get("artifacts", []):
+            if artifact.get("type", "").lower() == "portage":
+                meta = artifact.get("metadata") or {}
+                print(
+                    f"[check-unowned] WARN: portage pkg '{artifact.get('name')}' "
+                    f"has metadata keys: {list(meta.keys())} — no file list found",
+                    file=sys.stderr,
+                )
+                break
+
     return owned
 
 

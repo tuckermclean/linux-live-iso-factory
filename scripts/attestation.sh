@@ -202,7 +202,7 @@ SYFT_FILE_METADATA_SELECTION=all syft "dir:${SYSROOT}" \
     2>&1 || SBOM_RC=$?
 
 if [[ $SBOM_RC -eq 0 ]]; then
-    PKG_COUNT=$(python3 -c "import json; d=json.load(open('${SBOM_FILE}')); print(len(d.get('components', [])))" 2>/dev/null || echo 0)
+    PKG_COUNT=$(python3 -c "import json; d=json.load(open('${SBOM_FILE}')); print(sum(1 for c in d.get('components',[]) if c.get('type')!='file'))" 2>/dev/null || echo 0)
     log "Syft found ${PKG_COUNT} packages in sysroot."
 else
     fail "Syft exited with code $SBOM_RC"

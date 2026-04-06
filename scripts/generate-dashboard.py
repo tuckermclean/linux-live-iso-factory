@@ -129,6 +129,7 @@ def render_index(summaries: list) -> str:
         overall = s.get("overall", "unknown")
         rc = row_class(overall)
 
+        unowned = s.get("unowned_check", "unknown")
         rows.append(f"""
   <tr class="{rc}">
     <td><a href="builds/{h(tag)}.html">{h(tag)}</a></td>
@@ -137,10 +138,11 @@ def render_index(summaries: list) -> str:
     <td>{h(unmapped)}</td>
     <td>{status_badge(lic)}</td>
     <td>{status_badge(cve)}</td>
+    <td>{status_badge(unowned)}</td>
     <td>{status_badge(overall)}</td>
   </tr>""")
 
-    rows_html = "\n".join(rows) if rows else "<tr><td colspan='7'>No builds found.</td></tr>"
+    rows_html = "\n".join(rows) if rows else "<tr><td colspan='8'>No builds found.</td></tr>"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -165,6 +167,7 @@ def render_index(summaries: list) -> str:
       <th>Unmapped CPEs</th>
       <th>Licenses</th>
       <th>CVEs</th>
+      <th>Unowned</th>
       <th>Overall</th>
     </tr>
   </thead>
@@ -194,19 +197,25 @@ def render_build_page(summary: dict, source_dir: str) -> str:
     license_failures = summary.get("license_failures") or []
 
     # Load detail reports if available
-    license_report = load_json_optional(os.path.join(source_dir, "license-report.json"))
-    cve_report = load_json_optional(os.path.join(source_dir, "cve-report.json"))
+    license_report  = load_json_optional(os.path.join(source_dir, "license-report.json"))
+    cve_report      = load_json_optional(os.path.join(source_dir, "cve-report.json"))
+    unowned_report  = load_json_optional(os.path.join(source_dir, "unowned-report.json"))
     sbom_data = load_json_optional(os.path.join(source_dir, "sbom-enriched.cdx.json"))
     if not sbom_data:
         sbom_data = load_json_optional(os.path.join(source_dir, "sbom.cdx.json"))
 
+    unowned_status = summary.get("unowned_check", "unknown")
+
     # ── SBOM package table ───────────────────────────────────────────────────
+    # Skip type:"file" entries — those are individual filesystem files from the
+    # file cataloger, not packages. They have no license info and clutter the table.
     sbom_rows = []
     for c in sbom_data.get("components", []):
+        if c.get("type") == "file":
+            continue
         name = c.get("name", "")
         ver = c.get("version", "")
         cpe = c.get("cpe", "")
-        purl = c.get("purl", "")
         lic_val = ""
         for entry in (c.get("licenses") or []):
             if "expression" in entry:
@@ -290,6 +299,31 @@ def render_build_page(summary: dict, source_dir: str) -> str:
     else:
         cve_table = "<p class='unknown'>CVE report not available.</p>"
 
+    # ── Unowned files section ─────────────────────────────────────────────────
+    if unowned_report:
+        u_sum = unowned_report.get("summary", {})
+        u_files = unowned_report.get("unowned_files", [])
+        u_count = u_sum.get("unowned", len(u_files))
+        u_total = u_sum.get("total_files", "?")
+        u_owned = u_sum.get("owned", "?")
+        u_allowed = u_sum.get("allowlisted", "?")
+        if u_count == 0:
+            unowned_section = (
+                f"<p class='pass'>PASS — {h(u_total)} files: "
+                f"{h(u_owned)} owned by Portage, {h(u_allowed)} allowlisted, 0 unowned.</p>"
+            )
+        else:
+            file_rows = "".join(f"<tr><td>{h(p)}</td></tr>" for p in sorted(u_files))
+            unowned_section = (
+                f"<p class='fail'>FAIL — {h(u_count)} unowned file(s) "
+                f"(of {h(u_total)} total: {h(u_owned)} owned, {h(u_allowed)} allowlisted)</p>"
+                "<table><thead><tr><th>Path</th></tr></thead><tbody>"
+                + file_rows
+                + "</tbody></table>"
+            )
+    else:
+        unowned_section = "<p class='unknown'>Unowned files report not available.</p>"
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -310,6 +344,7 @@ def render_build_page(summary: dict, source_dir: str) -> str:
   <tr><th>SBOM</th><td>{status_badge(sbom_check)}</td></tr>
   <tr><th>Licenses</th><td>{status_badge(lic_status)}</td></tr>
   <tr><th>CVEs</th><td>{status_badge(cve_status)}</td></tr>
+  <tr><th>Unowned Files</th><td>{status_badge(unowned_status)}</td></tr>
   <tr><th>Overall</th><td>{status_badge(overall)}</td></tr>
 </table>
 
@@ -326,6 +361,11 @@ def render_build_page(summary: dict, source_dir: str) -> str:
 <div class="section">
   <h2>CVE Check</h2>
   {cve_table}
+</div>
+
+<div class="section">
+  <h2>Unowned Files (Pillar 4)</h2>
+  {unowned_section}
 </div>
 
 </body>
