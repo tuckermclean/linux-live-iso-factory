@@ -288,7 +288,37 @@ SYSROOT_DIR="${OUTPUT_DIR}/sysroot"
 echo "==> Populating ${SYSROOT_DIR} from live sysroot"
 rm -rf "${SYSROOT_DIR}"
 mkdir -p "${SYSROOT_DIR}"
-rsync -a "/usr/${CROSS_TARGET}/" "${SYSROOT_DIR}/"
+# Exclude crossdev build infrastructure — these are toolchain inputs, not runtime content:
+#   usr/include/         kernel UAPI + musl + package dev headers (linux-headers, musl crossdev pkgs)
+#   usr/i486-linux-musl/ nested crossdev sysroot created by some packages (e.g. binutils)
+#   usr/bin/i486-linux-musl-* crossdev wrapper symlinks (binutils-config eselect, not runtime tools)
+#   etc/portage/         portage build config synced into crossdev sysroot by build-packages.sh
+#   usr/lib/pkgconfig/   .pc files — needed to compile against libs, not to run them
+#   usr/lib/lib{c,m,pthread,dl,rt,resolv,util,xnet,crypt}.a  musl static stubs
+#   usr/lib/{crt1,Scrt1,rcrt1,crti,crtn}.o  musl CRT startup objects
+#   lib/libssp_nonshared.a  GCC stack-smashing protection static lib (crossdev GCC artifact)
+rsync -a \
+    --exclude='/usr/include/' \
+    --exclude='/usr/i486-linux-musl/' \
+    --exclude='/usr/bin/i486-linux-musl-*' \
+    --exclude='/etc/portage/' \
+    --exclude='/usr/lib/pkgconfig/' \
+    --exclude='/usr/lib/libc.a' \
+    --exclude='/usr/lib/libm.a' \
+    --exclude='/usr/lib/libpthread.a' \
+    --exclude='/usr/lib/libdl.a' \
+    --exclude='/usr/lib/librt.a' \
+    --exclude='/usr/lib/libresolv.a' \
+    --exclude='/usr/lib/libutil.a' \
+    --exclude='/usr/lib/libxnet.a' \
+    --exclude='/usr/lib/libcrypt.a' \
+    --exclude='/usr/lib/crt1.o' \
+    --exclude='/usr/lib/Scrt1.o' \
+    --exclude='/usr/lib/rcrt1.o' \
+    --exclude='/usr/lib/crti.o' \
+    --exclude='/usr/lib/crtn.o' \
+    --exclude='/lib/libssp_nonshared.a' \
+    "/usr/${CROSS_TARGET}/" "${SYSROOT_DIR}/"
 
 # Fix the musl dynamic linker. The crossdev sysroot installs it as a symlink
 # pointing to an absolute crossdev path (/usr/i486-linux-musl/usr/lib/libc.so)

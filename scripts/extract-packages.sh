@@ -91,7 +91,30 @@ echo ""
 echo "==> Populating ${SYSROOT_DIR} from live sysroot"
 rm -rf "${SYSROOT_DIR}"
 mkdir -p "${SYSROOT_DIR}"
-rsync -a "/usr/${CROSS_TARGET}/" "${SYSROOT_DIR}/"
+# Exclude crossdev build infrastructure — these are toolchain inputs, not runtime content.
+# Keep this list in sync with build-packages.sh.
+rsync -a \
+    --exclude='/usr/include/' \
+    --exclude='/usr/i486-linux-musl/' \
+    --exclude='/usr/bin/i486-linux-musl-*' \
+    --exclude='/etc/portage/' \
+    --exclude='/usr/lib/pkgconfig/' \
+    --exclude='/usr/lib/libc.a' \
+    --exclude='/usr/lib/libm.a' \
+    --exclude='/usr/lib/libpthread.a' \
+    --exclude='/usr/lib/libdl.a' \
+    --exclude='/usr/lib/librt.a' \
+    --exclude='/usr/lib/libresolv.a' \
+    --exclude='/usr/lib/libutil.a' \
+    --exclude='/usr/lib/libxnet.a' \
+    --exclude='/usr/lib/libcrypt.a' \
+    --exclude='/usr/lib/crt1.o' \
+    --exclude='/usr/lib/Scrt1.o' \
+    --exclude='/usr/lib/rcrt1.o' \
+    --exclude='/usr/lib/crti.o' \
+    --exclude='/usr/lib/crtn.o' \
+    --exclude='/lib/libssp_nonshared.a' \
+    "/usr/${CROSS_TARGET}/" "${SYSROOT_DIR}/"
 
 # Fix the musl dynamic linker. The crossdev sysroot installs it as a symlink
 # pointing to an absolute crossdev path (/usr/i486-linux-musl/usr/lib/libc.so)
