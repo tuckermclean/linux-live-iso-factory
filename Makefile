@@ -32,6 +32,9 @@ VERSION_ENV := -e BUILD_VERSION=$(BUILD_VERSION)
 REGISTRY ?= ghcr.io/tuckermclean
 REGISTRY_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME),$(IMAGE_NAME))
 
+# S3 bucket for binary package cache — override with S3_BUCKET=... if needed
+S3_BUCKET ?= themonolith
+
 # Parallelism settings (passed to container)
 JOBS ?= $(shell nproc)
 LOAD_AVG ?= $(shell nproc)
@@ -77,7 +80,7 @@ DOCKER_RUN_ATTEST := docker run --rm \
 	$(GRYPE_MOUNT) \
 	$(PARALLEL_ENV)
 
-.PHONY: help build-image push-image pull-image \
+.PHONY: help build-image push-image pull-image restore-cache \
         sync-portage build-packages build-packages-resume \
         extract build-rootfs \
         menuconfig-kernel menuconfig-busybox \
@@ -143,6 +146,7 @@ help:
 	@echo "Registry (optional):"
 	@echo "  REGISTRY=ghcr.io/user make push-image   - Push to registry"
 	@echo "  REGISTRY=ghcr.io/user make pull-image   - Pull from registry"
+	@echo "  S3_BUCKET=my-bucket make restore-cache  - Pull images + portage + binpkgs (CI parity)"
 
 # Ensure output directories exist
 ensure-dirs:
@@ -248,6 +252,20 @@ pull-image:
 	docker pull $(REGISTRY_IMAGE)-base-tools:latest || true
 	docker tag $(REGISTRY_IMAGE)-base-tools:latest $(BASE_TOOLS_IMAGE) || true
 	@echo "==> Pulled and tagged as $(IMAGE_NAME) (+ base-tools)"
+
+# Restore all caches as CI does: pull builder images, sync portage, restore binpkgs from S3.
+# Requires: REGISTRY set (defaults to ghcr.io/tuckermclean), S3_BUCKET set, AWS credentials in env.
+# This is the manual equivalent of the CI cache-restore steps before `make build-packages`.
+restore-cache: ensure-dirs ensure-volume
+	@if [ -z "$(REGISTRY)" ]; then \
+		echo "Error: set REGISTRY=<registry/repo>"; exit 1; \
+	fi
+	@echo "==> Pulling builder images from $(REGISTRY)"
+	$(MAKE) pull-image
+	@echo "==> Syncing portage tree"
+	$(MAKE) sync-portage
+	@echo "==> Restoring binary packages from s3://$(S3_BUCKET)/packages/$(BUILD_EPOCH)/"
+	aws s3 sync s3://$(S3_BUCKET)/packages/$(BUILD_EPOCH)/ $(PROJECT_DIR)/output/packages/
 
 # Sync portage tree in volume
 sync-portage: ensure-volume ensure-dirs
