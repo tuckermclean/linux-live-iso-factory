@@ -77,7 +77,7 @@ except Exception as e:
 no_cpe = [
     (c.get("name", "?"), c.get("version", ""))
     for c in sbom.get("components", [])
-    if not c.get("cpe")
+    if c.get("type") != "file" and not c.get("cpe")
 ]
 
 if no_cpe:

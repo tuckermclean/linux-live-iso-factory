@@ -55,6 +55,33 @@ def get_file_path(file_entry: dict) -> str | None:
     return loc.get("realPath") or loc.get("path") or loc.get("accessPath")
 
 
+def get_owned_paths_from_contents(sysroot: str) -> set:
+    """
+    Read portage CONTENTS files directly from {sysroot}/var/db/pkg to get
+    the full set of owned paths including symlinks (sym entries) and directories
+    (dir entries) that Syft's portage cataloger does not capture in installedFiles.
+
+    CONTENTS format:
+      obj /path md5hash timestamp
+      sym /path -> target timestamp
+      dir /path
+    """
+    owned = set()
+    pkg_db = Path(sysroot.rstrip("/")) / "var" / "db" / "pkg"
+    if not pkg_db.exists():
+        return owned
+    for contents_file in pkg_db.glob("**/CONTENTS"):
+        try:
+            with open(contents_file) as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[0] in ("obj", "sym", "dir"):
+                        owned.add(parts[1])
+        except (OSError, UnicodeDecodeError):
+            pass
+    return owned
+
+
 def get_owned_paths(syft_json: dict) -> set:
     """
     Build the set of paths owned by Portage packages.
@@ -193,15 +220,25 @@ Exit codes:
     schema_ver = syft_json.get("schema", {}).get("version", "unknown")
     print(f"[check-unowned] Syft schema version: {schema_ver}")
 
-    owned_paths = get_owned_paths(syft_json)
-    print(f"[check-unowned] Portage-owned paths: {len(owned_paths)}")
-
     sysroot = args.sysroot.rstrip("/")
 
+    # Owned paths from Syft installedFiles (obj entries only — Syft limitation)
+    syft_owned = get_owned_paths(syft_json)
+
     # Defensive: check if owned paths also carry the sysroot prefix
-    if auto_detect_prefix(owned_paths, sysroot):
+    if auto_detect_prefix(syft_owned, sysroot):
         print(f"[check-unowned] NOTE: portage metadata paths also include sysroot prefix; normalizing", file=sys.stderr)
-        owned_paths = {p[len(sysroot):] for p in owned_paths}
+        syft_owned = {p[len(sysroot):] for p in syft_owned}
+
+    # Supplement with sym/dir entries read directly from CONTENTS files.
+    # Syft's portage cataloger only records obj (regular file) entries;
+    # symlinks and directories tracked by portage would appear unowned without this.
+    contents_owned = get_owned_paths_from_contents(sysroot)
+    owned_paths = syft_owned | contents_owned
+    print(
+        f"[check-unowned] Portage-owned paths: {len(owned_paths)} "
+        f"(Syft obj: {len(syft_owned)}, CONTENTS sym+dir: {len(contents_owned - syft_owned)})"
+    )
 
     disk_files = get_disk_files(syft_json, sysroot)
     print(f"[check-unowned] Files on disk (from Syft): {len(disk_files)}")
@@ -218,6 +255,11 @@ Exit codes:
 
     for path in sorted(disk_files):
         if path in owned_paths:
+            owned_count += 1
+        elif (path + ".bz2") in owned_paths:
+            # File was installed as path.bz2 by portage and decompressed during
+            # rootfs assembly (extract-packages.sh runs bunzip2 on man pages).
+            # The portage CONTENTS entry uses the original .bz2 name.
             owned_count += 1
         elif is_allowlisted(path, allowlist):
             allowlisted_count += 1

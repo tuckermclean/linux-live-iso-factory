@@ -102,7 +102,9 @@ def enrich(sbom: dict, overrides: dict) -> tuple:
     enriched_names = []
     no_cpe_names = []
 
-    components = sbom.get("components", [])
+    # Skip type: "file" components — these are individual filesystem files from
+    # the file cataloger, not packages. Only packages can have CPEs or be scanned.
+    components = [c for c in sbom.get("components", []) if c.get("type") != "file"]
     for component in components:
         name = component.get("name", "")
         version = component.get("version", "")
@@ -178,9 +180,11 @@ Output:
     # Enrich
     enriched_sbom, enriched_names, no_cpe_names = enrich(sbom, overrides)
 
-    total = len(sbom.get("components", []))
+    total_components = len(sbom.get("components", []))
+    total_packages = sum(1 for c in sbom.get("components", []) if c.get("type") != "file")
     print(
-        f"[enrich-sbom] Processed {total} components; "
+        f"[enrich-sbom] Processed {total_packages} packages "
+        f"({total_components - total_packages} file-type components skipped); "
         f"applied {len(enriched_names)} CPE override(s).",
         file=sys.stderr,
     )
