@@ -168,45 +168,57 @@ BASE_TOOLS_IMAGE := $(IMAGE_NAME)-base-tools
 CROSSDEV_CONTAINER := monolith-crossdev-build
 
 # Build the Docker image (pure factory — toolchain only, no sources)
-# Crossdev runs as `docker run` so portage logs always land in output/portage-logs/.
-# The final image is produced by `docker commit` from the completed crossdev container.
-# The base-tools image ID is stamped as a label on the final image. On subsequent
-# runs, if that label matches the current base-tools ID, the crossdev step is skipped.
+# If REGISTRY is set, first tries to pull the BUILD_EPOCH-pinned image from the
+# registry (fast path). Falls back to a local build if the pull fails or REGISTRY
+# is unset. Crossdev runs as `docker run` so portage logs always land in
+# output/portage-logs/. The final image is produced by `docker commit` from the
+# completed crossdev container. The base-tools image ID is stamped as a label on
+# the final image. On subsequent runs, if that label matches the current base-tools
+# ID, the crossdev step is skipped.
 build-image: ensure-dirs
-	@echo "==> Building base-tools stage (epoch: $(BUILD_EPOCH))"
-	docker buildx build --target base-tools \
-		--cache-from $(BASE_TOOLS_IMAGE) --cache-to type=inline \
-		-t $(BASE_TOOLS_IMAGE) \
-		.
-	@BASE_HASH=$$(docker inspect --format='{{json .RootFS.Layers}}' $(BASE_TOOLS_IMAGE) | sha256sum | cut -d' ' -f1); \
-	EXISTING_HASH=$$(docker inspect --format='{{index .Config.Labels "base-tools-hash"}}' $(IMAGE_NAME) 2>/dev/null || true); \
-	if [ -n "$$EXISTING_HASH" ] && [ "$$BASE_HASH" = "$$EXISTING_HASH" ]; then \
-		echo "==> Image $(IMAGE_NAME) is up to date — base-tools unchanged, skipping crossdev"; \
+	@if [ -n "$(REGISTRY)" ] && docker pull $(REGISTRY_IMAGE):$(BUILD_EPOCH) 2>/dev/null; then \
+		docker tag $(REGISTRY_IMAGE):$(BUILD_EPOCH) $(IMAGE_NAME); \
+		docker pull $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH) 2>/dev/null && \
+			docker tag $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH) $(BASE_TOOLS_IMAGE) || true; \
+		echo "==> Pulled $(IMAGE_NAME) from $(REGISTRY_IMAGE):$(BUILD_EPOCH)"; \
 	else \
-		[ -n "$$EXISTING_HASH" ] \
-			&& echo "==> Base-tools layers changed — rebuilding crossdev toolchain" \
-			|| echo "==> Building crossdev toolchain (logs → output/portage-logs/)"; \
-		docker rm -f $(CROSSDEV_CONTAINER) 2>/dev/null || true; \
-		docker run --name $(CROSSDEV_CONTAINER) \
-			$(LOGS_MOUNT) \
-			$(BASE_TOOLS_IMAGE) \
-			bash -c 'set -e && \
-			    crossdev --target "$$CROSS_TARGET" --stable --gcc 15 --portage --verbose && \
-			    echo "cross-$$CROSS_TARGET/gcc static-libs" \
-			        > /etc/portage/package.use/cross-gcc-static && \
-			    emerge --update --newuse "cross-$$CROSS_TARGET/gcc" && \
-			    rm -rf /var/cache/distfiles/* && \
-			    mkdir -p \
-			        /usr/$$CROSS_TARGET/etc/portage/{package.use,package.accept_keywords,package.mask,package.env,env} \
-			        /build /configs /output /initrd' && \
-		docker commit \
-			--change 'ENV BUILD_DIR=/build' \
-			--change 'ENV CONFIGS_DIR=/configs' \
-			--change 'ENV OUTPUT_DIR=/output' \
-			--change "LABEL base-tools-hash=$$BASE_HASH" \
-			$(CROSSDEV_CONTAINER) $(IMAGE_NAME) && \
-		docker rm $(CROSSDEV_CONTAINER) && \
-		echo "==> Image $(IMAGE_NAME) ready"; \
+		[ -n "$(REGISTRY)" ] && echo "==> Registry pull failed — building locally" || true; \
+		echo "==> Building base-tools stage (epoch: $(BUILD_EPOCH))"; \
+		docker buildx build --target base-tools \
+			$(if $(REGISTRY),--cache-from $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)) \
+			--cache-from $(BASE_TOOLS_IMAGE) --cache-to type=inline \
+			-t $(BASE_TOOLS_IMAGE) \
+			. && \
+		BASE_HASH=$$(docker inspect --format='{{json .RootFS.Layers}}' $(BASE_TOOLS_IMAGE) | sha256sum | cut -d' ' -f1) && \
+		EXISTING_HASH=$$(docker inspect --format='{{index .Config.Labels "base-tools-hash"}}' $(IMAGE_NAME) 2>/dev/null || true) && \
+		if [ -n "$$EXISTING_HASH" ] && [ "$$BASE_HASH" = "$$EXISTING_HASH" ]; then \
+			echo "==> Image $(IMAGE_NAME) is up to date — base-tools unchanged, skipping crossdev"; \
+		else \
+			[ -n "$$EXISTING_HASH" ] \
+				&& echo "==> Base-tools layers changed — rebuilding crossdev toolchain" \
+				|| echo "==> Building crossdev toolchain (logs → output/portage-logs/)"; \
+			docker rm -f $(CROSSDEV_CONTAINER) 2>/dev/null || true; \
+			docker run --name $(CROSSDEV_CONTAINER) \
+				$(LOGS_MOUNT) \
+				$(BASE_TOOLS_IMAGE) \
+				bash -c 'set -e && \
+				    crossdev --target "$$CROSS_TARGET" --stable --gcc 15 --portage --verbose && \
+				    echo "cross-$$CROSS_TARGET/gcc static-libs" \
+				        > /etc/portage/package.use/cross-gcc-static && \
+				    emerge --update --newuse "cross-$$CROSS_TARGET/gcc" && \
+				    rm -rf /var/cache/distfiles/* && \
+				    mkdir -p \
+				        /usr/$$CROSS_TARGET/etc/portage/{package.use,package.accept_keywords,package.mask,package.env,env} \
+				        /build /configs /output /initrd' && \
+			docker commit \
+				--change 'ENV BUILD_DIR=/build' \
+				--change 'ENV CONFIGS_DIR=/configs' \
+				--change 'ENV OUTPUT_DIR=/output' \
+				--change "LABEL base-tools-hash=$$BASE_HASH" \
+				$(CROSSDEV_CONTAINER) $(IMAGE_NAME) && \
+			docker rm $(CROSSDEV_CONTAINER) && \
+			echo "==> Image $(IMAGE_NAME) ready"; \
+		fi; \
 	fi
 
 # Push builder image to registry
