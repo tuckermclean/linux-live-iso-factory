@@ -9,6 +9,17 @@
 # Goal: this list shrinks over time as items move into proper ebuilds.
 
 allowlist:
+  # ── Portage system directories ──────────────────────────────────────────────
+  # Directories created implicitly by the package manager; not owned by any
+  # package, but their contents are tracked by the glob patterns below.
+  - tmp
+  - var/cache
+  - var/cache/edb
+  - var/db
+  - var/db/pkg
+  - var/lib/portage
+  - var/tmp
+
   # ── Portage metadata ────────────────────────────────────────────────────────
   # The Portage DB itself is not tracked as owned files
   - var/db/pkg/**
