@@ -265,7 +265,7 @@ restore-cache: ensure-dirs ensure-volume
 	@echo "==> Syncing portage tree"
 	$(MAKE) sync-portage
 	@echo "==> Restoring binary packages from s3://$(S3_BUCKET)/packages/$(BUILD_EPOCH)/"
-	aws s3 sync s3://$(S3_BUCKET)/packages/$(BUILD_EPOCH)/ $(PROJECT_DIR)/output/packages/
+	aws s3 sync --no-sign-request s3://$(S3_BUCKET)/packages/$(BUILD_EPOCH)/ $(PROJECT_DIR)/output/packages/
 
 # Sync portage tree in volume
 sync-portage: ensure-volume ensure-dirs

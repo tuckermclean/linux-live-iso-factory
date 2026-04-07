@@ -17,8 +17,15 @@ set -e
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 ISO_DIR="/tmp/iso"
 
-# Input files
-KERNEL_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.vmlinuz"
+# Input files — versioned name preferred (from restore-cache or CI), falls back
+# to the unversioned copy that build-packages.sh writes to output/vmlinuz.
+if [ -f "${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.vmlinuz" ]; then
+    KERNEL_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.vmlinuz"
+elif [ -f "${OUTPUT_DIR}/vmlinuz" ]; then
+    KERNEL_IMAGE="${OUTPUT_DIR}/vmlinuz"
+else
+    KERNEL_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.vmlinuz"  # will trigger the error below
+fi
 INITRD_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.initrd"
 SQUASHFS_IMAGE="${OUTPUT_DIR}/themonolith-${BUILD_VERSION}.squashfs"
 
