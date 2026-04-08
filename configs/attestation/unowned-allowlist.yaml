@@ -9,6 +9,21 @@
 # Goal: this list shrinks over time as items move into proper ebuilds.
 
 allowlist:
+  # ── FHS structural directories created by build-rootfs.sh ──────────────────
+  # Standard mount points and empty directories required by the FHS.
+  # Created by build-rootfs.sh mkdir -p; not owned by any Portage package.
+  - dev
+  - home
+  - mnt
+  - opt
+  - proc
+  - root
+  - run
+  - sys
+  - etc/network
+  - var/log
+  - var/spool
+
   # ── Portage system directories ──────────────────────────────────────────────
   # Directories created implicitly by the package manager; not owned by any
   # package, but their contents are tracked by the glob patterns below.
