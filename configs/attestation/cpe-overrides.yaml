@@ -16,11 +16,87 @@
 #   bare-package-name: "cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*"
 #
 # Keys are bare package names without category prefix (e.g. "bash" not "app-shells/bash").
+#
+# Syft generates nonsense CPEs for Gentoo packages by using the Portage atom
+# (e.g. "app-shells/bash") as both vendor and product. Every package below is
+# a correction to a real NVD-registered CPE that Grype can match against CVEs.
+#
+# Packages with no NVD presence (acct-group/acct-user virtuals, Gentoo-specific
+# metadata packages, dmidecode, htop, etc.) are intentionally omitted — they
+# will appear as CPE gaps, which is correct.
 
 overrides:
-  busybox:         "cpe:2.3:a:busybox:busybox:*:*:*:*:*:*:*:*"
-  musl:            "cpe:2.3:a:musl-libc:musl:*:*:*:*:*:*:*:*"
-  dropbear:        "cpe:2.3:a:matt_johnston:dropbear_ssh:*:*:*:*:*:*:*:*"
+  # --- Kernel & core C library ---
   monolith-kernel: "cpe:2.3:o:linux:linux_kernel:*:*:*:*:*:*:*:*"
+  musl:            "cpe:2.3:a:musl-libc:musl:*:*:*:*:*:*:*:*"
+
+  # --- Shells ---
+  bash:            "cpe:2.3:a:gnu:bash:*:*:*:*:*:*:*:*"
+  zsh:             "cpe:2.3:a:zsh:zsh:*:*:*:*:*:*:*:*"
+
+  # --- Core utilities (GNU) ---
+  coreutils:       "cpe:2.3:a:gnu:coreutils:*:*:*:*:*:*:*:*"
+  diffutils:       "cpe:2.3:a:gnu:diffutils:*:*:*:*:*:*:*:*"
+  findutils:       "cpe:2.3:a:gnu:findutils:*:*:*:*:*:*:*:*"
+  gawk:            "cpe:2.3:a:gnu:gawk:*:*:*:*:*:*:*:*"
+  grep:            "cpe:2.3:a:gnu:grep:*:*:*:*:*:*:*:*"
+  make:            "cpe:2.3:a:gnu:make:*:*:*:*:*:*:*:*"
+  nano:            "cpe:2.3:a:gnu:nano:*:*:*:*:*:*:*:*"
+  patch:           "cpe:2.3:a:gnu:patch:*:*:*:*:*:*:*:*"
+  sed:             "cpe:2.3:a:gnu:sed:*:*:*:*:*:*:*:*"
+  tar:             "cpe:2.3:a:gnu:tar:*:*:*:*:*:*:*:*"
+  wget:            "cpe:2.3:a:gnu:wget:*:*:*:*:*:*:*:*"
+
+  # --- Archivers ---
+  bzip2:           "cpe:2.3:a:bzip:bzip2:*:*:*:*:*:*:*:*"
+  gzip:            "cpe:2.3:a:gnu:gzip:*:*:*:*:*:*:*:*"
+  unzip:           "cpe:2.3:a:info-zip:unzip:*:*:*:*:*:*:*:*"
+  xz-utils:        "cpe:2.3:a:tukaani:xz:*:*:*:*:*:*:*:*"
+  zip:             "cpe:2.3:a:info-zip:zip:*:*:*:*:*:*:*:*"
+
+  # --- Text / terminal ---
+  less:            "cpe:2.3:a:greenwoodsoftware:less:*:*:*:*:*:*:*:*"
+  ncurses:         "cpe:2.3:a:gnu:ncurses:*:*:*:*:*:*:*:*"
+  readline:        "cpe:2.3:a:gnu:readline:*:*:*:*:*:*:*:*"
+  tmux:            "cpe:2.3:a:tmux_project:tmux:*:*:*:*:*:*:*:*"
+
+  # --- Editors (vim family — vim-core and xxd are Gentoo splits of the same upstream) ---
+  vim:             "cpe:2.3:a:vim:vim:*:*:*:*:*:*:*:*"
+  vim-core:        "cpe:2.3:a:vim:vim:*:*:*:*:*:*:*:*"
+  xxd:             "cpe:2.3:a:vim:vim:*:*:*:*:*:*:*:*"
+
+  # --- Crypto / TLS ---
   openssl:         "cpe:2.3:a:openssl:openssl:*:*:*:*:*:*:*:*"
+
+  # --- Libraries ---
+  libevent:        "cpe:2.3:a:libevent_project:libevent:*:*:*:*:*:*:*:*"
+  libiconv:        "cpe:2.3:a:gnu:libiconv:*:*:*:*:*:*:*:*"
+  libpcap:         "cpe:2.3:a:tcpdump:libpcap:*:*:*:*:*:*:*:*"
+  libpcre:         "cpe:2.3:a:pcre:pcre:*:*:*:*:*:*:*:*"
+  libpcre2:        "cpe:2.3:a:pcre:pcre2:*:*:*:*:*:*:*:*"
+  zlib:            "cpe:2.3:a:zlib:zlib:*:*:*:*:*:*:*:*"
+
+  # --- Network tools ---
   curl:            "cpe:2.3:a:haxx:curl:*:*:*:*:*:*:*:*"
+  dhcpcd:          "cpe:2.3:a:dhcpcd_project:dhcpcd:*:*:*:*:*:*:*:*"
+  dropbear:        "cpe:2.3:a:matt_johnston:dropbear_ssh:*:*:*:*:*:*:*:*"
+  iputils:         "cpe:2.3:a:iputils:iputils:*:*:*:*:*:*:*:*"
+  iproute2:        "cpe:2.3:a:iproute2_project:iproute2:*:*:*:*:*:*:*:*"
+  rsync:           "cpe:2.3:a:samba:rsync:*:*:*:*:*:*:*:*"
+  socat:           "cpe:2.3:a:dest-unreach:socat:*:*:*:*:*:*:*:*"
+  tcpdump:         "cpe:2.3:a:tcpdump:tcpdump:*:*:*:*:*:*:*:*"
+  traceroute:      "cpe:2.3:a:buc:traceroute:*:*:*:*:*:*:*:*"
+
+  # --- System management ---
+  binutils:        "cpe:2.3:a:gnu:binutils:*:*:*:*:*:*:*:*"
+  busybox:         "cpe:2.3:a:busybox:busybox:*:*:*:*:*:*:*:*"
+  e2fsprogs:       "cpe:2.3:a:e2fsprogs_project:e2fsprogs:*:*:*:*:*:*:*:*"
+  lsof:            "cpe:2.3:a:lsof_project:lsof:*:*:*:*:*:*:*:*"
+  procps:          "cpe:2.3:a:procps_project:procps:*:*:*:*:*:*:*:*"
+  shadow:          "cpe:2.3:a:shadow-maint:shadow-utils:*:*:*:*:*:*:*:*"
+  smartmontools:   "cpe:2.3:a:smartmontools:smartmontools:*:*:*:*:*:*:*:*"
+  strace:          "cpe:2.3:a:strace:strace:*:*:*:*:*:*:*:*"
+  util-linux:      "cpe:2.3:a:kernel:util-linux:*:*:*:*:*:*:*:*"
+
+  # --- Scripting ---
+  lua:             "cpe:2.3:a:lua:lua:*:*:*:*:*:*:*:*"
