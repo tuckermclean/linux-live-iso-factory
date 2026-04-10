@@ -32,6 +32,12 @@ VERSION_ENV := -e BUILD_VERSION=$(BUILD_VERSION)
 REGISTRY ?= ghcr.io/tuckermclean
 REGISTRY_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME),$(IMAGE_NAME))
 
+# Registry tag includes a short Dockerfile hash so any change to the Dockerfile
+# produces a new tag. CI will fail to pull an unknown tag and rebuild from scratch,
+# rather than reusing a stale cached image that predates the change.
+DOCKERFILE_HASH := $(shell sha256sum Dockerfile | cut -c1-12)
+REGISTRY_TAG := $(BUILD_EPOCH)-$(DOCKERFILE_HASH)
+
 # S3 bucket for binary package cache — override with S3_BUCKET=... if needed
 S3_BUCKET ?= themonolith
 
@@ -180,16 +186,16 @@ CROSSDEV_CONTAINER := monolith-crossdev-build
 # the final image. On subsequent runs, if that label matches the current base-tools
 # ID, the crossdev step is skipped.
 build-image: ensure-dirs
-	@if [ -n "$(REGISTRY)" ] && docker pull $(REGISTRY_IMAGE):$(BUILD_EPOCH) 2>/dev/null; then \
-		docker tag $(REGISTRY_IMAGE):$(BUILD_EPOCH) $(IMAGE_NAME); \
-		docker pull $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH) 2>/dev/null && \
-			docker tag $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH) $(BASE_TOOLS_IMAGE) || true; \
-		echo "==> Pulled $(IMAGE_NAME) from $(REGISTRY_IMAGE):$(BUILD_EPOCH)"; \
+	@if [ -n "$(REGISTRY)" ] && docker pull $(REGISTRY_IMAGE):$(REGISTRY_TAG) 2>/dev/null; then \
+		docker tag $(REGISTRY_IMAGE):$(REGISTRY_TAG) $(IMAGE_NAME); \
+		docker pull $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG) 2>/dev/null && \
+			docker tag $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG) $(BASE_TOOLS_IMAGE) || true; \
+		echo "==> Pulled $(IMAGE_NAME) from $(REGISTRY_IMAGE):$(REGISTRY_TAG)"; \
 	else \
 		[ -n "$(REGISTRY)" ] && echo "==> Registry pull failed — building locally" || true; \
 		echo "==> Building base-tools stage (epoch: $(BUILD_EPOCH))"; \
 		docker buildx build --target base-tools \
-			$(if $(REGISTRY),--cache-from $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)) \
+			$(if $(REGISTRY),--cache-from $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)) \
 			--cache-from $(BASE_TOOLS_IMAGE) --cache-to type=inline \
 			-t $(BASE_TOOLS_IMAGE) \
 			. && \
@@ -231,15 +237,19 @@ push-image: build-image
 		echo "Error: set REGISTRY=<registry/repo> — e.g. REGISTRY=ghcr.io/youruser make push-image"; \
 		exit 1; \
 	fi
+	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(REGISTRY_TAG)
 	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(BUILD_EPOCH)
 	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):latest
+	docker push $(REGISTRY_IMAGE):$(REGISTRY_TAG)
 	docker push $(REGISTRY_IMAGE):$(BUILD_EPOCH)
 	docker push $(REGISTRY_IMAGE):latest
+	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)
 	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)
 	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:latest
+	docker push $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)
 	docker push $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)
 	docker push $(REGISTRY_IMAGE)-base-tools:latest
-	@echo "==> Pushed $(REGISTRY_IMAGE):$(BUILD_EPOCH) and :latest (+ base-tools)"
+	@echo "==> Pushed $(REGISTRY_IMAGE):$(REGISTRY_TAG) (+ :$(BUILD_EPOCH) + :latest)"
 
 # Pull builder image from registry and tag locally
 pull-image:
@@ -247,10 +257,10 @@ pull-image:
 		echo "Error: set REGISTRY=<registry/repo> — e.g. REGISTRY=ghcr.io/youruser make pull-image"; \
 		exit 1; \
 	fi
-	docker pull $(REGISTRY_IMAGE):$(BUILD_EPOCH)
-	docker tag $(REGISTRY_IMAGE):$(BUILD_EPOCH) $(IMAGE_NAME)
-	docker pull $(REGISTRY_IMAGE)-base-tools:latest || true
-	docker tag $(REGISTRY_IMAGE)-base-tools:latest $(BASE_TOOLS_IMAGE) || true
+	docker pull $(REGISTRY_IMAGE):$(REGISTRY_TAG)
+	docker tag $(REGISTRY_IMAGE):$(REGISTRY_TAG) $(IMAGE_NAME)
+	docker pull $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG) || true
+	docker tag $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG) $(BASE_TOOLS_IMAGE) || true
 	@echo "==> Pulled and tagged as $(IMAGE_NAME) (+ base-tools)"
 
 # Restore all caches as CI does: pull builder images, sync portage, restore binpkgs from S3.
