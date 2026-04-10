@@ -163,8 +163,9 @@ ENRICH_SCRIPT="${SCRIPT_DIR}/enrich-sbom.py"
 LICENSE_SCRIPT="${SCRIPT_DIR}/check-licenses.py"
 CVE_SCRIPT="${SCRIPT_DIR}/check-cves.sh"
 UNOWNED_SCRIPT="${SCRIPT_DIR}/check-unowned.py"
+PROVENANCE_SCRIPT="${SCRIPT_DIR}/generate-provenance.py"
 
-for script in "$ENRICH_SCRIPT" "$LICENSE_SCRIPT" "$CVE_SCRIPT" "$UNOWNED_SCRIPT"; do
+for script in "$ENRICH_SCRIPT" "$LICENSE_SCRIPT" "$CVE_SCRIPT" "$UNOWNED_SCRIPT" "$PROVENANCE_SCRIPT"; do
     if [[ ! -f "$script" ]]; then
         echo "[attestation] ERROR: required script not found: $script" >&2
         exit 1
@@ -188,6 +189,7 @@ CVE_RC=0
 UNOWNED_RC=0
 BUILDER_SBOM_RC=0
 BUILDER_CVE_RC=0
+PROVENANCE_RC=0
 SBOM_FILE="${OUTPUT_DIR}/sbom.cdx.json"
 SYFT_JSON_FILE="${OUTPUT_DIR}/sbom.syft.json"
 ENRICHED_FILE="${OUTPUT_DIR}/sbom-enriched.cdx.json"
@@ -426,19 +428,37 @@ except Exception:
     fi
 fi
 
+# ── Pillar 6: SLSA v1.0 Provenance ───────────────────────────────────────────
+log "--- Pillar 6: SLSA v1.0 Provenance ---"
+if [[ -n "$ISO_SHA256" && "$ISO_SHA256" != "(not computed)" ]]; then
+    PROVENANCE_ARGS=(
+        --iso-sha256  "${ISO_SHA256}"
+        --iso-name    "themonolith-${BUILD_TAG}.iso"
+        --build-tag   "${BUILD_TAG}"
+        --output      "${OUTPUT_DIR}/slsa-provenance.json"
+    )
+    [[ -n "$BUILDER_DIGEST" ]] && PROVENANCE_ARGS+=(--builder-digest "${BUILDER_DIGEST}")
+    python3 "${PROVENANCE_SCRIPT}" "${PROVENANCE_ARGS[@]}" 2>&1 || PROVENANCE_RC=$?
+else
+    fail "ISO SHA-256 not computed — cannot generate provenance with valid subject"
+    PROVENANCE_RC=1
+fi
+
 # ── Determine overall status ─────────────────────────────────────────────────
 OVERALL_SBOM_STATUS="pass"
 OVERALL_LICENSE_STATUS="pass"
 OVERALL_CVE_STATUS="pass"
 OVERALL_UNOWNED_STATUS="pass"
+OVERALL_PROVENANCE_STATUS="pass"
 OVERALL_BUILDER_SBOM_STATUS="not_run"
 OVERALL_BUILDER_CVE_STATUS="not_run"
 OVERALL_STATUS="pass"
 
-[[ $SBOM_RC -ne 0 ]]    && OVERALL_SBOM_STATUS="fail"    && OVERALL_STATUS="fail"
-[[ $LICENSE_RC -ne 0 ]] && OVERALL_LICENSE_STATUS="fail" && OVERALL_STATUS="fail"
-[[ $CVE_RC -ne 0 ]]     && OVERALL_CVE_STATUS="fail"     && OVERALL_STATUS="fail"
-[[ $UNOWNED_RC -ne 0 ]] && OVERALL_UNOWNED_STATUS="fail" && OVERALL_STATUS="fail"
+[[ $SBOM_RC -ne 0 ]]       && OVERALL_SBOM_STATUS="fail"       && OVERALL_STATUS="fail"
+[[ $LICENSE_RC -ne 0 ]]    && OVERALL_LICENSE_STATUS="fail"    && OVERALL_STATUS="fail"
+[[ $CVE_RC -ne 0 ]]        && OVERALL_CVE_STATUS="fail"        && OVERALL_STATUS="fail"
+[[ $UNOWNED_RC -ne 0 ]]    && OVERALL_UNOWNED_STATUS="fail"    && OVERALL_STATUS="fail"
+[[ $PROVENANCE_RC -ne 0 ]] && OVERALL_PROVENANCE_STATUS="fail" && OVERALL_STATUS="fail"
 
 if [[ $INCLUDE_BUILDER -eq 1 ]]; then
     OVERALL_BUILDER_SBOM_STATUS="pass"
@@ -466,6 +486,7 @@ summary = {
     "cve_check": "${OVERALL_CVE_STATUS}",
     "unowned_check": "${OVERALL_UNOWNED_STATUS}",
     "unowned_count": ${UNOWNED_COUNT},
+    "provenance_check": "${OVERALL_PROVENANCE_STATUS}",
     "overall": "${OVERALL_STATUS}",
     "cve_failures": ${CVE_FAILURES},
     "license_failures": ${LICENSE_FAILURES},
@@ -503,6 +524,8 @@ printf "  %-28s %s\n" "CVE Check (Grype):" \
     "$([ "$OVERALL_CVE_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 printf "  %-28s %s\n" "Unowned Files:" \
     "$([ "$OVERALL_UNOWNED_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+printf "  %-28s %s\n" "SLSA Provenance:" \
+    "$([ "$OVERALL_PROVENANCE_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 if [[ $INCLUDE_BUILDER -eq 1 ]]; then
     printf "  %-28s %s\n" "Builder SBOM:" \
         "$([ "$OVERALL_BUILDER_SBOM_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"

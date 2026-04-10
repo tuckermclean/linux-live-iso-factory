@@ -86,6 +86,18 @@ DOCKER_RUN_ATTEST := docker run --rm \
 	$(GRYPE_MOUNT) \
 	$(PARALLEL_ENV)
 
+# GitHub Actions context vars — forwarded into Docker for SLSA provenance (Pillar 6).
+# When unset on the host (local dev), Docker omits them and the script uses placeholders.
+GITHUB_ENV := \
+	-e GITHUB_SERVER_URL \
+	-e GITHUB_REPOSITORY \
+	-e GITHUB_REF \
+	-e GITHUB_SHA \
+	-e GITHUB_RUN_ID \
+	-e GITHUB_RUN_ATTEMPT \
+	-e GITHUB_EVENT_NAME \
+	-e GITHUB_WORKFLOW_REF
+
 .PHONY: help build-image push-image pull-image restore-cache \
         sync-portage build-packages build-packages-resume \
         extract build-rootfs \
@@ -345,7 +357,7 @@ all: build-image sync-portage build-packages build-rootfs iso
 # All pillars always run — never stops on failure — artifacts always written
 attestation: ensure-volume ensure-dirs
 	@echo "==> Running attestation pipeline (build: $(BUILD_VERSION))"
-	$(DOCKER_RUN_ATTEST) $(VERSION_ENV) $(IMAGE_NAME) /scripts/attestation.sh \
+	$(DOCKER_RUN_ATTEST) $(GITHUB_ENV) $(VERSION_ENV) $(IMAGE_NAME) /scripts/attestation.sh \
 		--sysroot /output/sysroot \
 		--iso /output/themonolith-$(BUILD_VERSION).iso \
 		--build-tag $(BUILD_VERSION) \
@@ -358,7 +370,7 @@ attestation: ensure-volume ensure-dirs
 # Captures: BUILD_EPOCH, CROSS_TARGET, image digest, full builder package inventory, CVEs.
 attest-builder: ensure-volume ensure-dirs
 	@echo "==> Running attestation pipeline including builder environment (build: $(BUILD_VERSION))"
-	$(DOCKER_RUN_ATTEST) $(VERSION_ENV) $(IMAGE_NAME) /scripts/attestation.sh \
+	$(DOCKER_RUN_ATTEST) $(GITHUB_ENV) $(VERSION_ENV) $(IMAGE_NAME) /scripts/attestation.sh \
 		--sysroot /output/sysroot \
 		--iso /output/themonolith-$(BUILD_VERSION).iso \
 		--build-tag $(BUILD_VERSION) \

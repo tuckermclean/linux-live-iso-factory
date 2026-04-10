@@ -200,6 +200,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+      id-token: write
+      attestations: write
     if: >
       always() &&
       needs.build-image.result == 'success' &&
@@ -261,6 +263,29 @@ jobs:
       - name: Run attestation pipeline
         run: make attestation BUILD_VERSION=$BUILD_VERSION
         continue-on-error: true
+
+      - name: Read SLSA predicate
+        id: read-predicate
+        if: always()
+        run: |
+          PREDICATE=$(python3 -c "
+          import json, sys
+          try:
+              d = json.load(open('output/attestation/slsa-provenance.json'))
+              print(json.dumps(d['predicate']))
+          except Exception as e:
+              print(f'Error reading predicate: {e}', file=sys.stderr)
+              sys.exit(1)
+          ")
+          echo "predicate=$PREDICATE" >> "$GITHUB_OUTPUT"
+
+      - name: Sign SLSA provenance (Sigstore via GitHub OIDC)
+        uses: actions/attest@v2
+        if: always() && steps.read-predicate.outcome == 'success'
+        with:
+          subject-path: output/themonolith-${{ env.BUILD_VERSION }}.iso
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate: ${{ steps.read-predicate.outputs.predicate }}
 
       - name: Upload attestation artifacts to S3
         if: always()
