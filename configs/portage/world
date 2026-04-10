@@ -123,7 +123,7 @@ sys-apps/dmidecode
 # Data tools
 
 # Mouse support
-app-misc/gpm
+sys-libs/gpm
 
 # Amusements
 games-misc/bsd-games
