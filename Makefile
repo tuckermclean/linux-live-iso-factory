@@ -367,11 +367,19 @@ attest-builder: ensure-volume ensure-dirs
 		--include-builder \
 		--builder-digest $$(docker inspect --format='{{.Id}}' $(IMAGE_NAME) 2>/dev/null || echo unknown)
 
-# Generate static HTML attestation dashboard from local attestation artifacts
+# Generate static HTML attestation dashboard.
+# ATTEST_INPUT_DIR: directory containing per-build attestation subdirectories.
+# Default is output/attestation (current build only — useful for local dev).
+# In CI, pass the directory that has been pre-populated with all historical
+# records synced from S3 (see .github/workflows/build.yml dashboard step).
+ATTEST_INPUT_DIR ?= output/attestation
+
 dashboard: ensure-dirs
-	@echo "==> Generating attestation dashboard"
-	$(DOCKER_RUN_ATTEST) $(IMAGE_NAME) python3 /scripts/generate-dashboard.py \
-		--input-dir /output/attestation \
+	@echo "==> Generating attestation dashboard (input: $(ATTEST_INPUT_DIR))"
+	$(DOCKER_RUN_ATTEST) \
+		-v $(PROJECT_DIR)/$(ATTEST_INPUT_DIR):/attest-input:ro \
+		$(IMAGE_NAME) python3 /scripts/generate-dashboard.py \
+		--input-dir /attest-input \
 		--output-dir /output/dashboard
 
 # Update the Grype vulnerability database (stored in monolith-grype-db volume)

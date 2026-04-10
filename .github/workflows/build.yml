@@ -267,15 +267,18 @@ jobs:
         run: |
           aws s3 sync output/attestation/ \
             s3://${{ secrets.S3_BUCKET }}/attestation/$BUILD_VERSION/
-          if [ -f output/attestation/attestation-summary.json ]; then
-            aws s3 cp output/attestation/attestation-summary.json \
-              s3://${{ secrets.S3_BUCKET }}/status/$BUILD_VERSION.json
-          fi
 
       - name: Generate and upload dashboard
         if: always()
         run: |
-          make dashboard BUILD_VERSION=$BUILD_VERSION
+          # Sync ALL historical attestation records from S3 into a staging directory.
+          # Each build's artifacts live under attestation/<build_version>/ on S3, so
+          # syncing the parent gives us one subdirectory per build. generate-dashboard.py
+          # uses rglob("attestation-summary.json") to find them all.
+          mkdir -p output/all-attestation
+          aws s3 sync s3://${{ secrets.S3_BUCKET }}/attestation/ output/all-attestation/
+
+          make dashboard ATTEST_INPUT_DIR=output/all-attestation BUILD_VERSION=$BUILD_VERSION
           aws s3 sync output/dashboard/ s3://${{ secrets.S3_BUCKET }}/dashboard/
 
       - name: Fail if attestation failed
