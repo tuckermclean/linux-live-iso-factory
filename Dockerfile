@@ -46,6 +46,7 @@ RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace \
         sys-devel/bc \
         dev-libs/elfutils \
         sys-boot/syslinux \
+        sys-boot/grub \
         dev-libs/libisoburn \
         sys-fs/mtools \
         sys-fs/dosfstools \
@@ -59,15 +60,6 @@ RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace \
         app-text/mandoc \
         sys-libs/ncurses && \
     eix-update && \
-    rm -rf /var/cache/distfiles/*
-
-# GRUB pinned to 2.12 — do not upgrade to 2.14+ without testing on Hyper-V.
-# GRUB 2.14 introduced a regression in kern/efi/mm.c: add_memory_regions()
-# calls grub_fatal() when EFI AllocatePages fails at a fixed address. Hyper-V
-# reports those pages as EfiConventionalMemory but refuses to allocate them,
-# which triggers the fatal and aborts boot. Ubuntu 24.04 ships 2.12 and boots
-# cleanly on Hyper-V; 2.12 predates the regression.
-RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace "=sys-boot/grub-2.12*" && \
     rm -rf /var/cache/distfiles/*
 
 # Attestation tools: Syft (SBOM generation) + Grype (CVE scanning) + pyyaml
