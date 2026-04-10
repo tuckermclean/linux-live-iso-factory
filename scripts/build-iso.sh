@@ -222,6 +222,11 @@ cat > "$GRUB_CFG" << 'GRUBEOF'
 set timeout=5
 set default=0
 
+# Locate the ISO9660 volume by label. On UEFI boot, GRUB's root defaults to the
+# ESP (FAT image), so /boot/vmlinuz would not be found. search switches root to
+# the ISO9660 partition before any linux/initrd commands run.
+search --no-floppy --set=root --label MONOLITH
+
 menuentry "tHE m0n0LiTH" {
     linux /boot/vmlinuz quiet
     initrd /boot/initrd.img

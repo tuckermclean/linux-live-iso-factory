@@ -90,7 +90,7 @@ DOCKER_RUN_ATTEST := docker run --rm \
         sync-portage build-packages build-packages-resume \
         extract build-rootfs \
         menuconfig-kernel menuconfig-busybox \
-        iso all test shell \
+        iso all test test-uefi shell \
         check-updates update-versions update-build-pins update-all \
         list-packages show-failed regen-manifest \
         attestation attest-builder dashboard grype-db-update \
@@ -123,7 +123,8 @@ help:
 	@echo "  all                  - Full build: image → packages → rootfs → iso"
 	@echo ""
 	@echo "Testing:"
-	@echo "  test                 - Boot ISO in QEMU (requires qemu-system-i386)"
+	@echo "  test                 - Boot ISO in QEMU via BIOS (requires qemu-system-i386)"
+	@echo "  test-uefi            - Boot ISO in QEMU via UEFI (requires qemu-system-x86_64 + OVMF)"
 	@echo ""
 	@echo "Attestation:"
 	@echo "  attestation          - Run SBOM + license + CVE checks (requires build-rootfs first)"
@@ -387,18 +388,42 @@ grype-db-update: ensure-volume
 	@echo "==> Updating Grype vulnerability database"
 	$(DOCKER_RUN_ATTEST) $(IMAGE_NAME) grype db update
 
-# Test ISO in QEMU (on host)
+# Test ISO via BIOS boot in QEMU (on host) — serial console, Ctrl+A X to exit.
 test:
 	@if [ ! -f "$(PROJECT_DIR)/output/themonolith-$(BUILD_VERSION).iso" ]; then \
 		echo "Error: output/themonolith-$(BUILD_VERSION).iso not found. Run 'make iso' first."; \
 		exit 1; \
 	fi
-	@echo "==> Booting ISO in QEMU (Ctrl+A X to exit)"
-	@echo "    For graphical: qemu-system-i386 -cdrom output/themonolith-$(BUILD_VERSION).iso -m 64M"
+	@echo "==> Booting ISO in QEMU via BIOS (Ctrl+A X to exit)"
 	qemu-system-i386 \
 		-cdrom $(PROJECT_DIR)/output/themonolith-$(BUILD_VERSION).iso \
 		-m 64M \
 		-cpu 486 \
+		-nographic \
+		-serial mon:stdio
+
+# Test ISO via UEFI boot in QEMU (on host) — requires OVMF firmware package.
+# Debian/Ubuntu: apt install ovmf   Fedora: dnf install edk2-ovmf
+# OVMF is 64-bit firmware; GRUB hands off to the 32-bit kernel via EFI Handover.
+# 512M minimum — UEFI firmware + GRUB EFI heap require well over 64MB.
+OVMF_CODE ?= $(firstword \
+	$(wildcard /usr/share/OVMF/OVMF_CODE.fd) \
+	$(wildcard /usr/share/edk2/ovmf/OVMF_CODE.fd) \
+	$(wildcard /usr/share/edk2-ovmf/OVMF_CODE.fd))
+test-uefi:
+	@if [ ! -f "$(PROJECT_DIR)/output/themonolith-$(BUILD_VERSION).iso" ]; then \
+		echo "Error: output/themonolith-$(BUILD_VERSION).iso not found. Run 'make iso' first."; \
+		exit 1; \
+	fi
+	@if [ -z "$(OVMF_CODE)" ]; then \
+		echo "Error: OVMF firmware not found. Install ovmf/edk2-ovmf, or set OVMF_CODE=/path/to/OVMF_CODE.fd"; \
+		exit 1; \
+	fi
+	@echo "==> Booting ISO in QEMU via UEFI (OVMF: $(OVMF_CODE)) — Ctrl+A X to exit"
+	qemu-system-x86_64 \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-cdrom $(PROJECT_DIR)/output/themonolith-$(BUILD_VERSION).iso \
+		-m 512M \
 		-nographic \
 		-serial mon:stdio
 
