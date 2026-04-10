@@ -137,12 +137,13 @@ suppressed and the db corrected in one command. Pages display correctly regardle
 - SYSLINUX is installed via `emerge sys-boot/syslinux` with no version pin; the `ENV SYSLINUX_VERSION=6.03` in the Dockerfile is purely informational — it doesn't actually constrain what emerge installs, so it could silently become wrong
 - **Fix:** Either document the manual update process or extend `update-versions.sh` to cover these; replace `ENV SYSLINUX_VERSION` with a comment
 
-### 8. No EFI boot support (BIOS only)
-- Build creates a stub EFI partition (empty FAT12, for Hyper-V Gen 1 GPT hybrid only)
-- No actual EFI bootloader (no GRUB EFI, no systemd-boot, no EFI shell)
-- Modern hardware (post-2012) increasingly drops BIOS/CSM support
-- **Fix:** Add a minimal GRUB EFI or systemd-boot stub for UEFI machines
-- May be intentional given the i486 target audience — worth documenting either way
+### 8. EFI boot support — RESOLVED
+- GRUB EFI (32-bit and 64-bit) is now embedded via `grub-mkstandalone`.
+- Three bugs were fixed in `build-iso.sh`:
+  1. **El Torito sector_count overflow**: the 32 MB `efi.img` hit the 16-bit limit (max 65535 × 512 = 31.9 MiB); xorriso stored 0, causing OVMF's `CdExpressDxe` to skip the EFI entry entirely. Fixed by sizing `efi.img` dynamically from the actual EFI binary sizes + 1 MB FAT overhead.
+  2. **Wrong GPT partition type GUID**: xorriso's `-isohybrid-gpt-basdat` marks the EFI partition with the Microsoft Basic Data GUID (`EBD0A0A2-...`). OVMF requires the EFI System Partition GUID (`C12A7328-...`). Fixed by post-processing the ISO with a Python script that patches both primary and backup GPT headers (with corrected CRC32s).
+  3. **Malformed FAT32**: at 14 MB the image has ~28 000 clusters, below FAT32's minimum of 65 525; `mkfs.vfat -F 32` produces a non-standard filesystem that UEFI's FatDxe rejects. Fixed by using FAT16, which the UEFI spec explicitly supports for ESP partitions ≤ 512 MiB.
+- UEFI CD boot and UEFI USB/hybrid boot both verified working under QEMU + OVMF.
 
 ### 9. No persistence support
 - System uses tmpfs overlay over SquashFS — all changes lost on reboot
