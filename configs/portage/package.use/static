@@ -185,5 +185,8 @@ app-misc/cmatrix static
 # sl - steam locomotive (typo correction for ls)
 app-misc/sl static
 
+# gpm - console mouse daemon
+app-misc/gpm static
+
 # nethack - curses roguelike; force ncurses UI, no X11/Qt/GTK
 games-roguelike/nethack -minimal ncurses -X -qt -gtk

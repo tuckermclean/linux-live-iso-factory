@@ -122,6 +122,9 @@ sys-apps/dmidecode
 
 # Data tools
 
+# Mouse support
+app-misc/gpm
+
 # Amusements
 games-misc/bsd-games
 app-misc/figlet

@@ -368,6 +368,40 @@ exit 0
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/S20keygen"
 
+    # /etc/init.d/S30gpm - General Purpose Mouse daemon
+    cat > "$ROOTFS_DIR/etc/init.d/S30gpm" << 'EOF'
+#!/bin/sh
+# S30gpm - Start gpm mouse daemon for console copy/paste.
+# Probes PS/2+USB (/dev/input/mice) then serial COM1/COM2.
+# Exits silently if no mouse device is found.
+
+case "$1" in
+    start)
+        if [ -e /dev/input/mice ]; then
+            gpm -m /dev/input/mice -t imps2
+        elif [ -e /dev/ttyS0 ]; then
+            gpm -m /dev/ttyS0 -t ms
+        elif [ -e /dev/ttyS1 ]; then
+            gpm -m /dev/ttyS1 -t ms
+        fi
+        ;;
+    stop)
+        gpm -k 2>/dev/null || true
+        ;;
+    restart)
+        $0 stop
+        $0 start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+
+exit 0
+EOF
+    chmod 755 "$ROOTFS_DIR/etc/init.d/S30gpm"
+
     # /usr/sbin/monolith-advisory-check - boot-time advisory fetch script
     install -m 755 \
         "${CONFIGS_DIR}/overlay/app-misc/monolith-base/files/monolith-advisory-check" \
