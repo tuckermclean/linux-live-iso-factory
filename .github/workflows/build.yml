@@ -278,7 +278,8 @@ jobs:
           mkdir -p output/all-attestation
           aws s3 sync s3://${{ secrets.S3_BUCKET }}/attestation/ output/all-attestation/
 
-          make dashboard ATTEST_INPUT_DIR=output/all-attestation BUILD_VERSION=$BUILD_VERSION
+          make dashboard ATTEST_INPUT_DIR=output/all-attestation BUILD_VERSION=$BUILD_VERSION \
+            DASHBOARD_BASE_URL=${{ secrets.DASHBOARD_BASE_URL }}
           aws s3 sync output/dashboard/ s3://${{ secrets.S3_BUCKET }}/dashboard/
 
       - name: Fail if attestation failed

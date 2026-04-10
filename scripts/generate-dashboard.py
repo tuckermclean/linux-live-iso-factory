@@ -183,7 +183,7 @@ def render_index(summaries: list) -> str:
 """
 
 
-def render_build_page(summary: dict, source_dir: str) -> str:
+def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str:
     tag = summary.get("build_tag", "unknown")
     ts = summary.get("timestamp", "")
     overall = summary.get("overall", "unknown")
@@ -193,6 +193,19 @@ def render_build_page(summary: dict, source_dir: str) -> str:
     lic_status = summary.get("license_check", "unknown")
     cve_status = summary.get("cve_check", "unknown")
     sbom_check = summary.get("sbom_check", "unknown")
+
+    # ── Download links ────────────────────────────────────────────────────────
+    download_rows = ""
+    if base_url:
+        base = base_url.rstrip("/")
+        iso_url  = f"{base}/themonolith-{tag}.iso"
+        sbom_url = f"{base}/attestation/{tag}/sbom-enriched.cdx.json"
+        download_rows = (
+            f"<tr><th>ISO Download</th><td><a href=\"{h(iso_url)}\">"
+            f"themonolith-{h(tag)}.iso</a></td></tr>\n"
+            f"  <tr><th>SBOM (CycloneDX)</th><td><a href=\"{h(sbom_url)}\">"
+            f"sbom-enriched.cdx.json</a></td></tr>"
+        )
     cve_failures = summary.get("cve_failures") or []
     license_failures = summary.get("license_failures") or []
 
@@ -420,6 +433,7 @@ def render_build_page(summary: dict, source_dir: str) -> str:
   <tr><th>Packages</th><td>{h(pkg_count)}</td></tr>
   <tr><th>Unmapped CPEs</th><td>{h(unmapped)}</td></tr>
   <tr><th>ISO SHA-256</th><td class="hash">{h(iso_sha)}</td></tr>
+  {download_rows}
   <tr><th>SBOM</th><td>{status_badge(sbom_check)}</td></tr>
   <tr><th>Licenses</th><td>{status_badge(lic_status)}</td></tr>
   <tr><th>CVEs (sysroot)</th><td>{status_badge(cve_status)}</td></tr>
@@ -484,6 +498,11 @@ Examples:
         "--s3-sync", metavar="S3_PATH",
         help="If given, sync attestation artifacts from S3 before generating (requires aws CLI)"
     )
+    parser.add_argument(
+        "--base-url", metavar="URL", default="",
+        help="Public base URL for artifact downloads (e.g. https://assets.example.com). "
+             "When set, build detail pages will include download links for the ISO and SBOM."
+    )
     args = parser.parse_args()
 
     if args.s3_sync:
@@ -506,7 +525,7 @@ Examples:
     for s in summaries:
         tag = s.get("build_tag", "unknown")
         source_dir = s.get("_source_dir", "")
-        page_html = render_build_page(s, source_dir)
+        page_html = render_build_page(s, source_dir, base_url=args.base_url)
         page_path = os.path.join(args.output_dir, "builds", f"{tag}.html")
         write_html(page_path, page_html)
         print(f"[dashboard] Wrote builds/{tag}.html")

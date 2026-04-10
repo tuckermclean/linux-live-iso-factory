@@ -373,7 +373,12 @@ attest-builder: ensure-volume ensure-dirs
 # Default is output/attestation (current build only — useful for local dev).
 # In CI, pass the directory that has been pre-populated with all historical
 # records synced from S3 (see .github/workflows/build.yml dashboard step).
-ATTEST_INPUT_DIR ?= output/attestation
+# DASHBOARD_BASE_URL: public base URL for artifact downloads (e.g. https://assets.example.com).
+# When set, build detail pages include download links for the ISO and SBOM.
+ATTEST_INPUT_DIR    ?= output/attestation
+DASHBOARD_BASE_URL  ?=
+
+_DASHBOARD_BASE_URL_ARG = $(if $(DASHBOARD_BASE_URL),--base-url $(DASHBOARD_BASE_URL),)
 
 dashboard: ensure-dirs
 	@echo "==> Generating attestation dashboard (input: $(ATTEST_INPUT_DIR))"
@@ -381,7 +386,8 @@ dashboard: ensure-dirs
 		-v $(PROJECT_DIR)/$(ATTEST_INPUT_DIR):/attest-input:ro \
 		$(IMAGE_NAME) python3 /scripts/generate-dashboard.py \
 		--input-dir /attest-input \
-		--output-dir /output/dashboard
+		--output-dir /output/dashboard \
+		$(_DASHBOARD_BASE_URL_ARG)
 
 # Update the Grype vulnerability database (stored in monolith-grype-db volume)
 grype-db-update: ensure-volume
