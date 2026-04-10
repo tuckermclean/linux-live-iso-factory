@@ -1,11 +1,12 @@
 #!/bin/bash
 #
-# attestation.sh — Four-pillar attestation pipeline for The Monolith ISO.
+# attestation.sh — Five-pillar attestation pipeline for The Monolith ISO.
 #
 # Pillar 1: SBOM generation (Syft) + CPE enrichment (enrich-sbom.py)
 # Pillar 2: License compliance (check-licenses.py)
 # Pillar 3: CVE scanning (Grype via check-cves.sh)
 # Pillar 4: Unowned files audit (check-unowned.py)
+# Pillar 5: Builder environment SBOM + CVE scan (--include-builder only)
 #
 # IMPORTANT: All pillars always run to completion regardless of
 # earlier failures. You want every red light visible at once.
@@ -22,6 +23,13 @@
 #   --policy PATH        License policy YAML [default: /configs/attestation/license-policy.yaml]
 #   --unowned-allowlist PATH
 #                        Unowned files allowlist YAML [default: /configs/attestation/unowned-allowlist.yaml]
+#   --include-builder    Also attest to the builder image itself (Pillar 5): scans the
+#                        running container's filesystem (dir:/) with Syft + Grype,
+#                        excluding bind-mounted volumes that are not part of the image.
+#                        Captures full provenance: BUILD_EPOCH, CROSS_TARGET, image
+#                        digest, toolchain package inventory, and CVE scan results.
+#   --builder-digest ID  Docker image digest or ID to record in the summary
+#                        (pass via: docker inspect --format='{{.Id}}' monolith-builder)
 #   --help               Show this help
 #
 # Output files (in output-dir):
@@ -32,6 +40,10 @@
 #   cve-report.json            Grype CVE findings
 #   unowned-report.json        Files not owned by any Portage package
 #   cpe-gap-count.txt          Number of packages with no CPE
+#   builder-sbom.cdx.json      Builder image SBOM (Pillar 5, if --include-builder)
+#   builder-sbom-enriched.cdx.json  Builder SBOM with CPE overrides (Pillar 5)
+#   builder-cve-report.json    Builder Grype CVE findings (Pillar 5)
+#   builder-cpe-gap-count.txt  Builder packages with no CPE (Pillar 5)
 #   attestation-summary.json   Machine-readable summary of all pillar results
 #
 # Exit codes:
@@ -48,6 +60,8 @@ OUTPUT_DIR=""
 OVERRIDES_FILE="/configs/attestation/cpe-overrides.yaml"
 POLICY_FILE="/configs/attestation/license-policy.yaml"
 UNOWNED_ALLOWLIST_FILE="/configs/attestation/unowned-allowlist.yaml"
+INCLUDE_BUILDER=0
+BUILDER_DIGEST=""
 
 # ── ANSI colors ──────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -77,6 +91,8 @@ Optional:
                        Fallback: config/cpe-overrides.yaml (relative to cwd)
   --policy PATH        License policy YAML [default: /configs/attestation/license-policy.yaml]
                        Fallback: config/license-policy.yaml (relative to cwd)
+  --include-builder    Pillar 5: attest the builder image (SBOM + CVE scan of dir:/)
+  --builder-digest ID  Docker image digest to record (from: docker inspect --format='{{.Id}}' monolith-builder)
   --help               Show this help
 EOF
 }
@@ -91,6 +107,8 @@ while [[ $# -gt 0 ]]; do
         --overrides)          OVERRIDES_FILE="$2";         shift 2 ;;
         --policy)             POLICY_FILE="$2";            shift 2 ;;
         --unowned-allowlist)  UNOWNED_ALLOWLIST_FILE="$2"; shift 2 ;;
+        --include-builder)    INCLUDE_BUILDER=1;           shift ;;
+        --builder-digest)     BUILDER_DIGEST="$2";         shift 2 ;;
         --help)         usage; exit 0 ;;
         *) echo "[attestation] ERROR: unknown argument: $1" >&2; usage; exit 1 ;;
     esac
@@ -168,6 +186,8 @@ ENRICH_RC=0
 LICENSE_RC=0
 CVE_RC=0
 UNOWNED_RC=0
+BUILDER_SBOM_RC=0
+BUILDER_CVE_RC=0
 SBOM_FILE="${OUTPUT_DIR}/sbom.cdx.json"
 SYFT_JSON_FILE="${OUTPUT_DIR}/sbom.syft.json"
 ENRICHED_FILE="${OUTPUT_DIR}/sbom-enriched.cdx.json"
@@ -310,17 +330,122 @@ print(json.dumps(json.load(open('${OUTPUT_DIR}/unowned-report.json')).get('unown
 " 2>/dev/null || echo "[]")
 fi
 
+# ── Pillar 5: Builder environment SBOM + CVE ─────────────────────────────────
+BUILDER_PKG_COUNT=0
+BUILDER_UNMAPPED_CPE_COUNT=0
+BUILDER_CVE_FAILURES="[]"
+BUILDER_SBOM_FILE="${OUTPUT_DIR}/builder-sbom.cdx.json"
+BUILDER_ENRICHED_FILE="${OUTPUT_DIR}/builder-sbom-enriched.cdx.json"
+
+# Collect builder metadata from the environment (set by Dockerfile/docker run)
+BUILDER_EPOCH="${BUILD_EPOCH:-unknown}"
+BUILDER_CROSS_TARGET="${CROSS_TARGET:-unknown}"
+
+if [[ $INCLUDE_BUILDER -eq 1 ]]; then
+    log "--- Pillar 5: Builder Environment SBOM (Syft on dir:/) ---"
+    log "  BUILD_EPOCH:   ${BUILDER_EPOCH}"
+    log "  CROSS_TARGET:  ${BUILDER_CROSS_TARGET}"
+    [[ -n "$BUILDER_DIGEST" ]] && log "  Image digest:  ${BUILDER_DIGEST}"
+
+    # Scan the builder image's own filesystem via dir:/, excluding all bind/volume
+    # mounts that are overlaid at runtime and are NOT part of the image itself.
+    # The portage-cataloger reads /var/db/pkg, which lives in the image layer.
+    SYFT_FILE_METADATA_SELECTION=all syft dir:/ \
+        --exclude '/output/**' \
+        --exclude '/configs/**' \
+        --exclude '/scripts/**' \
+        --exclude '/rootfs/**' \
+        --exclude '/build/**' \
+        --exclude '/var/db/repos/**' \
+        --exclude '/var/cache/distfiles/**' \
+        --exclude '/var/log/portage/**' \
+        --exclude '/root/.cache/**' \
+        --override-default-catalogers portage-cataloger \
+        -o "cyclonedx-json=${BUILDER_SBOM_FILE}" \
+        2>&1 || BUILDER_SBOM_RC=$?
+
+    if [[ $BUILDER_SBOM_RC -eq 0 ]]; then
+        BUILDER_PKG_COUNT=$(python3 -c "
+import json
+d = json.load(open('${BUILDER_SBOM_FILE}'))
+print(sum(1 for c in d.get('components', []) if c.get('type') != 'file'))
+" 2>/dev/null || echo 0)
+        log "Syft found ${BUILDER_PKG_COUNT} packages in builder environment."
+
+        # Enrich builder SBOM with the same CPE overrides (Portage packages — same dictionary)
+        log "--- Pillar 5: Builder CPE Enrichment ---"
+        python3 "${ENRICH_SCRIPT}" \
+            --sbom    "${BUILDER_SBOM_FILE}" \
+            --overrides "${OVERRIDES_FILE}" \
+            --output  "${BUILDER_ENRICHED_FILE}" || BUILDER_SBOM_RC=$?
+
+        if [[ $BUILDER_SBOM_RC -eq 0 ]]; then
+            BUILDER_SBOM_FILE="${BUILDER_ENRICHED_FILE}"
+
+            BUILDER_UNMAPPED_CPE_COUNT=0
+            if [[ -f "${OUTPUT_DIR}/builder-cpe-gap-count.txt" ]]; then
+                BUILDER_UNMAPPED_CPE_COUNT="$(cat "${OUTPUT_DIR}/builder-cpe-gap-count.txt" | tr -d '[:space:]')"
+            fi
+
+            # Move the gap file produced by enrich-sbom.py to its builder-specific name
+            [[ -f "${OUTPUT_DIR}/cpe-gap-count.txt" ]] && \
+                mv "${OUTPUT_DIR}/cpe-gap-count.txt" "${OUTPUT_DIR}/builder-cpe-gap-count.txt"
+        else
+            fail "Builder CPE enrichment failed (code $BUILDER_SBOM_RC) — using raw builder SBOM"
+            BUILDER_SBOM_FILE="${OUTPUT_DIR}/builder-sbom.cdx.json"
+        fi
+
+        # CVE scan the builder
+        log "--- Pillar 5: Builder CVE Check (Grype) ---"
+        bash "${CVE_SCRIPT}" \
+            --sbom    "${BUILDER_SBOM_FILE}" \
+            --output  "${OUTPUT_DIR}/builder-cve-report.json" || BUILDER_CVE_RC=$?
+
+        if [[ -f "${OUTPUT_DIR}/builder-cve-report.json" ]]; then
+            BUILDER_CVE_FAILURES=$(python3 -c "
+import json
+from collections import defaultdict
+try:
+    r = json.load(open('${OUTPUT_DIR}/builder-cve-report.json'))
+    matches = r.get('matches') or []
+    by_pkg = defaultdict(list)
+    for m in matches:
+        art = m.get('artifact', {})
+        name = art.get('name', '?')
+        ver  = art.get('version', '?')
+        cve  = m.get('vulnerability', {}).get('id', '?')
+        by_pkg[f'{name}-{ver}'].append(cve)
+    fails = [f\"{pkg}: {', '.join(cves)}\" for pkg, cves in sorted(by_pkg.items())]
+    print(json.dumps(fails))
+except Exception:
+    print('[]')
+" 2>/dev/null || echo "[]")
+        fi
+    else
+        fail "Builder SBOM generation failed (code $BUILDER_SBOM_RC)"
+    fi
+fi
+
 # ── Determine overall status ─────────────────────────────────────────────────
 OVERALL_SBOM_STATUS="pass"
 OVERALL_LICENSE_STATUS="pass"
 OVERALL_CVE_STATUS="pass"
 OVERALL_UNOWNED_STATUS="pass"
+OVERALL_BUILDER_SBOM_STATUS="not_run"
+OVERALL_BUILDER_CVE_STATUS="not_run"
 OVERALL_STATUS="pass"
 
 [[ $SBOM_RC -ne 0 ]]    && OVERALL_SBOM_STATUS="fail"    && OVERALL_STATUS="fail"
 [[ $LICENSE_RC -ne 0 ]] && OVERALL_LICENSE_STATUS="fail" && OVERALL_STATUS="fail"
 [[ $CVE_RC -ne 0 ]]     && OVERALL_CVE_STATUS="fail"     && OVERALL_STATUS="fail"
 [[ $UNOWNED_RC -ne 0 ]] && OVERALL_UNOWNED_STATUS="fail" && OVERALL_STATUS="fail"
+
+if [[ $INCLUDE_BUILDER -eq 1 ]]; then
+    OVERALL_BUILDER_SBOM_STATUS="pass"
+    OVERALL_BUILDER_CVE_STATUS="pass"
+    [[ $BUILDER_SBOM_RC -ne 0 ]] && OVERALL_BUILDER_SBOM_STATUS="fail" && OVERALL_STATUS="fail"
+    [[ $BUILDER_CVE_RC -ne 0 ]]  && OVERALL_BUILDER_CVE_STATUS="fail"  && OVERALL_STATUS="fail"
+fi
 
 # ── Write attestation-summary.json ───────────────────────────────────────────
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -345,6 +470,17 @@ summary = {
     "cve_failures": ${CVE_FAILURES},
     "license_failures": ${LICENSE_FAILURES},
     "unowned_files": ${UNOWNED_FILES},
+    "builder": {
+        "attested": ${INCLUDE_BUILDER},
+        "epoch": "${BUILDER_EPOCH}",
+        "cross_target": "${BUILDER_CROSS_TARGET}",
+        "image_digest": "${BUILDER_DIGEST}",
+        "package_count": ${BUILDER_PKG_COUNT},
+        "unmapped_cpe_count": ${BUILDER_UNMAPPED_CPE_COUNT},
+        "sbom_check": "${OVERALL_BUILDER_SBOM_STATUS}",
+        "cve_check": "${OVERALL_BUILDER_CVE_STATUS}",
+        "cve_failures": ${BUILDER_CVE_FAILURES},
+    },
 }
 
 out = Path("${SUMMARY_FILE}")
@@ -367,10 +503,24 @@ printf "  %-28s %s\n" "CVE Check (Grype):" \
     "$([ "$OVERALL_CVE_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 printf "  %-28s %s\n" "Unowned Files:" \
     "$([ "$OVERALL_UNOWNED_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+if [[ $INCLUDE_BUILDER -eq 1 ]]; then
+    printf "  %-28s %s\n" "Builder SBOM:" \
+        "$([ "$OVERALL_BUILDER_SBOM_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+    printf "  %-28s %s\n" "Builder CVE Check:" \
+        "$([ "$OVERALL_BUILDER_CVE_STATUS" = "pass" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+fi
 echo ""
 printf "  %-28s %s\n" "Packages scanned:" "${PKG_COUNT}"
 printf "  %-28s %s\n" "Unmapped CPEs (unscanned):" "${UNMAPPED_CPE_COUNT}"
 printf "  %-28s %s\n" "Unowned files:" "${UNOWNED_COUNT}"
+if [[ $INCLUDE_BUILDER -eq 1 ]]; then
+    printf "  %-28s %s\n" "Builder packages:" "${BUILDER_PKG_COUNT}"
+    printf "  %-28s %s\n" "Builder unmapped CPEs:" "${BUILDER_UNMAPPED_CPE_COUNT}"
+    printf "  %-28s %s\n" "Builder epoch:" "${BUILDER_EPOCH}"
+    printf "  %-28s %s\n" "Builder cross target:" "${BUILDER_CROSS_TARGET}"
+    [[ -n "$BUILDER_DIGEST" ]] && \
+        printf "  %-28s %s\n" "Builder image digest:" "${BUILDER_DIGEST}"
+fi
 printf "  %-28s %s\n" "ISO SHA-256:" "${ISO_SHA256}"
 echo ""
 
@@ -382,18 +532,22 @@ else
     python3 - <<PYEOF
 import json
 
-lf = ${LICENSE_FAILURES}
-cf = ${CVE_FAILURES}
-uf = ${UNOWNED_FILES}
+lf  = ${LICENSE_FAILURES}
+cf  = ${CVE_FAILURES}
+uf  = ${UNOWNED_FILES}
+bcf = ${BUILDER_CVE_FAILURES}
 if lf:
     print("\n  License failures:")
     for f in lf: print(f"    {f}")
 if cf:
-    print("\n  CVE failures:")
+    print("\n  CVE failures (sysroot):")
     for f in cf: print(f"    {f}")
 if uf:
     print("\n  Unowned files (not in allowlist):")
     for f in uf: print(f"    {f}")
+if bcf:
+    print("\n  CVE failures (builder):")
+    for f in bcf: print(f"    {f}")
 PYEOF
 fi
 

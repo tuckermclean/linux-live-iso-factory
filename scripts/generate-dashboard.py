@@ -203,6 +203,11 @@ def render_build_page(summary: dict, source_dir: str) -> str:
     sbom_data = load_json_optional(os.path.join(source_dir, "sbom-enriched.cdx.json"))
     if not sbom_data:
         sbom_data = load_json_optional(os.path.join(source_dir, "sbom.cdx.json"))
+    builder_sbom_data = load_json_optional(os.path.join(source_dir, "builder-sbom-enriched.cdx.json"))
+    if not builder_sbom_data:
+        builder_sbom_data = load_json_optional(os.path.join(source_dir, "builder-sbom.cdx.json"))
+    builder_cve_report = load_json_optional(os.path.join(source_dir, "builder-cve-report.json"))
+    builder_info = summary.get("builder") or {}
 
     unowned_status = summary.get("unowned_check", "unknown")
 
@@ -299,6 +304,80 @@ def render_build_page(summary: dict, source_dir: str) -> str:
     else:
         cve_table = "<p class='unknown'>CVE report not available.</p>"
 
+    # ── Builder environment section (Pillar 5) ───────────────────────────────
+    builder_section = ""
+    if builder_info.get("attested"):
+        b_epoch       = builder_info.get("epoch", "unknown")
+        b_target      = builder_info.get("cross_target", "unknown")
+        b_digest      = builder_info.get("image_digest", "")
+        b_pkg_count   = builder_info.get("package_count", "?")
+        b_unmapped    = builder_info.get("unmapped_cpe_count", "?")
+        b_sbom_status = builder_info.get("sbom_check", "unknown")
+        b_cve_status  = builder_info.get("cve_check", "unknown")
+
+        # Builder package table
+        b_sbom_rows = []
+        for c in builder_sbom_data.get("components", []):
+            if c.get("type") == "file":
+                continue
+            cpe = c.get("cpe", "")
+            b_sbom_rows.append(
+                f"<tr><td>{h(c.get('name',''))}</td>"
+                f"<td>{h(c.get('version',''))}</td>"
+                f"<td class='hash'>{h(cpe)}</td></tr>"
+            )
+        b_sbom_table = (
+            "<table><thead><tr><th>Package</th><th>Version</th><th>CPE</th></tr></thead><tbody>"
+            + "\n".join(b_sbom_rows)
+            + "</tbody></table>"
+        ) if b_sbom_rows else "<p class='unknown'>Builder SBOM not available.</p>"
+
+        # Builder CVE table
+        b_cve_rows = []
+        for m in (builder_cve_report.get("matches") or []):
+            art  = m.get("artifact", {})
+            vuln = m.get("vulnerability", {})
+            b_cve_rows.append(
+                f"<tr>"
+                f"<td>{h(art.get('name',''))}</td>"
+                f"<td>{h(art.get('version',''))}</td>"
+                f"<td>{h(vuln.get('id',''))}</td>"
+                f"<td>{h(vuln.get('severity',''))}</td>"
+                f"<td>{h(vuln.get('description','')[:120])}</td>"
+                f"</tr>"
+            )
+        if b_cve_rows:
+            b_cve_table = (
+                f"<p>{len(b_cve_rows)} finding(s)</p>"
+                "<table><thead><tr>"
+                "<th>Package</th><th>Version</th><th>CVE</th><th>Severity</th><th>Description</th>"
+                "</tr></thead><tbody>"
+                + "\n".join(b_cve_rows)
+                + "</tbody></table>"
+            )
+        elif builder_cve_report:
+            b_cve_table = "<p class='pass'>No CVE findings in builder environment.</p>"
+        else:
+            b_cve_table = "<p class='unknown'>Builder CVE report not available.</p>"
+
+        builder_section = f"""
+<div class="section">
+  <h2>Builder Environment (Pillar 5)</h2>
+  <table style="width:auto">
+    <tr><th>BUILD_EPOCH</th><td>{h(b_epoch)}</td></tr>
+    <tr><th>Cross target</th><td>{h(b_target)}</td></tr>
+    <tr><th>Image digest</th><td class="hash">{h(b_digest) if b_digest else '(not recorded)'}</td></tr>
+    <tr><th>Builder packages</th><td>{h(b_pkg_count)}</td></tr>
+    <tr><th>Unmapped CPEs</th><td>{h(b_unmapped)}</td></tr>
+    <tr><th>Builder SBOM</th><td>{status_badge(b_sbom_status)}</td></tr>
+    <tr><th>Builder CVEs</th><td>{status_badge(b_cve_status)}</td></tr>
+  </table>
+  <h2>Builder Package Inventory</h2>
+  {b_sbom_table}
+  <h2>Builder CVE Findings</h2>
+  {b_cve_table}
+</div>"""
+
     # ── Unowned files section ─────────────────────────────────────────────────
     if unowned_report:
         u_sum = unowned_report.get("summary", {})
@@ -343,8 +422,9 @@ def render_build_page(summary: dict, source_dir: str) -> str:
   <tr><th>ISO SHA-256</th><td class="hash">{h(iso_sha)}</td></tr>
   <tr><th>SBOM</th><td>{status_badge(sbom_check)}</td></tr>
   <tr><th>Licenses</th><td>{status_badge(lic_status)}</td></tr>
-  <tr><th>CVEs</th><td>{status_badge(cve_status)}</td></tr>
+  <tr><th>CVEs (sysroot)</th><td>{status_badge(cve_status)}</td></tr>
   <tr><th>Unowned Files</th><td>{status_badge(unowned_status)}</td></tr>
+  {"<tr><th>Builder CVEs</th><td>" + status_badge(builder_info.get("cve_check","not_run")) + "</td></tr>" if builder_info.get("attested") else ""}
   <tr><th>Overall</th><td>{status_badge(overall)}</td></tr>
 </table>
 
@@ -367,6 +447,8 @@ def render_build_page(summary: dict, source_dir: str) -> str:
   <h2>Unowned Files (Pillar 4)</h2>
   {unowned_section}
 </div>
+
+{builder_section}
 
 </body>
 </html>

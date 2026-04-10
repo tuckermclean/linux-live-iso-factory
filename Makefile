@@ -93,7 +93,7 @@ DOCKER_RUN_ATTEST := docker run --rm \
         iso all test shell \
         check-updates update-versions update-build-pins update-all \
         list-packages show-failed regen-manifest \
-        attestation dashboard grype-db-update \
+        attestation attest-builder dashboard grype-db-update \
         clean clean-build clean-all ensure-dirs ensure-volume
 
 help:
@@ -127,6 +127,7 @@ help:
 	@echo ""
 	@echo "Attestation:"
 	@echo "  attestation          - Run SBOM + license + CVE checks (requires build-rootfs first)"
+	@echo "  attest-builder       - Attestation + builder provenance (Pillar 5: image SBOM + CVE)"
 	@echo "  dashboard            - Generate static HTML dashboard from local attestation artifacts"
 	@echo "  grype-db-update      - Update Grype CVE database (stored in Docker volume)"
 	@echo ""
@@ -350,6 +351,21 @@ attestation: ensure-volume ensure-dirs
 		--overrides /configs/attestation/cpe-overrides.yaml \
 		--policy /configs/attestation/license-policy.yaml \
 		--output-dir /output/attestation
+
+# Attest to the build environment (Pillar 5): builder image SBOM, provenance, and CVE scan.
+# Runs the full attestation pipeline with --include-builder added.
+# Captures: BUILD_EPOCH, CROSS_TARGET, image digest, full builder package inventory, CVEs.
+attest-builder: ensure-volume ensure-dirs
+	@echo "==> Running attestation pipeline including builder environment (build: $(BUILD_VERSION))"
+	$(DOCKER_RUN_ATTEST) $(VERSION_ENV) $(IMAGE_NAME) /scripts/attestation.sh \
+		--sysroot /output/sysroot \
+		--iso /output/themonolith-$(BUILD_VERSION).iso \
+		--build-tag $(BUILD_VERSION) \
+		--overrides /configs/attestation/cpe-overrides.yaml \
+		--policy /configs/attestation/license-policy.yaml \
+		--output-dir /output/attestation \
+		--include-builder \
+		--builder-digest $$(docker inspect --format='{{.Id}}' $(IMAGE_NAME) 2>/dev/null || echo unknown)
 
 # Generate static HTML attestation dashboard from local attestation artifacts
 dashboard: ensure-dirs
