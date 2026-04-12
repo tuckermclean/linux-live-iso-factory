@@ -81,6 +81,46 @@ if [[ ${EBUILD_PHASE} == "configure" ]]; then
 			fi
 		fi
 
+		# gpm: its Makefile (generated under ${BUILD_DIR} by multilib-minimal's
+		# out-of-source configure) has a direct 'gcc -shared' rule for libgpm.so
+		# that ignores --disable-shared.  LDFLAGS contains -static, so the linker
+		# pulls in crt1.o and fails with "undefined reference to main".
+		#
+		# post_src_configure is used rather than pre_src_compile because
+		# multilib-minimal sets BUILD_DIR inside the ABI loop inside src_configure;
+		# by the time pre_src_compile fires, BUILD_DIR is unset and the generated
+		# Makefiles can't be found.  post_src_configure runs after the loop, and
+		# WORKDIR is always available and contains every generated Makefile.
+		if [[ ${CATEGORY}/${PN} == "sys-libs/gpm" ]]; then
+			einfo "gpm: removing libgpm.so targets from generated Makefiles"
+			python3 - "${WORKDIR}" <<'PYEOF'
+import os, re, sys
+workdir = sys.argv[1]
+for root, dirs, files in os.walk(workdir):
+    dirs[:] = [d for d in dirs if not d.startswith('.')]
+    if 'Makefile' not in files:
+        continue
+    path = os.path.join(root, 'Makefile')
+    try:
+        content = open(path).read()
+    except OSError:
+        continue
+    if 'libgpm.so' not in content:
+        continue
+    orig = content
+    # Remove libgpm.so* from prerequisite/dependency lists
+    content = re.sub(r'[ \t]+(?:lib/)?libgpm\.so\S*', '', content)
+    # Remove entire make rules whose target is a libgpm.so* file
+    # (target line + all following recipe lines starting with a tab)
+    content = re.sub(
+        r'^(?:lib/)?libgpm\.so[^\n]*\n(?:[ \t]+[^\n]*\n)*',
+        '', content, flags=re.MULTILINE)
+    if content != orig:
+        open(path, 'w').write(content)
+        print(f"gpm: patched {path}")
+PYEOF
+		fi
+
 	}
 
 fi
@@ -102,37 +142,6 @@ fi
 #      ./objects.o (with OBJDIR=.) will also compile with the host gcc.
 if [[ ${EBUILD_PHASE} == "compile" ]]; then
 	pre_src_compile() {
-		# gpm: the Makefile has an explicit 'gcc -shared' rule for libgpm.so that
-		# completely bypasses libtool and ignores --disable-shared.  Since LDFLAGS
-		# contains -static, the linker pulls in crt1.o and fails with "undefined
-		# reference to main".  Remove every libgpm.so* rule and dependency
-		# reference from all Makefiles before compilation starts; libgpm.a rules
-		# are left intact so the gpm daemon can still link statically.
-		if [[ ${CATEGORY}/${PN} == "sys-libs/gpm" ]]; then
-			einfo "gpm: removing libgpm.so targets from Makefiles"
-			python3 - "${BUILD_DIR:-${S}}" <<'PYEOF'
-import os, re, sys
-srcdir = sys.argv[1]
-for rel in ('Makefile', 'lib/Makefile', 'src/Makefile'):
-    path = os.path.join(srcdir, rel)
-    if not os.path.exists(path):
-        continue
-    content = open(path).read()
-    orig = content
-    # Remove libgpm.so* from prerequisite/dependency lists
-    content = re.sub(r'[ \t]+(?:lib/)?libgpm\.so\S*', '', content)
-    # Remove entire make rules whose target is a libgpm.so* file
-    # (target line + all following recipe lines that start with a tab)
-    content = re.sub(
-        r'^(?:lib/)?libgpm\.so[^\n]*\n(?:[ \t]+[^\n]*\n)*',
-        '', content, flags=re.MULTILINE)
-    if content != orig:
-        open(path, 'w').write(content)
-        print(f"gpm: patched {rel}")
-PYEOF
-			return 0
-		fi
-
 		# iproute2: tc/Makefile calls 'yacc-reference' as a bare command, but the
 		# script lives in ${S} (the source root) and isn't in PATH. Adding ${S}
 		# to PATH lets the tc sub-make find it without patching the Makefile.
