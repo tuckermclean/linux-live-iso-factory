@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """
-enrich-sbom.py — CPE enrichment for Syft CycloneDX SBOM output.
+enrich-sbom.py — CPE enrichment and SBOM quality fixes for Syft CycloneDX SBOM output.
 
 Reads a CycloneDX JSON SBOM (as produced by Syft from a Portage sysroot),
-applies CPE overrides from a YAML config file, and writes an enriched SBOM.
+applies a battery of fixes that Syft cannot handle for Gentoo/Portage:
+
+  1. metadata.component — populate with product name, version, supplier
+  2. CPE corrections — apply overrides; strip synthetic Portage-slug CPEs
+  3. CPE versions — strip Gentoo revision suffix (-r<N>) before NVD matching
+  4. Dependency graph — build from RDEPEND/DEPEND in the Portage vdb
+  5. License normalization — map raw Gentoo names to SPDX identifiers
+  6. Supplier — add supplier field to all components
+  7. Component types — classify by Portage category (app-* → application, etc.)
+  8. PURL qualifiers — add ?arch=...&distro=gentoo to pkg:ebuild/ PURLs
+  9. Metadata — add authors, lifecycles, externalReferences
+ 10. Tools — record this script in metadata.tools
+ 11. Noise reduction — strip syft:cpe23 property duplicates
 
 Usage:
-    enrich-sbom.py --sbom PATH --overrides PATH --output PATH
+    enrich-sbom.py --sbom PATH --overrides PATH --output PATH [options]
 
 The overrides file (config/cpe-overrides.yaml) is an EXCEPTION LIST — only
 packages where Syft's automatic CPE detection is wrong or absent. Packages
@@ -68,6 +80,22 @@ def bare_name(component_name: str) -> str:
     return name.lower()
 
 
+def strip_gentoo_revision(version: str) -> str:
+    """
+    Strip the Gentoo revision suffix (-r<N>) from a version string.
+
+    The Gentoo revision is a Portage-internal concept — it bumps the ebuild
+    without changing the upstream version.  NVD CPEs never include it.
+
+    Examples:
+      "1.0.8-r5"   → "1.0.8"
+      "5.3_p9-r1"  → "5.3_p9"   (keep upstream _p patch level)
+      "6.0_p29-r2" → "6.0_p29"
+      "2.4.3"      → "2.4.3"    (no-op when no revision)
+    """
+    return re.sub(r"-r\d+$", "", version)
+
+
 def apply_version_to_cpe(template: str, version: str) -> str:
     """
     Substitute the actual package version into a CPE 2.3 template string.
@@ -78,58 +106,332 @@ def apply_version_to_cpe(template: str, version: str) -> str:
 
     Example:
       template = "cpe:2.3:a:haxx:curl:*:*:*:*:*:*:*:*"
-      version  = "8.5.0"
+      version  = "8.5.0-r1"
       result   = "cpe:2.3:a:haxx:curl:8.5.0:*:*:*:*:*:*:*"
     """
     parts = template.split(":")
     if len(parts) >= 6 and parts[5] == "*":
+        # Strip Gentoo revision before substituting — NVD doesn't know about -rN
+        clean_version = strip_gentoo_revision(version)
         # Sanitize version: CPE doesn't allow spaces; replace _ with . (Portage convention)
-        safe_version = version.replace("_", ".").replace(" ", "")
+        safe_version = clean_version.replace("_", ".").replace(" ", "")
         parts[5] = safe_version
     return ":".join(parts)
 
 
-def enrich(sbom: dict, overrides: dict) -> tuple:
+def is_synthetic_cpe(cpe: str) -> bool:
     """
-    Apply CPE overrides to SBOM components.
+    Return True if this CPE is a Syft-generated Portage slug rather than an NVD-registered CPE.
+
+    Syft builds CPEs for Portage packages by using the category/package atom as
+    both vendor and product, e.g.:
+      cpe:2.3:a:acct-group/sshd:acct-group/sshd:0:*:*:*:*:*:*:*
+      cpe:2.3:a:app-editors/vim:app-editors/vim:9.1:*:*:*:*:*:*:*
+
+    These will never match NVD and must be stripped.
+    """
+    if not cpe:
+        return False
+    parts = cpe.split(":")
+    if len(parts) < 5:
+        return False
+    vendor = parts[3]
+    product = parts[4]
+    return "/" in vendor or "/" in product
+
+
+# Maps Portage category prefix → CycloneDX component type.
+# Order matters: first match wins.
+_CATEGORY_TYPE_RULES = [
+    ("acct-", "data"),          # acct-group/*, acct-user/* — provisioning stubs, not real software
+    ("virtual/", "library"),    # Portage virtual packages
+    ("dev-", "library"),        # dev-libs/*, dev-lang/*, etc.
+    ("lib-", "library"),        # lib-* (rare, but exists)
+    ("app-", "application"),
+    ("net-", "application"),    # net-misc/curl, net-analyzer/tcpdump
+    ("sys-", "application"),    # sys-apps/util-linux, sys-process/procps
+    ("www-", "application"),
+    ("mail-", "application"),
+    ("x11-", "application"),
+    ("media-", "application"),
+    ("games-", "application"),
+]
+
+
+def get_component_type(name: str) -> str:
+    """Map a Portage package name (with optional category) to a CycloneDX component type."""
+    for prefix, ctype in _CATEGORY_TYPE_RULES:
+        if name.startswith(prefix):
+            return ctype
+    return "library"  # safe default
+
+
+def normalize_license_entry(entry: dict, gentoo_to_spdx: dict) -> dict:
+    """
+    Normalize a single CycloneDX license entry.
+
+    CycloneDX license entries look like:
+      {"license": {"id": "MIT"}}          — already SPDX, leave alone
+      {"license": {"name": "GPL-2+"}}     — Gentoo name, try to map to SPDX id
+
+    Returns the (possibly updated) entry.
+    """
+    lic = entry.get("license", {})
+    if "name" in lic and "id" not in lic:
+        mapped = gentoo_to_spdx.get(lic["name"])
+        if mapped:
+            new_lic = dict(lic)
+            new_lic["id"] = mapped
+            del new_lic["name"]
+            return {"license": new_lic}
+    return entry
+
+
+def add_purl_qualifiers(purl: str, arch: str) -> str:
+    """Add ?arch=...&distro=gentoo qualifiers to a pkg:ebuild/ PURL if not already present."""
+    if not purl or not purl.startswith("pkg:ebuild/"):
+        return purl
+    if "?" in purl:
+        return purl  # already has qualifiers
+    return f"{purl}?arch={arch}&distro=gentoo"
+
+
+def build_dependency_graph(sysroot: str, bom_ref_by_bare: dict) -> list:
+    """
+    Build a CycloneDX dependencies array by reading Portage RDEPEND files.
+
+    Reads /var/db/pkg/category/package-version/RDEPEND for each installed package
+    and extracts bare package atom references.  Matching is best-effort:
+    atoms that don't resolve to a component in the SBOM are silently skipped
+    (this covers virtuals, build-only deps like sys-devel/gcc, etc.).
+
+    Returns a list of {"ref": bom_ref, "dependsOn": [bom_ref, ...]} dicts.
+    """
+    vdb = Path(sysroot) / "var" / "db" / "pkg"
+    if not vdb.is_dir():
+        print(
+            f"[enrich-sbom] WARNING: /var/db/pkg not found at {sysroot} — skipping dep graph",
+            file=sys.stderr,
+        )
+        return []
+
+    # Regex to extract bare category/package atoms from RDEPEND content.
+    # Matches atoms like: app-shells/bash, dev-libs/openssl, >=sys-libs/musl-1.2
+    # Strips leading version operators and comparison characters.
+    _ATOM_RE = re.compile(r"(?:>=?|<=?|~|=|!)?([a-z][a-z0-9_-]*/[a-zA-Z0-9_+.-]+)")
+
+    deps = []
+    for pkg_dir in sorted(vdb.glob("*/*")):
+        if not pkg_dir.is_dir():
+            continue
+        category = pkg_dir.parent.name
+        pkg_ver = pkg_dir.name  # e.g. "bash-5.2_p21-r1"
+        this_bare = bare_name(f"{category}/{pkg_ver}")
+
+        if this_bare not in bom_ref_by_bare:
+            continue
+
+        ref = bom_ref_by_bare[this_bare]
+        depends_on = []
+
+        for dep_file in ("RDEPEND", "DEPEND"):
+            rdep_path = pkg_dir / dep_file
+            if not rdep_path.exists():
+                continue
+            try:
+                content = rdep_path.read_text(errors="replace")
+            except OSError:
+                continue
+
+            for match in _ATOM_RE.finditer(content):
+                atom = match.group(1)
+                # Skip slot/use suffixes (e.g. "bash:0" → "bash")
+                atom = atom.split(":")[0]
+                dep_bare = bare_name(atom)
+                if dep_bare in bom_ref_by_bare and dep_bare != this_bare:
+                    dep_ref = bom_ref_by_bare[dep_bare]
+                    if dep_ref not in depends_on:
+                        depends_on.append(dep_ref)
+
+        deps.append({"ref": ref, "dependsOn": depends_on})
+
+    return deps
+
+
+def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
+    """
+    Apply all SBOM enrichments.
 
     Returns:
         (enriched_sbom, enriched_names, no_cpe_names)
-        - enriched_sbom:  the full SBOM dict with CPEs updated
-        - enriched_names: list of component names that received an override
-        - no_cpe_names:   list of (name, version) tuples with no CPE after enrichment
     """
     enriched_names = []
     no_cpe_names = []
 
-    # Skip type: "file" components — these are individual filesystem files from
-    # the file cataloger, not packages. Only packages can have CPEs or be scanned.
+    metadata = sbom.setdefault("metadata", {})
+
+    # ── Fix metadata.component ─────────────────────────────────────────────────
+    if args.product_name:
+        build_tag = args.build_tag or "unknown"
+        component_entry = {
+            "type": "operating-system",
+            "bom-ref": f"{args.product_name}-{build_tag}",
+            "name": args.product_name,
+            "version": build_tag,
+            "supplier": {"name": "Tucker McLean"},
+            "description": "The Monolith — statically-linked musl/Gentoo live ISO",
+        }
+        if args.git_sha:
+            repo_url = args.repo_url.rstrip("/") if args.repo_url else ""
+            if repo_url:
+                component_entry["externalReferences"] = [{
+                    "type": "vcs",
+                    "url": f"{repo_url}/commit/{args.git_sha}",
+                }]
+        metadata["component"] = component_entry
+
+    # ── metadata.authors and lifecycles ───────────────────────────────────────
+    metadata["authors"] = [{"name": "Tucker McLean"}]
+    metadata["lifecycles"] = [{"phase": "build"}]
+
+    # ── Load Gentoo→SPDX license mapping ──────────────────────────────────────
+    gentoo_to_spdx = {}
+    if args.license_policy:
+        policy_path = Path(args.license_policy)
+        if policy_path.exists():
+            policy_data = load_yaml_simple(args.license_policy)
+            gentoo_to_spdx = policy_data.get("gentoo_to_spdx", {})
+        else:
+            print(
+                f"[enrich-sbom] WARNING: license policy not found at {args.license_policy} — "
+                "skipping license normalization",
+                file=sys.stderr,
+            )
+
+    # ── Ensure every component has a bom-ref (required for dep graph) ─────────
+    seen_refs = set()
+    for i, component in enumerate(sbom.get("components", [])):
+        if not component.get("bom-ref"):
+            name = component.get("name", f"component-{i}")
+            ver = component.get("version", "")
+            candidate = f"{name}-{ver}" if ver else name
+            # De-duplicate if needed
+            ref = candidate
+            suffix = 1
+            while ref in seen_refs:
+                ref = f"{candidate}-{suffix}"
+                suffix += 1
+            component["bom-ref"] = ref
+        seen_refs.add(component["bom-ref"])
+
+    # Build bare_name → bom-ref lookup for dependency resolution
+    bom_ref_by_bare = {}
+    for component in sbom.get("components", []):
+        if component.get("type") != "file":
+            key = bare_name(component.get("name", ""))
+            if key and key not in bom_ref_by_bare:
+                bom_ref_by_bare[key] = component["bom-ref"]
+
+    # ── Process each package component ────────────────────────────────────────
     components = [c for c in sbom.get("components", []) if c.get("type") != "file"]
     for component in components:
         name = component.get("name", "")
         version = component.get("version", "")
         key = bare_name(name)
 
+        # ── CPE override or synthetic CPE removal ─────────────────────────────
         if key in overrides:
             template = overrides[key]
             cpe = apply_version_to_cpe(template, version)
             component["cpe"] = cpe
             enriched_names.append(name)
-        elif not component.get("cpe"):
+        elif component.get("cpe") and is_synthetic_cpe(component["cpe"]):
+            # Syft generated a bad Portage-slug CPE — strip it so Grype doesn't
+            # try (and fail) to match it against NVD
+            del component["cpe"]
+
+        # ── Track CPE gaps ────────────────────────────────────────────────────
+        if not component.get("cpe"):
             no_cpe_names.append((name, version))
+
+        # ── Strip noisy syft:cpe23 property duplicates ────────────────────────
+        if "properties" in component:
+            filtered = [
+                p for p in component["properties"]
+                if not p.get("name", "").startswith("syft:cpe23")
+            ]
+            if filtered:
+                component["properties"] = filtered
+            else:
+                del component["properties"]
+
+        # ── Supplier ──────────────────────────────────────────────────────────
+        component.setdefault("supplier", {"name": "Gentoo Linux"})
+
+        # ── Component type reclassification ───────────────────────────────────
+        # Syft defaults all Portage packages to "library" — reclassify by category
+        if component.get("type") == "library":
+            component["type"] = get_component_type(name)
+
+        # ── PURL arch/distro qualifiers ───────────────────────────────────────
+        if args.arch and component.get("purl"):
+            component["purl"] = add_purl_qualifiers(component["purl"], args.arch)
+
+        # ── License normalization ─────────────────────────────────────────────
+        if gentoo_to_spdx and component.get("licenses"):
+            component["licenses"] = [
+                normalize_license_entry(le, gentoo_to_spdx)
+                for le in component["licenses"]
+            ]
+
+    # ── Dependency graph ───────────────────────────────────────────────────────
+    if args.sysroot:
+        print("[enrich-sbom] Building dependency graph from Portage vdb...", file=sys.stderr)
+        deps = build_dependency_graph(args.sysroot, bom_ref_by_bare)
+        if deps:
+            sbom["dependencies"] = deps
+            print(
+                f"[enrich-sbom] Dependency graph: {len(deps)} entries built.",
+                file=sys.stderr,
+            )
+        else:
+            print("[enrich-sbom] WARNING: No dependency entries built.", file=sys.stderr)
+
+    # ── Record this script in metadata.tools ──────────────────────────────────
+    enrich_tool = {
+        "type": "application",
+        "name": "enrich-sbom.py",
+        "version": "2.0",
+        "supplier": {"name": "Tucker McLean"},
+    }
+    tools_raw = metadata.get("tools")
+    if isinstance(tools_raw, list):
+        # CycloneDX 1.4 format: tools is an array
+        tools_raw.append(enrich_tool)
+    elif isinstance(tools_raw, dict):
+        # CycloneDX 1.5 format: tools is {"components": [...]}
+        tools_raw.setdefault("components", []).append(enrich_tool)
+    else:
+        metadata["tools"] = [enrich_tool]
 
     return sbom, enriched_names, no_cpe_names
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Apply CPE overrides to a Syft CycloneDX SBOM.",
+        description="Apply CPE overrides and SBOM quality fixes to a Syft CycloneDX SBOM.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s --sbom attestation/sbom.cdx.json \\
            --overrides config/cpe-overrides.yaml \\
-           --output attestation/sbom-enriched.cdx.json
+           --output attestation/sbom-enriched.cdx.json \\
+           --product-name themonolith \\
+           --build-tag 20260406-9a8504e \\
+           --git-sha 9a8504e \\
+           --arch x86_64 \\
+           --sysroot /output/sysroot \\
+           --license-policy config/license-policy.yaml
 
 Output:
   Writes the enriched SBOM to --output.
@@ -155,6 +457,49 @@ Output:
         metavar="PATH",
         help="Path to write the enriched CycloneDX JSON SBOM",
     )
+    # ── New optional enrichment args ─────────────────────────────────────────
+    parser.add_argument(
+        "--product-name",
+        metavar="STR",
+        default="",
+        help="Product name for metadata.component (e.g. 'themonolith')",
+    )
+    parser.add_argument(
+        "--build-tag",
+        metavar="STR",
+        default="",
+        help="Build version string for metadata.component (e.g. '20260406-9a8504e')",
+    )
+    parser.add_argument(
+        "--git-sha",
+        metavar="SHA",
+        default="",
+        help="Git commit SHA for metadata.component.externalReferences VCS link",
+    )
+    parser.add_argument(
+        "--repo-url",
+        metavar="URL",
+        default="",
+        help="Repository base URL (e.g. 'https://github.com/user/repo') for VCS externalReference",
+    )
+    parser.add_argument(
+        "--arch",
+        metavar="STR",
+        default="",
+        help="Target architecture for PURL qualifiers (e.g. 'x86_64')",
+    )
+    parser.add_argument(
+        "--sysroot",
+        metavar="PATH",
+        default="",
+        help="Path to extracted sysroot containing /var/db/pkg (for dependency graph)",
+    )
+    parser.add_argument(
+        "--license-policy",
+        metavar="PATH",
+        default="",
+        help="Path to license-policy.yaml (for Gentoo→SPDX license normalization)",
+    )
     args = parser.parse_args()
 
     # Load inputs
@@ -178,7 +523,7 @@ Output:
         sbom = json.load(f)
 
     # Enrich
-    enriched_sbom, enriched_names, no_cpe_names = enrich(sbom, overrides)
+    enriched_sbom, enriched_names, no_cpe_names = enrich(sbom, overrides, args)
 
     total_components = len(sbom.get("components", []))
     total_packages = sum(1 for c in sbom.get("components", []) if c.get("type") != "file")

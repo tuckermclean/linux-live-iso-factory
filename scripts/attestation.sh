@@ -238,7 +238,15 @@ if [[ $SBOM_RC -eq 0 ]]; then
     python3 "${ENRICH_SCRIPT}" \
         --sbom "${SBOM_FILE}" \
         --overrides "${OVERRIDES_FILE}" \
-        --output "${ENRICHED_FILE}" || ENRICH_RC=$?
+        --output "${ENRICHED_FILE}" \
+        --product-name "themonolith" \
+        --build-tag "${BUILD_TAG}" \
+        --git-sha "${GITHUB_SHA:-}" \
+        --repo-url "${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}" \
+        --arch "${CROSS_TARGET:-}" \
+        --sysroot "${SYSROOT}" \
+        --license-policy "${POLICY_FILE}" \
+        || ENRICH_RC=$?
 
     if [[ $ENRICH_RC -eq 0 ]]; then
         SBOM_FILE="$ENRICHED_FILE"
@@ -377,9 +385,15 @@ print(sum(1 for c in d.get('components', []) if c.get('type') != 'file'))
         # Enrich builder SBOM with the same CPE overrides (Portage packages — same dictionary)
         log "--- Pillar 5: Builder CPE Enrichment ---"
         python3 "${ENRICH_SCRIPT}" \
-            --sbom    "${BUILDER_SBOM_FILE}" \
+            --sbom      "${BUILDER_SBOM_FILE}" \
             --overrides "${OVERRIDES_FILE}" \
-            --output  "${BUILDER_ENRICHED_FILE}" || BUILDER_SBOM_RC=$?
+            --output    "${BUILDER_ENRICHED_FILE}" \
+            --product-name "themonolith-builder" \
+            --build-tag "${BUILD_TAG}" \
+            --git-sha   "${GITHUB_SHA:-}" \
+            --repo-url  "${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}" \
+            --license-policy "${POLICY_FILE}" \
+            || BUILDER_SBOM_RC=$?
 
         if [[ $BUILDER_SBOM_RC -eq 0 ]]; then
             BUILDER_SBOM_FILE="${BUILDER_ENRICHED_FILE}"

@@ -9,6 +9,7 @@ build/
 *.swp
 *.swo
 *~
+__pycache__
 
 # macOS
 .DS_Store
