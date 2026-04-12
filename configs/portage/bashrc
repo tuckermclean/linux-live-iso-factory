@@ -80,6 +80,19 @@ if [[ ${EBUILD_PHASE} == "configure" ]]; then
 				sed -i 's|src/libstdbuf\.so||g' "${mf}"
 			fi
 		fi
+
+		# gpm: Makefile.am hardcodes lib_LTLIBRARIES so --disable-shared is
+		# ignored and libtool always attempts a .so link step.  The generic
+		# libtool patch above passes -static into that step, causing ld to pull
+		# in crt1.o and fail with "undefined reference to main".  Setting
+		# build_libtool_libs=no stops the .so step entirely; libtool then only
+		# produces libgpm.a, which the gpm daemon links against statically.
+		if [[ ${CATEGORY}/${PN} == "sys-libs/gpm" ]]; then
+			while IFS= read -r -d '' lt; do
+				einfo "gpm: disabling libtool shared library builds: ${lt}"
+				sed -i 's/^build_libtool_libs=yes/build_libtool_libs=no/' "${lt}"
+			done < <(find "${WORKDIR}" -name libtool -type f -print0 2>/dev/null)
+		fi
 	}
 
 fi
