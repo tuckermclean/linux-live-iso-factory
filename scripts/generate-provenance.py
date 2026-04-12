@@ -83,8 +83,9 @@ def main() -> int:
     workflow_path = ".github/workflows/build.yml"
     invocation_id = f"{repo_url}/actions/runs/{run_id}/attempts/{run_attempt}"
 
-    # buildType resolves to the workflow file at the exact commit
-    build_type = f"{repo_url}/blob/{sha}/{workflow_path}"
+    # buildType must be the GitHub Actions canonical build type URI — the
+    # GitHub Attestations API rejects any other value for SLSA v1 predicates.
+    build_type = "https://actions.github.io/buildtypes/workflow/v1"
 
     # builder.id identifies the trusted build platform — the workflow ref
     builder_id = f"{server_url}/{workflow_ref}"
