@@ -81,18 +81,6 @@ if [[ ${EBUILD_PHASE} == "configure" ]]; then
 			fi
 		fi
 
-		# gpm: Makefile.am hardcodes lib_LTLIBRARIES so --disable-shared is
-		# ignored and libtool always attempts a .so link step.  The generic
-		# libtool patch above passes -static into that step, causing ld to pull
-		# in crt1.o and fail with "undefined reference to main".  Setting
-		# build_libtool_libs=no stops the .so step entirely; libtool then only
-		# produces libgpm.a, which the gpm daemon links against statically.
-		if [[ ${CATEGORY}/${PN} == "sys-libs/gpm" ]]; then
-			while IFS= read -r -d '' lt; do
-				einfo "gpm: disabling libtool shared library builds: ${lt}"
-				sed -i 's/^build_libtool_libs=yes/build_libtool_libs=no/' "${lt}"
-			done < <(find "${WORKDIR}" -name libtool -type f -print0 2>/dev/null)
-		fi
 	}
 
 fi
@@ -114,6 +102,37 @@ fi
 #      ./objects.o (with OBJDIR=.) will also compile with the host gcc.
 if [[ ${EBUILD_PHASE} == "compile" ]]; then
 	pre_src_compile() {
+		# gpm: the Makefile has an explicit 'gcc -shared' rule for libgpm.so that
+		# completely bypasses libtool and ignores --disable-shared.  Since LDFLAGS
+		# contains -static, the linker pulls in crt1.o and fails with "undefined
+		# reference to main".  Remove every libgpm.so* rule and dependency
+		# reference from all Makefiles before compilation starts; libgpm.a rules
+		# are left intact so the gpm daemon can still link statically.
+		if [[ ${CATEGORY}/${PN} == "sys-libs/gpm" ]]; then
+			einfo "gpm: removing libgpm.so targets from Makefiles"
+			python3 - "${S}" <<'PYEOF'
+import os, re, sys
+srcdir = sys.argv[1]
+for rel in ('Makefile', 'lib/Makefile', 'src/Makefile'):
+    path = os.path.join(srcdir, rel)
+    if not os.path.exists(path):
+        continue
+    content = open(path).read()
+    orig = content
+    # Remove libgpm.so* from prerequisite/dependency lists
+    content = re.sub(r'[ \t]+(?:lib/)?libgpm\.so\S*', '', content)
+    # Remove entire make rules whose target is a libgpm.so* file
+    # (target line + all following recipe lines that start with a tab)
+    content = re.sub(
+        r'^(?:lib/)?libgpm\.so[^\n]*\n(?:[ \t]+[^\n]*\n)*',
+        '', content, flags=re.MULTILINE)
+    if content != orig:
+        open(path, 'w').write(content)
+        print(f"gpm: patched {rel}")
+PYEOF
+			return 0
+		fi
+
 		# iproute2: tc/Makefile calls 'yacc-reference' as a bare command, but the
 		# script lives in ${S} (the source root) and isn't in PATH. Adding ${S}
 		# to PATH lets the tc sub-make find it without patching the Makefile.
