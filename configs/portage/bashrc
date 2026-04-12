@@ -110,7 +110,7 @@ if [[ ${EBUILD_PHASE} == "compile" ]]; then
 		# are left intact so the gpm daemon can still link statically.
 		if [[ ${CATEGORY}/${PN} == "sys-libs/gpm" ]]; then
 			einfo "gpm: removing libgpm.so targets from Makefiles"
-			python3 - "${S}" <<'PYEOF'
+			python3 - "${BUILD_DIR:-${S}}" <<'PYEOF'
 import os, re, sys
 srcdir = sys.argv[1]
 for rel in ('Makefile', 'lib/Makefile', 'src/Makefile'):
