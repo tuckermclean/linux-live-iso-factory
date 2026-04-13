@@ -101,3 +101,19 @@ overrides:
 
   # --- Scripting ---
   lua:             "cpe:2.3:a:lua:lua:*:*:*:*:*:*:*:*"
+
+  # --- Shells ---
+  dash:            "cpe:2.3:a:dash_project:dash:*:*:*:*:*:*:*:*"
+
+  # --- System daemons / init ---
+  sysklogd:        "cpe:2.3:a:infodrom:sysklogd:*:*:*:*:*:*:*:*"
+  sysvinit:        "cpe:2.3:a:sysvinit_project:sysvinit:*:*:*:*:*:*:*:*"
+
+  # --- Interactive / diagnostic tools ---
+  file:            "cpe:2.3:a:file_project:file:*:*:*:*:*:*:*:*"
+  htop:            "cpe:2.3:a:htop:htop:*:*:*:*:*:*:*:*"
+  lynx:            "cpe:2.3:a:lynx:lynx:*:*:*:*:*:*:*:*"
+  nethack:         "cpe:2.3:a:nethack:nethack:*:*:*:*:*:*:*:*"
+
+  # --- Libraries ---
+  popt:            "cpe:2.3:a:rpm:popt:*:*:*:*:*:*:*:*"

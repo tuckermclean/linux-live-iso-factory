@@ -80,20 +80,32 @@ def bare_name(component_name: str) -> str:
     return name.lower()
 
 
-def strip_gentoo_revision(version: str) -> str:
+def strip_gentoo_suffixes(version: str) -> str:
     """
-    Strip the Gentoo revision suffix (-r<N>) from a version string.
+    Strip Gentoo-specific version suffixes before substituting into a CPE.
 
-    The Gentoo revision is a Portage-internal concept — it bumps the ebuild
-    without changing the upstream version.  NVD CPEs never include it.
+    Two suffixes are stripped:
+      -r<N>   Gentoo revision — bumps the ebuild without changing the upstream
+              version. NVD never includes it.
+              "1.0.8-r5"    → "1.0.8"
 
-    Examples:
-      "1.0.8-r5"   → "1.0.8"
-      "5.3_p9-r1"  → "5.3_p9"   (keep upstream _p patch level)
-      "6.0_p29-r2" → "6.0_p29"
-      "2.4.3"      → "2.4.3"    (no-op when no revision)
+      _p<N>   Upstream patch level as Portage encodes it. Gentoo applies
+              official upstream patches and appends _pN to track them, but NVD
+              CPEs reference the base release, not individual patch bundles.
+              "5.3_p9-r1"   → "5.3"
+              "6.5_p20251220" → "6.5"   (snapshot date suffix)
+
+    Note: for packages where _p IS semantically part of the upstream version
+    string (e.g. OpenSSH 9.8p1), add a full CPE template to cpe-overrides.yaml
+    that hard-codes the correct NVD version rather than relying on auto-substitution.
     """
-    return re.sub(r"-r\d+$", "", version)
+    v = re.sub(r"-r\d+$", "", version)   # strip Gentoo revision
+    v = re.sub(r"_p\d+$", "", v)         # strip upstream patch-level suffix
+    return v
+
+
+# Keep old name as an alias so existing call-sites (unit tests etc.) still work
+strip_gentoo_revision = strip_gentoo_suffixes
 
 
 def apply_version_to_cpe(template: str, version: str) -> str:
@@ -356,6 +368,21 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
                 file=sys.stderr,
             )
 
+    # ── Remove binary-cataloger duplicates of portage-cataloger entries ──────
+    # Syft's binary-cataloger emits bare-name entries (no "/" in name) for ELF
+    # binaries it finds on disk — e.g. "busybox 1.36.1" alongside the authoritative
+    # "sys-apps/busybox 1.36.1-r4" from the portage-cataloger. Keep the portage
+    # entry; it has the correct category, purl, licenses, and version.
+    portage_bare = {
+        bare_name(c.get("name", ""))
+        for c in sbom.get("components", [])
+        if "/" in c.get("name", "")
+    }
+    sbom["components"] = [
+        c for c in sbom.get("components", [])
+        if "/" in c.get("name", "") or bare_name(c.get("name", "")) not in portage_bare
+    ]
+
     # ── Ensure every component has a bom-ref (required for dep graph) ─────────
     seen_refs = set()
     for i, component in enumerate(sbom.get("components", [])):
@@ -384,7 +411,9 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
     # Must be checked BEFORE override lookup because bare_name() strips the
     # category — "app-alternatives/bzip2" → "bzip2" would otherwise hit the
     # real bzip2 CPE override and produce a nonsense version-1 CPE.
-    _NO_CPE_CATEGORIES = ("app-alternatives/", "virtual/")
+    # acct-group/shadow bare_name → "shadow" hits the shadow override and
+    # produces shadow-utils:0 (version "0" is Portage's revision counter).
+    _NO_CPE_CATEGORIES = ("acct-group/", "acct-user/", "app-alternatives/", "virtual/")
 
     # ── Process each package component ────────────────────────────────────────
     components = [c for c in sbom.get("components", []) if c.get("type") != "file"]
