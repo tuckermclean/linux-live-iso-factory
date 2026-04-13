@@ -60,10 +60,11 @@ overrides:
   readline:        "cpe:2.3:a:gnu:readline:*:*:*:*:*:*:*:*"
   tmux:            "cpe:2.3:a:tmux_project:tmux:*:*:*:*:*:*:*:*"
 
-  # --- Editors (vim family — vim-core and xxd are Gentoo splits of the same upstream) ---
+  # --- Editors ---
+  # vim-core and xxd are Gentoo splits of the vim upstream; they share the vim CPE.
+  # Only vim itself carries the CPE — the splits have no independent NVD entries and
+  # would double/triple-report every vim CVE if given the same CPE.
   vim:             "cpe:2.3:a:vim:vim:*:*:*:*:*:*:*:*"
-  vim-core:        "cpe:2.3:a:vim:vim:*:*:*:*:*:*:*:*"
-  xxd:             "cpe:2.3:a:vim:vim:*:*:*:*:*:*:*:*"
 
   # --- Crypto / TLS ---
   openssl:         "cpe:2.3:a:openssl:openssl:*:*:*:*:*:*:*:*"

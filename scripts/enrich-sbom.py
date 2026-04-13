@@ -166,25 +166,58 @@ def get_component_type(name: str) -> str:
     return "library"  # safe default
 
 
+def _to_spdx_expr_tokens(raw: str, gentoo_to_spdx: dict) -> str:
+    """
+    Map each license token in a compound expression string to its SPDX equivalent,
+    leaving boolean operators and parentheses unchanged.
+
+    Syft converts Portage's || ( A B ) syntax to "A OR B" form, so by the time
+    this runs the operators are already AND / OR, with parentheses possibly attached
+    to adjacent tokens (e.g. "(GPL-2+" or "CC-BY-SA-4.0)").
+    """
+    _OPERATORS = {"AND", "OR"}
+    parts = []
+    for token in raw.split():
+        # Peel off leading '(' and trailing ')' — keep them glued to the token
+        prefix = ""
+        while token.startswith("("):
+            prefix += "("
+            token = token[1:]
+        suffix = ""
+        while token.endswith(")"):
+            suffix = ")" + suffix
+            token = token[:-1]
+        mapped = token if token in _OPERATORS else gentoo_to_spdx.get(token, token)
+        parts.append(f"{prefix}{mapped}{suffix}")
+    return " ".join(parts)
+
+
 def normalize_license_entry(entry: dict, gentoo_to_spdx: dict) -> dict:
     """
     Normalize a single CycloneDX license entry.
 
     CycloneDX license entries look like:
-      {"license": {"id": "MIT"}}          — already SPDX, leave alone
-      {"license": {"name": "GPL-2+"}}     — Gentoo name, try to map to SPDX id
+      {"license": {"id": "MIT"}}                  — already SPDX, leave alone
+      {"license": {"name": "GPL-2+"}}             — single Gentoo name → map to id
+      {"license": {"name": "MIT AND Apache-2.0"}} — compound → {"expression": "..."}
 
     Returns the (possibly updated) entry.
     """
     lic = entry.get("license", {})
-    if "name" in lic and "id" not in lic:
-        mapped = gentoo_to_spdx.get(lic["name"])
+    name = lic.get("name", "")
+    if "id" in lic or not name:
+        return entry  # already SPDX id, or no name to normalize
+
+    if " " not in name:
+        # Single token: direct SPDX mapping
+        mapped = gentoo_to_spdx.get(name)
         if mapped:
-            new_lic = dict(lic)
-            new_lic["id"] = mapped
-            del new_lic["name"]
-            return {"license": new_lic}
-    return entry
+            return {"license": {"id": mapped}}
+        return entry  # non-SPDX single name (e.g. BZIP2, Toyoda) — keep as-is
+
+    # Compound expression (contains spaces / boolean operators):
+    # map each token and emit as a CycloneDX SPDX expression object.
+    return {"expression": _to_spdx_expr_tokens(name, gentoo_to_spdx)}
 
 
 def add_purl_qualifiers(purl: str, arch: str) -> str:
@@ -221,15 +254,21 @@ def build_dependency_graph(sysroot: str, bom_ref_by_bare: dict) -> list:
     _ATOM_RE = re.compile(r"(?:>=?|<=?|~|=|!)?([a-z][a-z0-9_-]*/[a-zA-Z0-9_+.-]+)")
 
     deps = []
+    pkg_count = 0
+    matched_count = 0
+    rdepend_count = 0
+
     for pkg_dir in sorted(vdb.glob("*/*")):
         if not pkg_dir.is_dir():
             continue
+        pkg_count += 1
         category = pkg_dir.parent.name
         pkg_ver = pkg_dir.name  # e.g. "bash-5.2_p21-r1"
         this_bare = bare_name(f"{category}/{pkg_ver}")
 
         if this_bare not in bom_ref_by_bare:
             continue
+        matched_count += 1
 
         ref = bom_ref_by_bare[this_bare]
         depends_on = []
@@ -238,6 +277,7 @@ def build_dependency_graph(sysroot: str, bom_ref_by_bare: dict) -> list:
             rdep_path = pkg_dir / dep_file
             if not rdep_path.exists():
                 continue
+            rdepend_count += 1
             try:
                 content = rdep_path.read_text(errors="replace")
             except OSError:
@@ -255,6 +295,11 @@ def build_dependency_graph(sysroot: str, bom_ref_by_bare: dict) -> list:
 
         deps.append({"ref": ref, "dependsOn": depends_on})
 
+    print(
+        f"[enrich-sbom] dep graph: vdb_dirs={pkg_count}, matched_to_sbom={matched_count}, "
+        f"dep_files_read={rdepend_count}, entries_built={len(deps)}",
+        file=sys.stderr,
+    )
     return deps
 
 
@@ -288,6 +333,9 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
                     "type": "vcs",
                     "url": f"{repo_url}/commit/{args.git_sha}",
                 }]
+        iso_sha = getattr(args, "iso_sha256", "")
+        if iso_sha and iso_sha not in ("", "(not computed)"):
+            component_entry["hashes"] = [{"alg": "SHA-256", "content": iso_sha}]
         metadata["component"] = component_entry
 
     # ── metadata.authors and lifecycles ───────────────────────────────────────
@@ -332,6 +380,12 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
             if key and key not in bom_ref_by_bare:
                 bom_ref_by_bare[key] = component["bom-ref"]
 
+    # Categories that are Portage-internal stubs with no upstream NVD presence.
+    # Must be checked BEFORE override lookup because bare_name() strips the
+    # category — "app-alternatives/bzip2" → "bzip2" would otherwise hit the
+    # real bzip2 CPE override and produce a nonsense version-1 CPE.
+    _NO_CPE_CATEGORIES = ("app-alternatives/", "virtual/")
+
     # ── Process each package component ────────────────────────────────────────
     components = [c for c in sbom.get("components", []) if c.get("type") != "file"]
     for component in components:
@@ -340,7 +394,11 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
         key = bare_name(name)
 
         # ── CPE override or synthetic CPE removal ─────────────────────────────
-        if key in overrides:
+        if any(name.startswith(cat) for cat in _NO_CPE_CATEGORIES):
+            # Portage-internal virtual/alternatives stubs — no NVD entry exists.
+            # Strip any Syft-generated CPE and skip the override table entirely.
+            component.pop("cpe", None)
+        elif key in overrides:
             template = overrides[key]
             cpe = apply_version_to_cpe(template, version)
             component["cpe"] = cpe
@@ -458,6 +516,12 @@ Output:
         help="Path to write the enriched CycloneDX JSON SBOM",
     )
     # ── New optional enrichment args ─────────────────────────────────────────
+    parser.add_argument(
+        "--iso-sha256",
+        metavar="HEX",
+        default="",
+        help="SHA-256 digest of the ISO artifact — written to metadata.component.hashes",
+    )
     parser.add_argument(
         "--product-name",
         metavar="STR",

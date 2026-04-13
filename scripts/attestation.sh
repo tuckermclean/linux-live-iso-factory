@@ -246,6 +246,7 @@ if [[ $SBOM_RC -eq 0 ]]; then
         --arch "${CROSS_TARGET:-}" \
         --sysroot "${SYSROOT}" \
         --license-policy "${POLICY_FILE}" \
+        --iso-sha256 "${ISO_SHA256}" \
         || ENRICH_RC=$?
 
     if [[ $ENRICH_RC -eq 0 ]]; then
