@@ -202,9 +202,6 @@ fi
 
 # Source local profile if it exists
 [ -f /etc/profile.local ] && . /etc/profile.local
-
-PS1='\[\e[90m\]■\[\e[0m\] '"${PS1}"
-export PS1
 EOF
 
     # /etc/securetty - ttys on which root is allowed to log in
@@ -460,6 +457,16 @@ EOF
     install -m 644 \
         "${CONFIGS_DIR}/overlay/app-misc/monolith-base/files/monolith-advisory.sh" \
         "$ROOTFS_DIR/etc/profile.d/monolith-advisory.sh"
+
+    # /etc/bash/bashrc.d/99-monolith-square.bash
+    # Runs last in the bashrc.d chain (after 10-gentoo-color.bash sets PS1),
+    # prepending the dark-grey ■ to whatever prompt Gentoo built.
+    # The guard prevents double-prepending if this file is sourced more than once.
+    mkdir -p "$ROOTFS_DIR/etc/bash/bashrc.d"
+    cat > "$ROOTFS_DIR/etc/bash/bashrc.d/99-monolith-square.bash" << 'EOF'
+[[ ${PS1} != *'■'* ]] && PS1='\[\e[90m\]■\[\e[0m\] '"${PS1}"
+EOF
+    chmod 644 "$ROOTFS_DIR/etc/bash/bashrc.d/99-monolith-square.bash"
 
     log_info "/etc configuration files created"
 }

@@ -72,6 +72,9 @@ allowlist:
   - usr/sbin/monolith-advisory-check
   - etc/profile.d/monolith-advisory.sh
 
+  # ── Prompt customisation ─────────────────────────────────────────────────────
+  - etc/bash/bashrc.d/99-monolith-square.bash
+
   # ── Root home — bash skel files copied by build-rootfs.sh ───────────────────
   - root/.bash_profile
   - root/.bashrc
