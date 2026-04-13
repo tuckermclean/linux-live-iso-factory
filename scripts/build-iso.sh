@@ -216,6 +216,13 @@ EOF
 log_info "Building GRUB EFI image (BOOTX64.EFI)..."
 mkdir -p "${ISO_DIR}/EFI/BOOT" "${ISO_DIR}/boot/grub"
 
+# Copy background image into the ISO tree so GRUB can load it at boot
+if [ -f /configs/bootbg.png ]; then
+    cp /configs/bootbg.png "${ISO_DIR}/boot/grub/bootbg.png"
+else
+    log_warn "bootbg.png not found at /configs/bootbg.png — GRUB will boot without background"
+fi
+
 GRUB_CFG=$(mktemp)
 cat > "$GRUB_CFG" << GRUBEOF
 set timeout=5
@@ -225,6 +232,12 @@ set default=0
 # ESP (FAT image), so /boot/vmlinuz would not be found. search switches root to
 # the ISO9660 partition before any linux/initrd commands run.
 search --no-floppy --set=root --label MONOLITH
+
+# Graphical terminal with background image
+insmod gfxterm
+insmod png
+terminal_output gfxterm
+background_image /boot/grub/bootbg.png
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION}" {
     linux /boot/vmlinuz    initrd /boot/initrd.img
@@ -259,7 +272,7 @@ grub-mkstandalone \
     --output="${ISO_DIR}/EFI/BOOT/BOOTX64.EFI" \
     --modules="part_gpt part_msdos fat iso9660 linux normal echo all_video test \
                keystatus gfxmenu regexp probe efi_gop efi_uga search configfile \
-               gzio serial" \
+               gzio serial gfxterm png" \
     "boot/grub/grub.cfg=${GRUB_CFG}"
 rm -f "$GRUB_CFG"
 
