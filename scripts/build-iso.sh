@@ -136,7 +136,7 @@ cat > "${ISO_DIR}/isolinux/isolinux.cfg" << EOF
 TIMEOUT 50
 
 # Default entry
-DEFAULT linux
+DEFAULT fb800
 
 # Prompt for user input
 PROMPT 1
@@ -226,7 +226,7 @@ fi
 GRUB_CFG=$(mktemp)
 cat > "$GRUB_CFG" << GRUBEOF
 set timeout=5
-set default=0
+set default=1
 
 # Locate the ISO9660 volume by label. On UEFI boot, GRUB's root defaults to the
 # ESP (FAT image), so /boot/vmlinuz would not be found. search switches root to
