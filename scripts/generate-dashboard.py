@@ -34,6 +34,7 @@ body {
     font-size: 14px;
 }
 h1 { color: #e0e0e0; border-bottom: 1px solid #333; padding-bottom: 8px; }
+.sq { color: #555555; }
 h2 { color: #b0b0b0; }
 a  { color: #5599ff; text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -152,7 +153,7 @@ def render_index(summaries: list) -> str:
 <style>{STYLE}</style>
 </head>
 <body>
-<h1>&#9632; The Monolith — Attestation Dashboard</h1>
+<h1><span class="sq">&#9632;</span> The Monolith — Attestation Dashboard</h1>
 <p>Build attestation records: SBOM, license compliance, and CVE scan results.
    <br>Status colors: <span class="pass">PASS</span> &nbsp;
    <span class="fail">FAIL</span> &nbsp;
@@ -425,7 +426,7 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
 </head>
 <body>
 <a href="../index.html" class="back">&larr; Back to dashboard</a>
-<h1>&#9632; Build: {h(tag)}</h1>
+<h1><span class="sq">&#9632;</span> Build: {h(tag)}</h1>
 
 <table style="width:auto">
   <tr><th>Build Tag</th><td>{h(tag)}</td></tr>
