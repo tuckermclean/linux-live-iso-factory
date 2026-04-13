@@ -90,6 +90,16 @@ install_sysroot() {
 
         # Copy bash skel files to root home (sourced by login/subshells)
         cp -a "$ROOTFS_DIR"/etc/skel/.bash* "$ROOTFS_DIR"/root/ 2>/dev/null || true
+
+        # agetty -l /bin/bash starts bash as a non-login interactive shell, so
+        # /etc/profile is never auto-sourced and env vars like PAGER are unset.
+        # Source /etc/profile from .bashrc with a guard to prevent double-loading
+        # in real login shells (which already source /etc/profile before .bashrc).
+        cat >> "$ROOTFS_DIR/root/.bashrc" << 'EOF'
+
+# Source system environment for non-login shells (e.g. agetty auto-login)
+[ -z "$_MONOLITH_ENV" ] && [ -f /etc/profile ] && . /etc/profile
+EOF
     else
         log_error "No sysroot found at ${sysroot}"
         log_error "Run 'make build-packages && make extract' first"
@@ -172,6 +182,8 @@ EOF
     # /etc/profile
     cat > "$ROOTFS_DIR/etc/profile" << 'EOF'
 # /etc/profile - system-wide shell initialization
+
+export _MONOLITH_ENV=1   # guard: prevents double-sourcing from .bashrc
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export TERM="${TERM:-linux}"
