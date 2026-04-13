@@ -67,17 +67,24 @@ def main() -> int:
     output_path = Path(args.output)
 
     # ── GitHub Actions context (env vars forwarded from host into Docker) ────
-    server_url    = env("GITHUB_SERVER_URL",  "https://github.com")
-    repository    = env("GITHUB_REPOSITORY",  "unknown/unknown")
-    ref           = env("GITHUB_REF",         "refs/heads/master")
-    sha           = env("GITHUB_SHA",         "unknown")
-    run_id        = env("GITHUB_RUN_ID",      "0")
-    run_attempt   = env("GITHUB_RUN_ATTEMPT", "1")
-    event_name    = env("GITHUB_EVENT_NAME",  "unknown")
-    workflow_ref  = env(
+    server_url           = env("GITHUB_SERVER_URL",              "https://github.com")
+    repository           = env("GITHUB_REPOSITORY",              "unknown/unknown")
+    repository_id        = env("GITHUB_REPOSITORY_ID",           "")
+    repository_owner_id  = env("GITHUB_REPOSITORY_OWNER_ID",     "")
+    repository_visibility = env("GITHUB_REPOSITORY_VISIBILITY",  "public")
+    ref                  = env("GITHUB_REF",                     "refs/heads/master")
+    sha                  = env("GITHUB_SHA",                     "unknown")
+    run_id               = env("GITHUB_RUN_ID",                  "0")
+    run_number           = env("GITHUB_RUN_NUMBER",              "0")
+    run_attempt          = env("GITHUB_RUN_ATTEMPT",             "1")
+    event_name           = env("GITHUB_EVENT_NAME",              "unknown")
+    workflow_ref         = env(
         "GITHUB_WORKFLOW_REF",
         f"{repository}/.github/workflows/build.yml@{ref}",
     )
+    workflow_sha         = env("GITHUB_WORKFLOW_SHA",            sha)
+    actor                = env("GITHUB_ACTOR",                   "")
+    actor_id             = env("GITHUB_ACTOR_ID",                "")
 
     repo_url      = f"{server_url}/{repository}"
     workflow_path = ".github/workflows/build.yml"
@@ -157,9 +164,20 @@ def main() -> int:
                 },
                 "internalParameters": {
                     "github": {
-                        "event_name":  event_name,
-                        "runner_os":   "linux",
-                        "runner_arch": "x64",
+                        "event_name":             event_name,
+                        "sha":                    sha,
+                        "ref":                    ref,
+                        "workflow_ref":            workflow_ref,
+                        "workflow_sha":            workflow_sha,
+                        "repository_id":          repository_id,
+                        "repository_owner_id":    repository_owner_id,
+                        "repository_visibility":  repository_visibility,
+                        "actor":                  actor,
+                        "actor_id":               actor_id,
+                        "run_id":                 run_id,
+                        "run_number":             run_number,
+                        "run_attempt":            run_attempt,
+                        "runner_environment":     "github-hosted",
                     },
                     "build": {
                         "tag": args.build_tag,

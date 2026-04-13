@@ -91,12 +91,19 @@ DOCKER_RUN_ATTEST := docker run --rm \
 GITHUB_ENV := \
 	-e GITHUB_SERVER_URL \
 	-e GITHUB_REPOSITORY \
+	-e GITHUB_REPOSITORY_ID \
+	-e GITHUB_REPOSITORY_OWNER_ID \
+	-e GITHUB_REPOSITORY_VISIBILITY \
 	-e GITHUB_REF \
 	-e GITHUB_SHA \
 	-e GITHUB_RUN_ID \
+	-e GITHUB_RUN_NUMBER \
 	-e GITHUB_RUN_ATTEMPT \
 	-e GITHUB_EVENT_NAME \
-	-e GITHUB_WORKFLOW_REF
+	-e GITHUB_WORKFLOW_REF \
+	-e GITHUB_WORKFLOW_SHA \
+	-e GITHUB_ACTOR \
+	-e GITHUB_ACTOR_ID
 
 .PHONY: help build-image push-image pull-image restore-cache \
         sync-portage build-packages build-packages-resume \
