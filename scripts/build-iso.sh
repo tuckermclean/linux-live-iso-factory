@@ -118,7 +118,7 @@ done
 
 # Create ISOLINUX configuration
 log_info "Creating ISOLINUX configuration..."
-cat > "${ISO_DIR}/isolinux/isolinux.cfg" << 'EOF'
+cat > "${ISO_DIR}/isolinux/isolinux.cfg" << EOF
 # ISOLINUX configuration for Minimal i486 Linux
 #
 # Boot options:
@@ -144,7 +144,7 @@ PROMPT 1
 # Display message
 SAY
 SAY =========================================
-SAY   tHE m0n0LiTH
+SAY   tHE m0n0LiTH  ${BUILD_VERSION}
 SAY =========================================
 SAY
 SAY Press ENTER to boot, or type a label:
@@ -157,7 +157,7 @@ SAY
 
 # Main boot entry (text mode)
 LABEL linux
-    MENU LABEL Boot The Monolith
+    MENU LABEL Boot The Monolith ${BUILD_VERSION}
     KERNEL /boot/vmlinuz
     APPEND initrd=/boot/initrd.img quiet
 
@@ -218,7 +218,7 @@ log_info "Building GRUB EFI image (BOOTX64.EFI)..."
 mkdir -p "${ISO_DIR}/EFI/BOOT" "${ISO_DIR}/boot/grub"
 
 GRUB_CFG=$(mktemp)
-cat > "$GRUB_CFG" << 'GRUBEOF'
+cat > "$GRUB_CFG" << GRUBEOF
 set timeout=5
 set default=0
 
@@ -227,32 +227,32 @@ set default=0
 # the ISO9660 partition before any linux/initrd commands run.
 search --no-floppy --set=root --label MONOLITH
 
-menuentry "tHE m0n0LiTH" {
+menuentry "tHE m0n0LiTH ${BUILD_VERSION}" {
     linux /boot/vmlinuz quiet
     initrd /boot/initrd.img
 }
 
-menuentry "tHE m0n0LiTH (framebuffer)" {
+menuentry "tHE m0n0LiTH ${BUILD_VERSION} (framebuffer)" {
     linux /boot/vmlinuz video=efifb quiet
     initrd /boot/initrd.img
 }
 
-menuentry "tHE m0n0LiTH (serial)" {
+menuentry "tHE m0n0LiTH ${BUILD_VERSION} (serial)" {
     linux /boot/vmlinuz console=ttyS0,115200n8
     initrd /boot/initrd.img
 }
 
-menuentry "tHE m0n0LiTH (debug)" {
+menuentry "tHE m0n0LiTH ${BUILD_VERSION} (debug)" {
     linux /boot/vmlinuz debug
     initrd /boot/initrd.img
 }
 
-menuentry "tHE m0n0LiTH (rescue shell)" {
+menuentry "tHE m0n0LiTH ${BUILD_VERSION} (rescue shell)" {
     linux /boot/vmlinuz rescue
     initrd /boot/initrd.img
 }
 
-menuentry "tHE m0n0LiTH (toram)" {
+menuentry "tHE m0n0LiTH ${BUILD_VERSION} (toram)" {
     linux /boot/vmlinuz toram quiet
     initrd /boot/initrd.img
 }

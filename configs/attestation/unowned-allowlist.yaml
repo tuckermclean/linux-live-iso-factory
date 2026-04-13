@@ -66,6 +66,7 @@ allowlist:
   - etc/init.d/S40network
   - etc/init.d/S50advisory
   - etc/monolith-release
+  - etc/os-release
 
   # ── Advisory scripts (pending proper ebuilds) ───────────────────────────────
   - usr/sbin/monolith-advisory-check

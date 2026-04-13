@@ -10,12 +10,14 @@
 # or command substitutions that could abort profile loading on error.
 
 if [ -f /run/monolith-advisory ]; then
+    _monolith_ver=
+    [ -f /etc/monolith-release ] && read -r _monolith_ver < /etc/monolith-release
     printf '\n'
     printf '\033[1;33m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m\n'
     printf '\033[1;33m!!          SECURITY ADVISORY — ACTION REQUIRED    !!\033[0m\n'
     printf '\033[1;33m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m\n'
     printf '\033[0;33m\n'
-    printf 'This build of The Monolith has been marked REVOKED.\n'
+    printf 'This build of The Monolith %s has been marked REVOKED.\n' "$_monolith_ver"
     printf 'One or more CVEs were discovered after this ISO was released.\n'
     printf 'Please obtain a newer build as soon as possible.\n'
     printf '\n'

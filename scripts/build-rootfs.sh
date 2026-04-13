@@ -148,9 +148,23 @@ EOF
 
     # /etc/motd - ANSI art banner (strip 128-byte SAUCE record from .ans file)
     head -c -128 /configs/themonolith.ans > "$ROOTFS_DIR/etc/motd"
+    printf 'tHE m0n0LiTH %s\n\n' "${BUILD_VERSION:-unknown}" >> "$ROOTFS_DIR/etc/motd"
 
-    # /etc/issue - shown before login prompt
-    printf 'The Monolith - \\l\n' > "$ROOTFS_DIR/etc/issue"
+    # /etc/issue - shown before login prompt on the TTY
+    printf 'The Monolith %s - \\l\n' "${BUILD_VERSION:-unknown}" > "$ROOTFS_DIR/etc/issue"
+
+    # /etc/os-release - standard distro identification
+    cat > "$ROOTFS_DIR/etc/os-release" << EOF
+NAME="The Monolith"
+VERSION="${BUILD_VERSION:-unknown}"
+ID=themonolith
+ID_LIKE=gentoo
+PRETTY_NAME="The Monolith ${BUILD_VERSION:-unknown}"
+VERSION_ID="${BUILD_VERSION:-unknown}"
+BUILD_ID="${BUILD_VERSION:-unknown}"
+ANSI_COLOR="1;32"
+HOME_URL="https://themonolith.s3.us-west-2.amazonaws.com"
+EOF
 
     # /etc/resolv.conf (empty, populated by DHCP)
     touch "$ROOTFS_DIR/etc/resolv.conf"

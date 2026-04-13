@@ -88,8 +88,9 @@ rescue_shell() {
     err "Dropping to rescue shell"
     err "Type 'exit' to continue booting (if possible)"
     echo
+    _ver=$(cat /etc/monolith-release 2>/dev/null)
     echo "=========================================="
-    echo "  tHE m0n0LiTH - rescue shell"
+    echo "  tHE m0n0LiTH${_ver:+ $_ver} - rescue shell"
     echo "=========================================="
     echo
     echo "Available commands: $(busybox --list | tr '\n' ' ' | head -c 60)..."
