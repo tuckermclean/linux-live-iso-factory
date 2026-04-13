@@ -262,9 +262,14 @@ touch /run/utmp
 [ -f /etc/hostname ] && echo "$(cat /etc/hostname)" > /proc/sys/kernel/hostname
 
 # Run init scripts
+echo ""
+echo "  Starting services... Press Ctrl-C to cancel and drop to shell."
+echo ""
+trap 'echo ""; echo "  Startup cancelled. Dropping to shell..."; echo ""; exec /bin/sh' INT
 for script in /etc/init.d/S*; do
     [ -x "$script" ] && "$script" start
 done
+trap - INT
 
 echo "System initialization complete."
 EOF
