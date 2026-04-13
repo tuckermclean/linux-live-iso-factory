@@ -203,7 +203,7 @@ fi
 # Source local profile if it exists
 [ -f /etc/profile.local ] && . /etc/profile.local
 
-PS1='\[\e[90m\]■\[\e[0m\] \[\e[92m\]tHE m0n0LiTH\[\e[0m\] \[\e[96m\]\w\[\e[91m\]\$\[\e[0m\] '
+PS1='\[\e[90m\]■\[\e[0m\] '"${PS1}"
 export PS1
 EOF
 
@@ -218,6 +218,8 @@ EOF
     # /etc/shells
     cat > "$ROOTFS_DIR/etc/shells" << 'EOF'
 /bin/sh
+/bin/dash
+/bin/ash
 /bin/bash
 EOF
 
@@ -468,9 +470,18 @@ EOF
 create_squashfs() {
     log_info "Creating SquashFS image..."
 
-    if [ -x "$ROOTFS_DIR/bin/bash" ] ; then
+    # Prefer dash for /bin/sh — lighter than bash, strictly POSIX
+    if [ -x "$ROOTFS_DIR/bin/dash" ]; then
         rm -f "$ROOTFS_DIR/bin/sh"
-	ln -s bash "$ROOTFS_DIR/bin/sh"
+        ln -s dash "$ROOTFS_DIR/bin/sh"
+    elif [ -x "$ROOTFS_DIR/bin/bash" ]; then
+        rm -f "$ROOTFS_DIR/bin/sh"
+        ln -s bash "$ROOTFS_DIR/bin/sh"
+    fi
+
+    # mandoc falls back to 'more' when PAGER is unset; provide it as an alias for less
+    if [ -x "$ROOTFS_DIR/usr/bin/less" ] && [ ! -e "$ROOTFS_DIR/usr/bin/more" ]; then
+        ln -s less "$ROOTFS_DIR/usr/bin/more"
     fi
 
     # Calculate uncompressed size

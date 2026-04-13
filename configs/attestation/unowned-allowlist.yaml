@@ -77,8 +77,9 @@ allowlist:
   - root/.bashrc
   - root/.bash_logout
 
-  # ── /bin/sh symlink set by build-rootfs.sh ──────────────────────────────────
+  # ── Symlinks set by build-rootfs.sh ─────────────────────────────────────────
   - bin/sh
+  - usr/bin/more
 
   # ── Terminfo case-collision symlinks ────────────────────────────────────────
   # Single-char lowercase → uppercase symlinks created by build-rootfs.sh to fix
