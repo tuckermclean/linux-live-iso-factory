@@ -159,8 +159,7 @@ SAY
 LABEL linux
     MENU LABEL Boot The Monolith ${BUILD_VERSION}
     KERNEL /boot/vmlinuz
-    APPEND initrd=/boot/initrd.img quiet
-
+    APPEND initrd=/boot/initrd.img
 # Framebuffer 1024x768x16
 LABEL fb
     MENU LABEL Boot with Framebuffer (1024x768)
@@ -228,13 +227,11 @@ set default=0
 search --no-floppy --set=root --label MONOLITH
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION}" {
-    linux /boot/vmlinuz quiet
-    initrd /boot/initrd.img
+    linux /boot/vmlinuz    initrd /boot/initrd.img
 }
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (framebuffer)" {
-    linux /boot/vmlinuz video=efifb quiet
-    initrd /boot/initrd.img
+    linux /boot/vmlinuz video=efifb    initrd /boot/initrd.img
 }
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (serial)" {
@@ -253,8 +250,7 @@ menuentry "tHE m0n0LiTH ${BUILD_VERSION} (rescue shell)" {
 }
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (toram)" {
-    linux /boot/vmlinuz toram quiet
-    initrd /boot/initrd.img
+    linux /boot/vmlinuz toram    initrd /boot/initrd.img
 }
 GRUBEOF
 
