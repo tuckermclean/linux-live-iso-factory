@@ -62,6 +62,7 @@ allowlist:
   - etc/init.d/rcS
   - etc/init.d/rcK
   - etc/init.d/S20keygen
+  - etc/init.d/S30gpm
   - etc/init.d/S40network
   - etc/init.d/S50advisory
   - etc/monolith-release
