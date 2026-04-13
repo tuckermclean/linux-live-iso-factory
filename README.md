@@ -155,7 +155,7 @@ slattach -l -p slip /dev/ttyS0
 # Note: pppd is not included; full PPP requires adding it to the build
 ```
 
-Dropbear SSH is available — start it with `dropbear` after configuring networking. SSH host keys (RSA and ECDSA) are auto-generated on first boot by `/etc/init.d/S20keygen`.
+Dropbear SSH is available — start it with `dropbear` after configuring networking. An ECDSA host key is auto-generated on first boot by `/etc/init.d/S20keygen`.
 
 ## File Structure
 

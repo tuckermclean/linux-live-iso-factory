@@ -366,16 +366,12 @@ EOF
     cat > "$ROOTFS_DIR/etc/init.d/S20keygen" << 'EOF'
 #!/bin/sh
 #
-# S20keygen - Generate Dropbear SSH host keys if missing
+# S20keygen - Generate Dropbear SSH host key if missing
 #
 
 case "$1" in
     start)
         mkdir -p /etc/dropbear
-        if [ ! -f /etc/dropbear/dropbear_rsa_host_key ]; then
-            echo "Generating RSA host key..."
-            dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key > /dev/null 2>&1
-        fi
         if [ ! -f /etc/dropbear/dropbear_ecdsa_host_key ]; then
             echo "Generating ECDSA host key..."
             dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key > /dev/null 2>&1
