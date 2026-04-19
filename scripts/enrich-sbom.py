@@ -337,6 +337,9 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
             "version": build_tag,
             "supplier": {"name": "Tucker McLean"},
             "description": "The Monolith — statically-linked musl/Gentoo live ISO",
+            # Declare the project's own license so the top-level component is
+            # not reported as UNKNOWN by downstream SBOM consumers.
+            "licenses": [{"license": {"id": "MIT"}}],
         }
         if args.git_sha:
             repo_url = args.repo_url.rstrip("/") if args.repo_url else ""
