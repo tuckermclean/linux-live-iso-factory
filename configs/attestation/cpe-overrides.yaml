@@ -80,12 +80,17 @@ overrides:
   # --- Network tools ---
   curl:            "cpe:2.3:a:haxx:curl:*:*:*:*:*:*:*:*"
   dhcpcd:          "cpe:2.3:a:dhcpcd_project:dhcpcd:*:*:*:*:*:*:*:*"
-  dropbear:        "cpe:2.3:a:matt_johnston:dropbear_ssh:*:*:*:*:*:*:*:*"
-  iputils:         "cpe:2.3:a:iputils:iputils:*:*:*:*:*:*:*:*"
+  # NVD uses the project slug "dropbear_ssh_project", not the author name.
+  # Verified against https://nvd.nist.gov/products/cpe/search?keyword=dropbear
+  dropbear:        "cpe:2.3:a:dropbear_ssh_project:dropbear_ssh:*:*:*:*:*:*:*:*"
+  # NVD CPE dictionary entry is iputils_project, not plain iputils.
+  iputils:         "cpe:2.3:a:iputils_project:iputils:*:*:*:*:*:*:*:*"
   iproute2:        "cpe:2.3:a:iproute2_project:iproute2:*:*:*:*:*:*:*:*"
   rsync:           "cpe:2.3:a:samba:rsync:*:*:*:*:*:*:*:*"
   socat:           "cpe:2.3:a:dest-unreach:socat:*:*:*:*:*:*:*:*"
   tcpdump:         "cpe:2.3:a:tcpdump:tcpdump:*:*:*:*:*:*:*:*"
+  # NVD coverage for traceroute is sparse; buc:traceroute is the best known
+  # entry but may produce no matches. Flagged for manual verification.
   traceroute:      "cpe:2.3:a:buc:traceroute:*:*:*:*:*:*:*:*"
 
   # --- System management ---
@@ -106,6 +111,7 @@ overrides:
   dash:            "cpe:2.3:a:dash_project:dash:*:*:*:*:*:*:*:*"
 
   # --- System daemons / init ---
+  # infodrom:sysklogd matches historical NVD entries for sysklogd maintainer Infodrom.
   sysklogd:        "cpe:2.3:a:infodrom:sysklogd:*:*:*:*:*:*:*:*"
   sysvinit:        "cpe:2.3:a:sysvinit_project:sysvinit:*:*:*:*:*:*:*:*"
 
