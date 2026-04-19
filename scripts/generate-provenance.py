@@ -54,6 +54,18 @@ def main() -> int:
     parser.add_argument("--build-tag",      required=True,  metavar="TAG")
     parser.add_argument("--output",         required=True,  metavar="PATH")
     parser.add_argument("--builder-digest", default="",     metavar="ID")
+    # Build input pinning — these enrich resolvedDependencies so verifiers can
+    # identify every input that determined the ISO contents, not just the source repo.
+    parser.add_argument("--portage-snapshot-epoch", default="", metavar="EPOCH",
+                        help="BUILD_EPOCH used for emerge-webrsync (e.g. 20260406)")
+    parser.add_argument("--stage3-epoch",           default="", metavar="EPOCH",
+                        help="BUILD_EPOCH used for gentoo/stage3 base image")
+    parser.add_argument("--kernel-version",         default="", metavar="VER",
+                        help="Upstream kernel version built (e.g. 6.12.80)")
+    # Real build timestamps — bracketing when the actual compilation ran, not when
+    # this script runs. Passed in by attestation.sh which records them around pillars.
+    parser.add_argument("--build-started-on",  default="", metavar="ISO8601")
+    parser.add_argument("--build-finished-on", default="", metavar="ISO8601")
     args = parser.parse_args()
 
     if not args.iso_sha256 or args.iso_sha256 == "(not computed)":
@@ -98,11 +110,15 @@ def main() -> int:
     builder_id = f"{server_url}/{workflow_ref}"
 
     # ── Timestamps ───────────────────────────────────────────────────────────
-    # startedOn: approximate — the attestation job starts shortly after the build
-    started_on  = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    finished_on = started_on  # refined below after writing the file
+    # Use caller-supplied timestamps when available so the provenance brackets
+    # the actual build rather than just the attestation creation moment.
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    started_on  = args.build_started_on  or now
+    finished_on = args.build_finished_on or now
 
     # ── resolvedDependencies ─────────────────────────────────────────────────
+    # Each entry names a distinct external input that determines the ISO contents.
+    # Without these, the provenance proves authorship but not input transparency.
     resolved_deps: list[dict] = [
         {
             "uri": f"git+{repo_url}@{ref}",
@@ -110,6 +126,40 @@ def main() -> int:
             "name": repository,
         }
     ]
+
+    # Gentoo stage3 base image — the toolchain bootstrap layer. BUILD_EPOCH pins
+    # the exact daily tag so the same epoch always resolves to the same image.
+    if args.stage3_epoch:
+        resolved_deps.append({
+            "uri": f"docker.io/gentoo/stage3:amd64-openrc-{args.stage3_epoch}",
+            "name": "gentoo-stage3",
+        })
+
+    # Portage snapshot — the ebuild tree that drove all package selections and
+    # patches. emerge-webrsync downloads gentoo-EPOCH.tar.xz and verifies its
+    # GPG signature against the bundled Gentoo release key before extracting.
+    if args.portage_snapshot_epoch:
+        resolved_deps.append({
+            "uri": (
+                f"https://distfiles.gentoo.org/snapshots/"
+                f"gentoo-{args.portage_snapshot_epoch}.tar.xz"
+            ),
+            "name": "gentoo-portage-snapshot",
+        })
+
+    # Upstream kernel source tarball. The version is extracted from the enriched
+    # SBOM's monolith-kernel component by attestation.sh after Pillar 1b.
+    if args.kernel_version:
+        major = args.kernel_version.split(".")[0]
+        resolved_deps.append({
+            "uri": (
+                f"https://cdn.kernel.org/pub/linux/kernel/"
+                f"v{major}.x/linux-{args.kernel_version}.tar.xz"
+            ),
+            "name": "linux-kernel-source",
+        })
+
+    # Builder Docker image — the compiled crossdev toolchain layer on top of stage3.
     if args.builder_digest:
         owner = repository.split("/")[0]
         resolved_deps.append(
@@ -181,6 +231,9 @@ def main() -> int:
                     },
                     "build": {
                         "tag": args.build_tag,
+                        # SOURCE_DATE_EPOCH clamps all build-output timestamps;
+                        # recording it here lets verifiers confirm the setting.
+                        "source_date_epoch": env("SOURCE_DATE_EPOCH", ""),
                     },
                 },
                 "resolvedDependencies": resolved_deps,

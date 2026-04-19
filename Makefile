@@ -103,7 +103,9 @@ GITHUB_ENV := \
 	-e GITHUB_WORKFLOW_REF \
 	-e GITHUB_WORKFLOW_SHA \
 	-e GITHUB_ACTOR \
-	-e GITHUB_ACTOR_ID
+	-e GITHUB_ACTOR_ID \
+	-e BUILD_EPOCH \
+	-e BUILD_STARTED_ON
 
 .PHONY: help build-image push-image pull-image restore-cache \
         sync-portage build-packages build-packages-resume \

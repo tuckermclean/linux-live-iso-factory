@@ -104,13 +104,19 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
       startsWith(github.ref, 'refs/tags/')
+    outputs:
+      build-started-on: ${{ steps.set-version.outputs.build-started-on }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Set build version
+        id: set-version
         run: |
           BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
           echo "BUILD_EPOCH=$BUILD_EPOCH" >> "$GITHUB_ENV"
+          BUILD_STARTED_ON=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "BUILD_STARTED_ON=$BUILD_STARTED_ON" >> "$GITHUB_ENV"
+          echo "build-started-on=$BUILD_STARTED_ON" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "BUILD_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
           else
@@ -213,6 +219,7 @@ jobs:
         run: |
           BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
           echo "BUILD_EPOCH=$BUILD_EPOCH" >> "$GITHUB_ENV"
+          echo "BUILD_STARTED_ON=${{ needs.build.outputs.build-started-on }}" >> "$GITHUB_ENV"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "BUILD_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
           else

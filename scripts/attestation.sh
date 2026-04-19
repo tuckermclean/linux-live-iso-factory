@@ -52,6 +52,11 @@
 
 set -uo pipefail
 
+# Record the attestation start time before any work begins.
+# Passed to generate-provenance.py as startedOn; finishedOn is recorded
+# just before the provenance call so the two timestamps bracket all pillars.
+BUILD_STARTED_ON="${BUILD_STARTED_ON:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
 # ── Argument defaults ────────────────────────────────────────────────────────
 SYSROOT=""
 ISO=""
@@ -252,6 +257,20 @@ if [[ $SBOM_RC -eq 0 ]]; then
     if [[ $ENRICH_RC -eq 0 ]]; then
         SBOM_FILE="$ENRICHED_FILE"
         log "CPE enrichment complete. Using enriched SBOM for pillars 2 and 3."
+
+        # Extract the upstream kernel version for resolvedDependencies in Pillar 6.
+        # The monolith-kernel component's version field holds the upstream version
+        # (Gentoo revision stripped by enrich-sbom.py before CPE substitution).
+        KERNEL_VERSION=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('${ENRICHED_FILE}'))
+    k = next((c for c in d.get('components', [])
+               if 'monolith-kernel' in c.get('name', '')), {})
+    print(k.get('version', ''))
+except Exception:
+    pass
+" 2>/dev/null || echo "")
     else
         fail "CPE enrichment exited with code $ENRICH_RC — using raw SBOM for pillars 2 and 3"
         SBOM_RC=$ENRICH_RC  # Roll enrichment failure into SBOM pillar result
@@ -452,13 +471,22 @@ fi
 # ── Pillar 6: SLSA v1.0 Provenance ───────────────────────────────────────────
 log "--- Pillar 6: SLSA v1.0 Provenance ---"
 if [[ -n "$ISO_SHA256" && "$ISO_SHA256" != "(not computed)" ]]; then
+    BUILD_FINISHED_ON="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    BUILD_EPOCH_VAL="${BUILD_EPOCH:-}"
     PROVENANCE_ARGS=(
-        --iso-sha256  "${ISO_SHA256}"
-        --iso-name    "themonolith-${BUILD_TAG}.iso"
-        --build-tag   "${BUILD_TAG}"
-        --output      "${OUTPUT_DIR}/slsa-provenance.json"
+        --iso-sha256       "${ISO_SHA256}"
+        --iso-name         "themonolith-${BUILD_TAG}.iso"
+        --build-tag        "${BUILD_TAG}"
+        --output           "${OUTPUT_DIR}/slsa-provenance.json"
+        --build-started-on  "${BUILD_STARTED_ON}"
+        --build-finished-on "${BUILD_FINISHED_ON}"
     )
-    [[ -n "$BUILDER_DIGEST" ]] && PROVENANCE_ARGS+=(--builder-digest "${BUILDER_DIGEST}")
+    [[ -n "$BUILD_EPOCH_VAL"    ]] && PROVENANCE_ARGS+=(
+        --portage-snapshot-epoch "${BUILD_EPOCH_VAL}"
+        --stage3-epoch           "${BUILD_EPOCH_VAL}"
+    )
+    [[ -n "${KERNEL_VERSION:-}" ]] && PROVENANCE_ARGS+=(--kernel-version "${KERNEL_VERSION}")
+    [[ -n "$BUILDER_DIGEST"     ]] && PROVENANCE_ARGS+=(--builder-digest "${BUILDER_DIGEST}")
     python3 "${PROVENANCE_SCRIPT}" "${PROVENANCE_ARGS[@]}" 2>&1 || PROVENANCE_RC=$?
 else
     fail "ISO SHA-256 not computed — cannot generate provenance with valid subject"
