@@ -102,6 +102,32 @@ if [[ $GRYPE_RC -ne 0 ]]; then
     exit "$GRYPE_RC"
 fi
 
+# Extract scanner + DB metadata from the Grype report.
+# Written to a sidecar read by attestation.sh (summary JSON) and
+# generate-dashboard.py (build page). This is the only place in the
+# pipeline where we know both the scanner version and the DB build date.
+META_FILE="${OUTPUT%.json}-meta.json"
+python3 - "$OUTPUT" "$META_FILE" <<'PYEOF'
+import json, sys
+try:
+    report = json.load(open(sys.argv[1]))
+    descriptor = report.get("descriptor", {})
+    db = descriptor.get("db", {})
+    meta = {
+        "scanner":           descriptor.get("name", "grype"),
+        "scanner_version":   descriptor.get("version", "unknown"),
+        "db_built":          db.get("built", "unknown"),
+        "db_schema_version": str(db.get("schemaVersion", "unknown")),
+        "db_checksum":       db.get("checksum", ""),
+    }
+    with open(sys.argv[2], "w") as f:
+        f.write(json.dumps(meta, indent=2) + "\n")
+    print(f"[check-cves] Scanner: {meta['scanner']} {meta['scanner_version']}, "
+          f"DB built: {meta['db_built']}")
+except Exception as e:
+    print(f"[check-cves] WARNING: could not extract scanner metadata: {e}", file=sys.stderr)
+PYEOF
+
 # Parse and summarize results
 python3 - "$OUTPUT" <<'PYEOF'
 import json, sys

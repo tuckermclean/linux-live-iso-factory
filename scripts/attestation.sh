@@ -291,6 +291,12 @@ bash "${CVE_SCRIPT}" \
     --sbom "${SBOM_FILE}" \
     --output "${OUTPUT_DIR}/cve-report.json" || CVE_RC=$?
 
+# Read scanner metadata written by check-cves.sh
+SCANNER_META='{}'
+if [[ -f "${OUTPUT_DIR}/cve-report-meta.json" ]]; then
+    SCANNER_META="$(cat "${OUTPUT_DIR}/cve-report-meta.json")"
+fi
+
 # Collect CVE failures for summary
 CVE_FAILURES="[]"
 if [[ -f "${OUTPUT_DIR}/cve-report.json" ]]; then
@@ -490,6 +496,12 @@ python3 - <<PYEOF
 import json
 from pathlib import Path
 
+# Load scanner metadata written by check-cves.sh via the sidecar file
+try:
+    scanner_meta = json.loads("""${SCANNER_META}""")
+except Exception:
+    scanner_meta = {}
+
 summary = {
     "build_tag": "${BUILD_TAG}",
     "timestamp": "${TIMESTAMP}",
@@ -503,6 +515,7 @@ summary = {
     "unowned_count": ${UNOWNED_COUNT},
     "provenance_check": "${OVERALL_PROVENANCE_STATUS}",
     "overall": "${OVERALL_STATUS}",
+    "scanner_meta": scanner_meta,
     "cve_failures": ${CVE_FAILURES},
     "license_failures": ${LICENSE_FAILURES},
     "unowned_files": ${UNOWNED_FILES},
