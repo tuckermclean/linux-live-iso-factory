@@ -12,14 +12,14 @@
 # This is a policy choice for reproducibility and attestation: a single BUILD_EPOCH
 # unambiguously identifies all build inputs (toolchain + ebuilds).
 # Update with: make update-build-pins
-ARG BUILD_EPOCH=20260406
+ARG BUILD_EPOCH=20260413
 FROM gentoo/stage3:amd64-openrc-${BUILD_EPOCH} AS base-tools
 
 LABEL maintainer="monolith-builder"
 LABEL description="Gentoo crossdev environment for i486-linux-musl + ISO tools"
 
 # Reproducibility: clamp all build output timestamps to the stage3 date
-ENV SOURCE_DATE_EPOCH=1775433600
+ENV SOURCE_DATE_EPOCH=1776038400
 
 ENV CROSS_TARGET=i486-linux-musl
 ENV CROSS_COMPILE=i486-linux-musl-
