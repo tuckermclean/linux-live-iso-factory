@@ -422,6 +422,29 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
   {b_cve_table}
 </div>"""
 
+    # ── Packages without CPE (unscanned by Grype) ────────────────────────────
+    no_cpe_pkgs = [
+        (c.get("name", ""), c.get("version", ""))
+        for c in sbom_data.get("components", [])
+        if c.get("type") != "file" and not c.get("cpe")
+    ]
+    if no_cpe_pkgs:
+        no_cpe_count = len(no_cpe_pkgs)
+        no_cpe_rows = "".join(
+            f"<tr><td>{h(name)}</td><td>{h(ver)}</td></tr>"
+            for name, ver in sorted(no_cpe_pkgs)
+        )
+        no_cpe_section = (
+            f"<p><span class='revoked'>{no_cpe_count} package(s)</span> have no CPE mapping "
+            f"and were not submitted to Grype for CVE matching. This is an attestation gap — "
+            f"CVE coverage for these packages is unknown.</p>"
+            "<table><thead><tr><th>Package</th><th>Version</th></tr></thead><tbody>"
+            + no_cpe_rows
+            + "</tbody></table>"
+        )
+    else:
+        no_cpe_section = "<p class='pass'>All packages have CPE mappings — full CVE coverage.</p>"
+
     # ── Scanner metadata ──────────────────────────────────────────────────────
     # Prefer summary.scanner_meta (written by attestation.sh from the sidecar);
     # fall back to descriptor block embedded in the loaded cve_report.
@@ -564,6 +587,11 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
 <div class="section">
   <h2>CVE Check</h2>
   {cve_table}
+</div>
+
+<div class="section">
+  <h2>Packages Without CPE (unscanned)</h2>
+  {no_cpe_section}
 </div>
 
 <div class="section">
