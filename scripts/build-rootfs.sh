@@ -495,12 +495,15 @@ create_squashfs() {
     local size_kb=$(du -sk "$ROOTFS_DIR" | cut -f1)
     log_info "Uncompressed rootfs size: ${size_kb} KB"
 
-    # Create SquashFS with gzip compression (low memory for i486)
+    # Create SquashFS with gzip compression (low memory for i486).
+    # -all-time clamps every inode timestamp to SOURCE_DATE_EPOCH so the SquashFS
+    # image is byte-for-byte reproducible across builds with the same inputs.
     mksquashfs "$ROOTFS_DIR" "$SQUASHFS_IMAGE" \
         -comp gzip \
         -b 131072 \
         -no-xattrs \
         -noappend \
+        -all-time "${SOURCE_DATE_EPOCH:-0}" \
         -quiet
 
     # Show compressed size

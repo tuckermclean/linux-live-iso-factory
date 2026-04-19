@@ -183,10 +183,18 @@ echo "..."
 UNCOMPRESSED_SIZE=$(du -sk "${INITRD_DIR}" | cut -f1)
 log_info "Uncompressed initramfs size: ${UNCOMPRESSED_SIZE} KB"
 
-# Create the cpio archive and compress with XZ (kernel has CONFIG_RD_XZ=y)
+# Create the cpio archive and compress with XZ (kernel has CONFIG_RD_XZ=y).
+# Reproducibility:
+#   1. Normalize all file timestamps to SOURCE_DATE_EPOCH before archiving so
+#      the cpio entries don't embed the live build time.
+#   2. Sort the find output so the archive member order is deterministic
+#      (find visits directories in filesystem order, which varies by run).
+# Symlinks are excluded from touch because touch -h support varies and the
+# kernel initramfs extracts them correctly regardless of their mtime.
 log_info "Creating compressed initramfs image..."
 cd "${INITRD_DIR}"
-find . -print0 | cpio --null -o -H newc | xz --check=crc32 -6 > "${INITRD_IMAGE}"
+find . -not -type l -exec touch -d "@${SOURCE_DATE_EPOCH:-0}" {} +
+find . -print0 | LC_ALL=C sort -z | cpio --null -o -H newc | xz --check=crc32 -6 > "${INITRD_IMAGE}"
 
 # Show final size
 COMPRESSED_SIZE=$(stat -c%s "${INITRD_IMAGE}")
