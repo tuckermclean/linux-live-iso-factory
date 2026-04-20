@@ -58,10 +58,16 @@ def main() -> int:
     # identify every input that determined the ISO contents, not just the source repo.
     parser.add_argument("--portage-snapshot-epoch", default="", metavar="EPOCH",
                         help="BUILD_EPOCH used for emerge-webrsync (e.g. 20260406)")
+    parser.add_argument("--portage-snapshot-sha256", default="", metavar="HEX",
+                        help="SHA-256 of the portage snapshot tarball (from distfiles .sha256 sidecar)")
     parser.add_argument("--stage3-epoch",           default="", metavar="EPOCH",
                         help="BUILD_EPOCH used for gentoo/stage3 base image")
+    parser.add_argument("--stage3-digest",          default="", metavar="SHA256",
+                        help="Docker manifest digest of the stage3 image (sha256:...)")
     parser.add_argument("--kernel-version",         default="", metavar="VER",
                         help="Upstream kernel version built (e.g. 6.12.80)")
+    parser.add_argument("--kernel-sha512",          default="", metavar="HEX",
+                        help="SHA-512 of kernel source tarball (from Portage Manifest)")
     # Real build timestamps — bracketing when the actual compilation ran, not when
     # this script runs. Passed in by attestation.sh which records them around pillars.
     parser.add_argument("--build-started-on",  default="", metavar="ISO8601")
@@ -130,34 +136,45 @@ def main() -> int:
     # Gentoo stage3 base image — the toolchain bootstrap layer. BUILD_EPOCH pins
     # the exact daily tag so the same epoch always resolves to the same image.
     if args.stage3_epoch:
-        resolved_deps.append({
+        stage3_entry: dict = {
             "uri": f"docker.io/gentoo/stage3:amd64-openrc-{args.stage3_epoch}",
             "name": "gentoo-stage3",
-        })
+        }
+        if args.stage3_digest:
+            stage3_entry["digest"] = {
+                "sha256": args.stage3_digest.removeprefix("sha256:")
+            }
+        resolved_deps.append(stage3_entry)
 
     # Portage snapshot — the ebuild tree that drove all package selections and
     # patches. emerge-webrsync downloads gentoo-EPOCH.tar.xz and verifies its
     # GPG signature against the bundled Gentoo release key before extracting.
     if args.portage_snapshot_epoch:
-        resolved_deps.append({
+        snapshot_entry: dict = {
             "uri": (
                 f"https://distfiles.gentoo.org/snapshots/"
                 f"gentoo-{args.portage_snapshot_epoch}.tar.xz"
             ),
             "name": "gentoo-portage-snapshot",
-        })
+        }
+        if args.portage_snapshot_sha256:
+            snapshot_entry["digest"] = {"sha256": args.portage_snapshot_sha256}
+        resolved_deps.append(snapshot_entry)
 
     # Upstream kernel source tarball. The version is extracted from the enriched
     # SBOM's monolith-kernel component by attestation.sh after Pillar 1b.
     if args.kernel_version:
         major = args.kernel_version.split(".")[0]
-        resolved_deps.append({
+        kernel_entry: dict = {
             "uri": (
                 f"https://cdn.kernel.org/pub/linux/kernel/"
                 f"v{major}.x/linux-{args.kernel_version}.tar.xz"
             ),
             "name": "linux-kernel-source",
-        })
+        }
+        if args.kernel_sha512:
+            kernel_entry["digest"] = {"sha512": args.kernel_sha512}
+        resolved_deps.append(kernel_entry)
 
     # Builder Docker image — the compiled crossdev toolchain layer on top of stage3.
     if args.builder_digest:

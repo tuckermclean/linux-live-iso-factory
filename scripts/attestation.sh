@@ -503,6 +503,23 @@ log "--- Pillar 6: SLSA v1.0 Provenance ---"
 if [[ -n "$ISO_SHA256" && "$ISO_SHA256" != "(not computed)" ]]; then
     BUILD_FINISHED_ON="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     BUILD_EPOCH_VAL="${BUILD_EPOCH:-}"
+
+    # Portage snapshot digest — Gentoo publishes a .sha256 sidecar alongside each snapshot.
+    PORTAGE_SNAPSHOT_SHA256=$(curl -fsSL \
+        "https://distfiles.gentoo.org/snapshots/gentoo-${BUILD_EPOCH_VAL}.tar.xz.sha256" \
+        2>/dev/null | awk '{print $1}' || echo "")
+
+    # Kernel source digest — SHA-512 is already in the Portage Manifest (GPG-signed).
+    KERNEL_SHA512=$(python3 -c "
+import re
+try:
+    txt = open('/configs/overlay/sys-kernel/monolith-kernel/Manifest').read()
+    m = re.search(r'DIST linux-\S+\.tar\.xz \d+ BLAKE2B \S+ SHA512 (\S+)', txt)
+    print(m.group(1) if m else '')
+except Exception:
+    pass
+" 2>/dev/null || echo "")
+
     PROVENANCE_ARGS=(
         --iso-sha256       "${ISO_SHA256}"
         --iso-name         "themonolith-${BUILD_TAG}.iso"
@@ -515,8 +532,11 @@ if [[ -n "$ISO_SHA256" && "$ISO_SHA256" != "(not computed)" ]]; then
         --portage-snapshot-epoch "${BUILD_EPOCH_VAL}"
         --stage3-epoch           "${BUILD_EPOCH_VAL}"
     )
-    [[ -n "${KERNEL_VERSION:-}" ]] && PROVENANCE_ARGS+=(--kernel-version "${KERNEL_VERSION}")
-    [[ -n "$BUILDER_DIGEST"     ]] && PROVENANCE_ARGS+=(--builder-digest "${BUILDER_DIGEST}")
+    [[ -n "${PORTAGE_SNAPSHOT_SHA256}" ]] && PROVENANCE_ARGS+=(--portage-snapshot-sha256 "${PORTAGE_SNAPSHOT_SHA256}")
+    [[ -n "${STAGE3_DIGEST:-}"         ]] && PROVENANCE_ARGS+=(--stage3-digest "${STAGE3_DIGEST}")
+    [[ -n "${KERNEL_VERSION:-}"        ]] && PROVENANCE_ARGS+=(--kernel-version "${KERNEL_VERSION}")
+    [[ -n "${KERNEL_SHA512}"           ]] && PROVENANCE_ARGS+=(--kernel-sha512 "${KERNEL_SHA512}")
+    [[ -n "$BUILDER_DIGEST"            ]] && PROVENANCE_ARGS+=(--builder-digest "${BUILDER_DIGEST}")
     python3 "${PROVENANCE_SCRIPT}" "${PROVENANCE_ARGS[@]}" 2>&1 || PROVENANCE_RC=$?
 else
     fail "ISO SHA-256 not computed — cannot generate provenance with valid subject"

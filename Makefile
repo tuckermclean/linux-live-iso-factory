@@ -105,7 +105,8 @@ GITHUB_ENV := \
 	-e GITHUB_ACTOR \
 	-e GITHUB_ACTOR_ID \
 	-e BUILD_EPOCH \
-	-e BUILD_STARTED_ON
+	-e BUILD_STARTED_ON \
+	-e STAGE3_DIGEST
 
 .PHONY: help build-image push-image pull-image restore-cache \
         sync-portage build-packages build-packages-resume \
