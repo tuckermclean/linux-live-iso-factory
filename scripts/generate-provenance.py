@@ -190,12 +190,13 @@ def main() -> int:
     # ── Byproducts: other attestation artifacts in the same output dir ───────
     attestation_dir = output_path.parent
     byproduct_specs = [
-        ("bom.cdx.json",             "application/vnd.cyclonedx+json"),
-        ("sbom.cdx.json",            "application/vnd.cyclonedx+json"),
-        ("cve-report.cdx.json",      "application/vnd.cyclonedx+json"),
-        ("license-report.json",      "application/json"),
-        ("unowned-report.json",      "application/json"),
-        ("attestation-summary.json", "application/json"),
+        ("bom.cdx.json",                "application/vnd.cyclonedx+json"),
+        ("builder-bom.cdx.json",        "application/vnd.cyclonedx+json"),
+        ("cve-report.cdx.json",         "application/vnd.cyclonedx+json"),
+        ("builder-cve-report.cdx.json", "application/vnd.cyclonedx+json"),
+        ("license-report.json",         "application/json"),
+        ("unowned-report.json",         "application/json"),
+        ("attestation-summary.json",    "application/json"),
     ]
     byproducts = []
     for filename, media_type in byproduct_specs:

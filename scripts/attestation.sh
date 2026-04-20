@@ -65,7 +65,7 @@ OUTPUT_DIR=""
 OVERRIDES_FILE="/configs/attestation/cpe-overrides.yaml"
 POLICY_FILE="/configs/attestation/license-policy.yaml"
 UNOWNED_ALLOWLIST_FILE="/configs/attestation/unowned-allowlist.yaml"
-INCLUDE_BUILDER=0
+INCLUDE_BUILDER=1
 BUILDER_DIGEST=""
 
 # ── ANSI colors ──────────────────────────────────────────────────────────────
