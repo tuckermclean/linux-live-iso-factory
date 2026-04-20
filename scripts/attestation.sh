@@ -410,6 +410,10 @@ if [[ $INCLUDE_BUILDER -eq 1 ]]; then
     # mounts that are overlaid at runtime and are NOT part of the image itself.
     # The portage-cataloger reads /var/db/pkg, which lives in the image layer.
     SYFT_FILE_METADATA_SELECTION=all syft dir:/ \
+        --exclude '/proc/**' \
+        --exclude '/sys/**' \
+        --exclude '/dev/**' \
+        --exclude '/run/**' \
         --exclude '/output/**' \
         --exclude '/configs/**' \
         --exclude '/scripts/**' \
