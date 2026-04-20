@@ -496,14 +496,13 @@ create_squashfs() {
     log_info "Uncompressed rootfs size: ${size_kb} KB"
 
     # Create SquashFS with gzip compression (low memory for i486).
-    # -all-time clamps every inode timestamp to SOURCE_DATE_EPOCH so the SquashFS
-    # image is byte-for-byte reproducible across builds with the same inputs.
+    # mksquashfs 4.5+ reads SOURCE_DATE_EPOCH from the environment automatically;
+    # passing -all-time alongside it is an error on those versions.
     mksquashfs "$ROOTFS_DIR" "$SQUASHFS_IMAGE" \
         -comp gzip \
         -b 131072 \
         -no-xattrs \
         -noappend \
-        -all-time "${SOURCE_DATE_EPOCH:-0}" \
         -quiet
 
     # Show compressed size
