@@ -482,20 +482,33 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
         no_cpe_section = "<p class='pass'>All packages have CPE mappings — full CVE coverage.</p>"
 
     # ── Scanner metadata ──────────────────────────────────────────────────────
-    # Prefer summary.scanner_meta (written by attestation.sh from the sidecar);
-    # fall back to descriptor block embedded in the loaded cve_report.
-    scanner_meta = summary.get("scanner_meta") or {}
-    if not scanner_meta and cve_report:
-        desc = cve_report.get("descriptor", {})
-        db   = desc.get("db", {})
-        scanner_meta = {
-            "scanner":         desc.get("name", ""),
-            "scanner_version": desc.get("version", ""),
-            "db_built":        db.get("built", ""),
-        }
-    scanner_name    = scanner_meta.get("scanner", "")
-    scanner_version = scanner_meta.get("scanner_version", "")
-    db_built        = scanner_meta.get("db_built", "")
+    # Primary: read from bom.cdx.json metadata.tools.components (current builds).
+    # Fallback 1: summary.scanner_meta (builds before metadata.tools was added).
+    # Fallback 2: cve_report.descriptor (pre-VEX Grype JSON builds).
+    scanner_name = scanner_version = db_built = ""
+    tools_section = (sbom_data or {}).get("metadata", {}).get("tools", {})
+    tool_components = (
+        tools_section.get("components", []) if isinstance(tools_section, dict)
+        else tools_section if isinstance(tools_section, list)
+        else []
+    )
+    grype_tool = next((t for t in tool_components if t.get("name") == "grype"), {})
+    if grype_tool:
+        scanner_name    = "grype"
+        scanner_version = grype_tool.get("version", "")
+        grype_props     = {p["name"]: p["value"]
+                           for p in grype_tool.get("properties", [])}
+        db_built        = grype_props.get("cdx:tool:db:built", "")
+    elif summary.get("scanner_meta"):
+        sm              = summary["scanner_meta"]
+        scanner_name    = sm.get("scanner", "")
+        scanner_version = sm.get("scanner_version", "")
+        db_built        = sm.get("db_built", "")
+    elif cve_report:
+        desc            = cve_report.get("descriptor", {})
+        scanner_name    = desc.get("name", "")
+        scanner_version = desc.get("version", "")
+        db_built        = desc.get("db", {}).get("built", "")
     scanner_row = (
         f"<tr><th>Scanner</th><td>{h(scanner_name)} {h(scanner_version)}</td></tr>"
         if scanner_name else ""

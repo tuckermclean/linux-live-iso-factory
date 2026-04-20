@@ -487,22 +487,58 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
         else:
             print("[enrich-sbom] WARNING: No dependency entries built.", file=sys.stderr)
 
-    # ── Record this script in metadata.tools ──────────────────────────────────
-    enrich_tool = {
+    # ── Populate metadata.tools (CycloneDX 1.5+ dict form) ───────────────────
+    # Normalise whatever Syft wrote (array in 1.4, dict in 1.5+) into the
+    # canonical 1.6 shape: {"components": [...]}.
+    tools_raw = metadata.get("tools")
+    if isinstance(tools_raw, list):
+        existing = tools_raw          # CycloneDX 1.4: plain array
+    elif isinstance(tools_raw, dict):
+        existing = tools_raw.get("components", [])
+    else:
+        existing = []
+    # Filter out any entry Syft wrote for itself — we'll re-add with full detail
+    existing = [t for t in existing if t.get("name") not in ("syft", "grype", "enrich-sbom.py")]
+
+    new_tools: list[dict] = []
+    if args.syft_version:
+        new_tools.append({
+            "type": "application",
+            "name": "syft",
+            "version": args.syft_version,
+            "supplier": {"name": "Anchore"},
+            "externalReferences": [{"type": "website",
+                                    "url": "https://github.com/anchore/syft"}],
+        })
+    if args.grype_version:
+        grype_props = []
+        if args.grype_db_built:
+            grype_props.append({"name": "cdx:tool:db:built",
+                                "value": args.grype_db_built})
+        if args.grype_db_schema:
+            grype_props.append({"name": "cdx:tool:db:schema",
+                                "value": args.grype_db_schema})
+        if args.grype_db_checksum:
+            grype_props.append({"name": "cdx:tool:db:checksum",
+                                "value": args.grype_db_checksum})
+        grype_entry: dict = {
+            "type": "application",
+            "name": "grype",
+            "version": args.grype_version,
+            "supplier": {"name": "Anchore"},
+            "externalReferences": [{"type": "website",
+                                    "url": "https://github.com/anchore/grype"}],
+        }
+        if grype_props:
+            grype_entry["properties"] = grype_props
+        new_tools.append(grype_entry)
+    new_tools.append({
         "type": "application",
         "name": "enrich-sbom.py",
         "version": "2.0",
         "supplier": {"name": "Tucker McLean"},
-    }
-    tools_raw = metadata.get("tools")
-    if isinstance(tools_raw, list):
-        # CycloneDX 1.4 format: tools is an array
-        tools_raw.append(enrich_tool)
-    elif isinstance(tools_raw, dict):
-        # CycloneDX 1.5 format: tools is {"components": [...]}
-        tools_raw.setdefault("components", []).append(enrich_tool)
-    else:
-        metadata["tools"] = [enrich_tool]
+    })
+    metadata["tools"] = {"components": existing + new_tools}
 
     return sbom, enriched_names, no_cpe_names
 
@@ -596,6 +632,17 @@ Output:
         default="",
         help="Path to license-policy.yaml (for Gentoo→SPDX license normalization)",
     )
+    # ── Scanner tool metadata (written into metadata.tools) ──────────────────
+    parser.add_argument("--syft-version",       metavar="VER", default="",
+                        help="Syft version string for metadata.tools")
+    parser.add_argument("--grype-version",      metavar="VER", default="",
+                        help="Grype version string for metadata.tools")
+    parser.add_argument("--grype-db-built",     metavar="TS",  default="",
+                        help="Grype vulnerability DB build timestamp")
+    parser.add_argument("--grype-db-schema",    metavar="VER", default="",
+                        help="Grype vulnerability DB schema version")
+    parser.add_argument("--grype-db-checksum",  metavar="SUM", default="",
+                        help="Grype vulnerability DB checksum")
     args = parser.parse_args()
 
     # Load inputs

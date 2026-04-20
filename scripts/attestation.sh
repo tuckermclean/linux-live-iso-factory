@@ -238,6 +238,23 @@ fi
 
 # ── Pillar 1b: CPE enrichment ────────────────────────────────────────────────
 log "--- Pillar 1: CPE Enrichment (enrich-sbom.py) ---"
+
+# Capture scanner tool versions before enrichment so they can be embedded in
+# metadata.tools of the SBOM (canonical home per CycloneDX spec).
+SYFT_VERSION=$(syft version --output json 2>/dev/null \
+    | python3 -c "import json,sys; print(json.load(sys.stdin).get('version',''))" 2>/dev/null \
+    || syft version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || echo "")
+GRYPE_VERSION=$(grype version --output json 2>/dev/null \
+    | python3 -c "import json,sys; print(json.load(sys.stdin).get('version',''))" 2>/dev/null \
+    || grype version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || echo "")
+_GRYPE_DB_STATUS=$(grype db status 2>/dev/null || echo "")
+GRYPE_DB_BUILT=$(echo "$_GRYPE_DB_STATUS" \
+    | python3 -c "import sys,re; m=re.search(r'Built:\s+(.+)',sys.stdin.read()); print(m.group(1).strip() if m else '')" 2>/dev/null || echo "")
+GRYPE_DB_SCHEMA=$(echo "$_GRYPE_DB_STATUS" \
+    | python3 -c "import sys,re; m=re.search(r'Version:\s+(\S+)',sys.stdin.read()); print(m.group(1) if m else '')" 2>/dev/null || echo "")
+GRYPE_DB_CHECKSUM=$(echo "$_GRYPE_DB_STATUS" \
+    | python3 -c "import sys,re; m=re.search(r'Checksum:\s+(\S+)',sys.stdin.read()); print(m.group(1) if m else '')" 2>/dev/null || echo "")
+
 # Use raw SBOM as input; update SBOM_FILE to enriched on success
 if [[ $SBOM_RC -eq 0 ]]; then
     python3 "${ENRICH_SCRIPT}" \
@@ -252,6 +269,11 @@ if [[ $SBOM_RC -eq 0 ]]; then
         --sysroot "${SYSROOT}" \
         --license-policy "${POLICY_FILE}" \
         --iso-sha256 "${ISO_SHA256}" \
+        ${SYFT_VERSION:+--syft-version "${SYFT_VERSION}"} \
+        ${GRYPE_VERSION:+--grype-version "${GRYPE_VERSION}"} \
+        ${GRYPE_DB_BUILT:+--grype-db-built "${GRYPE_DB_BUILT}"} \
+        ${GRYPE_DB_SCHEMA:+--grype-db-schema "${GRYPE_DB_SCHEMA}"} \
+        ${GRYPE_DB_CHECKSUM:+--grype-db-checksum "${GRYPE_DB_CHECKSUM}"} \
         || ENRICH_RC=$?
 
     if [[ $ENRICH_RC -eq 0 ]]; then
