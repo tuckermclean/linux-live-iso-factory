@@ -14,7 +14,7 @@ applies a battery of fixes that Syft cannot handle for Gentoo/Portage:
   7. Component types — classify by Portage category (app-* → application, etc.)
   8. PURL qualifiers — add ?arch=...&distro=gentoo to pkg:ebuild/ PURLs
   9. Metadata — add authors, lifecycles, externalReferences
- 10. Tools — record this script in metadata.tools
+ 10. Tools — record Syft, Grype (with DB metadata), build toolchain, and this script in metadata.tools
  11. Noise reduction — strip syft:cpe23 property duplicates
 
 Usage:
@@ -34,6 +34,7 @@ Exit code: always 0. Gaps are informational, not failures.
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -315,6 +316,21 @@ def build_dependency_graph(sysroot: str, bom_ref_by_bare: dict) -> list:
     return deps
 
 
+def _run_version(cmd: list[str]) -> str:
+    """Run a command and return its first output line, or '' on any failure."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return (r.stdout or r.stderr or "").splitlines()[0].strip()
+    except Exception:
+        return ""
+
+
+def _extract_version(raw: str) -> str:
+    """Pull the first X.Y[.Z…] version number out of a raw version string."""
+    m = re.search(r"(\d+\.\d+[\d.]*)", raw or "")
+    return m.group(1) if m else raw
+
+
 def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
     """
     Apply all SBOM enrichments.
@@ -497,8 +513,60 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
         existing = tools_raw.get("components", [])
     else:
         existing = []
-    # Filter out any entry Syft wrote for itself — we'll re-add with full detail
-    existing = [t for t in existing if t.get("name") not in ("syft", "grype", "enrich-sbom.py")]
+    _MANAGED_TOOLS = {
+        "syft", "grype", "enrich-sbom.py",
+        "i486-linux-musl-gcc", "i486-linux-musl-ld",
+        "gcc", "portage", "crossdev",
+    }
+    existing = [t for t in existing if t.get("name") not in _MANAGED_TOOLS]
+
+    # ── Capture build toolchain versions (fail-silent for each) ──────────────
+    toolchain: list[dict] = []
+
+    _xgcc_raw = _run_version(["i486-linux-musl-gcc", "--version"])
+    if _xgcc_raw:
+        toolchain.append({
+            "type": "application",
+            "name": "i486-linux-musl-gcc",
+            "version": _extract_version(_xgcc_raw),
+            "description": _xgcc_raw,
+        })
+
+    _xld_raw = _run_version(["i486-linux-musl-ld", "--version"])
+    if _xld_raw:
+        toolchain.append({
+            "type": "application",
+            "name": "i486-linux-musl-ld",
+            "version": _extract_version(_xld_raw),
+            "description": _xld_raw,
+        })
+
+    _gcc_raw = _run_version(["gcc", "--version"])
+    if _gcc_raw:
+        toolchain.append({
+            "type": "application",
+            "name": "gcc",
+            "version": _extract_version(_gcc_raw),
+            "description": _gcc_raw,
+        })
+
+    _portage_raw = _run_version(["portageq", "--version"]) or _run_version(["emerge", "--version"])
+    if _portage_raw:
+        toolchain.append({
+            "type": "application",
+            "name": "portage",
+            "version": _extract_version(_portage_raw),
+            "description": _portage_raw,
+        })
+
+    _crossdev_raw = _run_version(["crossdev", "--version"])
+    if _crossdev_raw:
+        toolchain.append({
+            "type": "application",
+            "name": "crossdev",
+            "version": _extract_version(_crossdev_raw),
+            "description": _crossdev_raw,
+        })
 
     new_tools: list[dict] = []
     if args.syft_version:
@@ -538,7 +606,7 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
         "version": "2.0",
         "supplier": {"name": "Tucker McLean"},
     })
-    metadata["tools"] = {"components": existing + new_tools}
+    metadata["tools"] = {"components": existing + toolchain + new_tools}
 
     return sbom, enriched_names, no_cpe_names
 
