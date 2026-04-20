@@ -368,6 +368,16 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
         if iso_sha and iso_sha not in ("", "(not computed)"):
             component_entry["hashes"] = [{"alg": "SHA-256", "content": iso_sha}]
         metadata["component"] = component_entry
+        # Remove Syft's auto-detected OS distro component — identified by its
+        # syft:distro:* properties, which appear when Syft reads /etc/os-release.
+        # This component is superseded by the explicit metadata.component above.
+        sbom["components"] = [
+            c for c in sbom.get("components", [])
+            if not any(
+                p.get("name", "").startswith("syft:distro:")
+                for p in (c.get("properties") or [])
+            )
+        ]
 
     # ── metadata.authors and lifecycles ───────────────────────────────────────
     metadata["authors"] = [{"name": "Tucker McLean"}]
@@ -392,14 +402,18 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
     # binaries it finds on disk — e.g. "busybox 1.36.1" alongside the authoritative
     # "sys-apps/busybox 1.36.1-r4" from the portage-cataloger. Keep the portage
     # entry; it has the correct category, purl, licenses, and version.
+    # Also drop components with shell-quoted names — Syft's portage cataloger
+    # occasionally emits parse artifacts like "'gentoo'" / "'2.18'" from metadata files.
     portage_bare = {
         bare_name(c.get("name", ""))
         for c in sbom.get("components", [])
         if "/" in c.get("name", "")
+        and not c.get("name", "").startswith(("'", '"'))
     }
     sbom["components"] = [
         c for c in sbom.get("components", [])
-        if "/" in c.get("name", "") or bare_name(c.get("name", "")) not in portage_bare
+        if not c.get("name", "").startswith(("'", '"'))
+        and ("/" in c.get("name", "") or bare_name(c.get("name", "")) not in portage_bare)
     ]
 
     # ── Ensure every component has a bom-ref (required for dep graph) ─────────
@@ -544,8 +558,8 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
             if _cpe_template:
                 _comp["cpe"] = apply_version_to_cpe(_cpe_template, _version)
             else:
-                no_cpe_names.add(_pkg)
-            components.append(_comp)
+                no_cpe_names.append((_pkg, _version))
+            sbom["components"].append(_comp)
             print(f"[enrich-sbom] Propagated from builder: {_pkg} {_version}", file=sys.stderr)
 
     # ── Populate metadata.tools (CycloneDX 1.5+ dict form) ───────────────────

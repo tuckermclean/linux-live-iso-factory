@@ -307,8 +307,13 @@ Exit codes:
     components = [c for c in sbom.get("components", []) if c.get("type") != "file"]
     # Include the top-level product component (metadata.component) — it has a declared
     # license (MIT) and should appear in the report rather than being silently omitted.
+    # Deduplicate by name first: Syft sometimes emits a bare OS distro component with
+    # the same name into components[] before enrich-sbom.py cleans it up.
     meta_comp = sbom.get("metadata", {}).get("component")
     if meta_comp and meta_comp.get("type") != "file":
+        meta_name = meta_comp.get("name", "")
+        if meta_name:
+            components = [c for c in components if c.get("name") != meta_name]
         components = [meta_comp] + components
 
     results = [check_component(c, policy) for c in components]

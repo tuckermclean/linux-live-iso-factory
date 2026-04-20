@@ -129,3 +129,18 @@ overrides:
 
   # --- Libraries ---
   popt:            "cpe:2.3:a:rpm:popt:*:*:*:*:*:*:*:*"
+
+  # --- Build toolchain (builder-only; important for CVE scanning of the build env) ---
+  # gcc: bare_name of sys-devel/gcc. _p suffix stripped to upstream version.
+  gcc:             "cpe:2.3:a:gnu:gcc:*:*:*:*:*:*:*:*"
+  # glibc is the builder's host libc (target uses musl).
+  glibc:           "cpe:2.3:a:gnu:glibc:*:*:*:*:*:*:*:*"
+  # openssh version format: Gentoo 10.2_p1 strips to 10.2; NVD uses 10.2p1.
+  # Version may not match exactly but the package is submitted for CVE scanning.
+  openssh:         "cpe:2.3:a:openbsd:openssh:*:*:*:*:*:*:*:*"
+  libxml2:         "cpe:2.3:a:xmlsoft:libxml2:*:*:*:*:*:*:*:*"
+  gnutls:          "cpe:2.3:a:gnu:gnutls:*:*:*:*:*:*:*:*"
+  c-ares:          "cpe:2.3:a:c-ares_project:c-ares:*:*:*:*:*:*:*:*"
+  git:             "cpe:2.3:a:git-scm:git:*:*:*:*:*:*:*:*"
+  python:          "cpe:2.3:a:python:python:*:*:*:*:*:*:*:*"
+  perl:            "cpe:2.3:a:perl:perl:*:*:*:*:*:*:*:*"

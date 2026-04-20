@@ -509,18 +509,23 @@ if [[ -n "$ISO_SHA256" && "$ISO_SHA256" != "(not computed)" ]]; then
     BUILD_FINISHED_ON="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     BUILD_EPOCH_VAL="${BUILD_EPOCH:-}"
 
-    # Portage snapshot digest — hash the cached tarball from the monolith-distfiles volume.
-    # Gentoo does not publish a .sha256 sidecar; emerge-webrsync leaves the tarball on disk.
+    # Portage snapshot digest — emerge-webrsync extracts and discards the tarball,
+    # so we stream-download it at attestation time to compute its SHA-256.
+    # pipefail ensures curl failure propagates; empty/invalid hash is silently dropped.
     PORTAGE_SNAPSHOT_SHA256=""
-    for _snap in \
-        "/var/cache/distfiles/gentoo-${BUILD_EPOCH_VAL}.tar.xz" \
-        "/var/cache/distfiles/portage/snapshots/gentoo-${BUILD_EPOCH_VAL}.tar.xz" \
-        "/var/cache/distfiles/snapshots/gentoo-${BUILD_EPOCH_VAL}.tar.xz"; do
-        if [[ -f "$_snap" ]]; then
-            PORTAGE_SNAPSHOT_SHA256=$(sha256sum "$_snap" | awk '{print $1}')
-            break
+    if [[ -n "${BUILD_EPOCH_VAL}" ]]; then
+        _snap_url="https://distfiles.gentoo.org/snapshots/gentoo-${BUILD_EPOCH_VAL}.tar.xz"
+        log "  Fetching portage snapshot SHA-256 (streaming ${_snap_url})..."
+        if PORTAGE_SNAPSHOT_SHA256=$(
+            set -o pipefail
+            curl -fsSL --max-time 300 "${_snap_url}" 2>/dev/null \
+                | sha256sum | awk '{print $1}'
+        ) && [[ -n "${PORTAGE_SNAPSHOT_SHA256}" ]]; then
+            log "  Portage snapshot SHA-256: ${PORTAGE_SNAPSHOT_SHA256}"
+        else
+            PORTAGE_SNAPSHOT_SHA256=""
         fi
-    done
+    fi
 
     # Kernel source digest — SHA-512 is already in the Portage Manifest (GPG-signed).
     KERNEL_SHA512=$(python3 -c "
