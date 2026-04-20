@@ -391,17 +391,31 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
     if builder_info.get("attested"):
         b_epoch       = builder_info.get("epoch", "unknown")
         b_target      = builder_info.get("cross_target", "unknown")
-        b_digest      = builder_info.get("image_digest", "")
         b_pkg_count   = builder_info.get("package_count", "?")
         b_unmapped    = builder_info.get("unmapped_cpe_count", "?")
         b_sbom_status = builder_info.get("sbom_check", "unknown")
         b_cve_status  = builder_info.get("cve_check", "unknown")
 
+        # Pull provenance hashes from resolvedDependencies in the signed statement
+        resolved_deps = (
+            (provenance_data or {})
+            .get("predicate", {})
+            .get("buildDefinition", {})
+            .get("resolvedDependencies", [])
+        )
+        _by_name = {d.get("name", ""): d for d in resolved_deps}
+        b_stage3_digest   = _by_name.get("gentoo-stage3",         {}).get("digest", {}).get("sha256", "")
+        b_snapshot_digest = _by_name.get("gentoo-portage-snapshot",{}).get("digest", {}).get("sha256", "")
+        b_kernel_digest   = _by_name.get("linux-kernel-source",   {}).get("digest", {}).get("sha512", "")
+
         # Builder package table
         b_sbom_rows = []
-        for c in builder_sbom_data.get("components", []):
+        b_builder_comp_by_ref = {}
+        for c in (builder_sbom_data or {}).get("components", []):
             if c.get("type") == "file":
                 continue
+            if c.get("bom-ref"):
+                b_builder_comp_by_ref[c["bom-ref"]] = c
             cpe = c.get("cpe", "")
             b_sbom_rows.append(
                 f"<tr><td>{h(c.get('name',''))}</td>"
@@ -414,28 +428,59 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
             + "</tbody></table>"
         ) if b_sbom_rows else "<p class='unknown'>Builder SBOM not available.</p>"
 
-        # Builder CVE table
-        b_cve_rows = []
-        for m in (builder_cve_report.get("matches") or []):
-            art  = m.get("artifact", {})
-            vuln = m.get("vulnerability", {})
-            b_cve_rows.append(
-                f"<tr>"
-                f"<td>{h(art.get('name',''))}</td>"
-                f"<td>{h(art.get('version',''))}</td>"
-                f"<td>{h(vuln.get('id',''))}</td>"
-                f"<td>{h(vuln.get('severity',''))}</td>"
-                f"<td>{h(vuln.get('description','')[:120])}</td>"
-                f"</tr>"
+        # Builder packages without CPE
+        b_no_cpe_pkgs = [
+            (c.get("name", ""), c.get("version", ""))
+            for c in (builder_sbom_data or {}).get("components", [])
+            if c.get("type") != "file" and not c.get("cpe")
+        ]
+        if b_no_cpe_pkgs:
+            b_no_cpe_rows = "".join(
+                f"<tr><td>{h(n)}</td><td>{h(v)}</td></tr>"
+                for n, v in sorted(b_no_cpe_pkgs)
             )
+            b_no_cpe_section = (
+                f"<p><span class='revoked'>{len(b_no_cpe_pkgs)} package(s)</span> in the builder "
+                f"have no CPE mapping and were not submitted for CVE scanning.</p>"
+                "<table><thead><tr><th>Package</th><th>Version</th></tr></thead><tbody>"
+                + b_no_cpe_rows + "</tbody></table>"
+            )
+        else:
+            b_no_cpe_section = "<p class='pass'>All builder packages have CPE mappings.</p>"
+
+        # Builder CVE table (CycloneDX VEX format; fall back to Grype JSON for old builds)
+        b_cve_rows = []
+        if "vulnerabilities" in (builder_cve_report or {}):
+            for v in (builder_cve_report.get("vulnerabilities") or []):
+                vuln_id  = v.get("id", "")
+                ratings  = v.get("ratings") or [{}]
+                severity = ratings[0].get("severity", "")
+                desc     = (v.get("description") or "")[:120]
+                for aff in (v.get("affects") or []):
+                    ref  = aff.get("ref", "") if isinstance(aff, dict) else str(aff)
+                    comp = b_builder_comp_by_ref.get(ref, {})
+                    b_cve_rows.append(
+                        f"<tr><td>{h(comp.get('name', ref))}</td>"
+                        f"<td>{h(comp.get('version', ''))}</td>"
+                        f"<td>{h(vuln_id)}</td><td>{h(severity)}</td>"
+                        f"<td>{h(desc)}</td></tr>"
+                    )
+        else:
+            for m in (builder_cve_report or {}).get("matches") or []:
+                art  = m.get("artifact", {})
+                vuln = m.get("vulnerability", {})
+                b_cve_rows.append(
+                    f"<tr><td>{h(art.get('name',''))}</td>"
+                    f"<td>{h(art.get('version',''))}</td>"
+                    f"<td>{h(vuln.get('id',''))}</td><td>{h(vuln.get('severity',''))}</td>"
+                    f"<td>{h(vuln.get('description','')[:120])}</td></tr>"
+                )
         if b_cve_rows:
             b_cve_table = (
                 f"<p>{len(b_cve_rows)} finding(s)</p>"
                 "<table><thead><tr>"
                 "<th>Package</th><th>Version</th><th>CVE</th><th>Severity</th><th>Description</th>"
-                "</tr></thead><tbody>"
-                + "\n".join(b_cve_rows)
-                + "</tbody></table>"
+                "</tr></thead><tbody>" + "\n".join(b_cve_rows) + "</tbody></table>"
             )
         elif builder_cve_report:
             b_cve_table = "<p class='pass'>No CVE findings in builder environment.</p>"
@@ -448,12 +493,16 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
   <table style="width:auto">
     <tr><th>BUILD_EPOCH</th><td>{h(b_epoch)}</td></tr>
     <tr><th>Cross target</th><td>{h(b_target)}</td></tr>
-    <tr><th>Image digest</th><td class="hash">{h(b_digest) if b_digest else '(not recorded)'}</td></tr>
+    {"<tr><th>stage3 digest</th><td class='hash'>" + h(b_stage3_digest) + "</td></tr>" if b_stage3_digest else ""}
+    {"<tr><th>Portage snapshot SHA-256</th><td class='hash'>" + h(b_snapshot_digest) + "</td></tr>" if b_snapshot_digest else ""}
+    {"<tr><th>Kernel source SHA-512</th><td class='hash'>" + h(b_kernel_digest) + "</td></tr>" if b_kernel_digest else ""}
     <tr><th>Builder packages</th><td>{h(b_pkg_count)}</td></tr>
     <tr><th>Unmapped CPEs</th><td>{h(b_unmapped)}</td></tr>
     <tr><th>Builder SBOM</th><td>{status_badge(b_sbom_status)}</td></tr>
     <tr><th>Builder CVEs</th><td>{status_badge(b_cve_status)}</td></tr>
   </table>
+  <h2>Builder Packages Without CPE</h2>
+  {b_no_cpe_section}
   <h2>Builder Package Inventory</h2>
   {b_sbom_table}
   <h2>Builder CVE Findings</h2>

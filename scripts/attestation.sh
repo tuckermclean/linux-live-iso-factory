@@ -269,6 +269,7 @@ if [[ $SBOM_RC -eq 0 ]]; then
         --sysroot "${SYSROOT}" \
         --license-policy "${POLICY_FILE}" \
         --iso-sha256 "${ISO_SHA256}" \
+        --host-vdb "/var/db/pkg" \
         ${SYFT_VERSION:+--syft-version "${SYFT_VERSION}"} \
         ${GRYPE_VERSION:+--grype-version "${GRYPE_VERSION}"} \
         ${GRYPE_DB_BUILT:+--grype-db-built "${GRYPE_DB_BUILT}"} \

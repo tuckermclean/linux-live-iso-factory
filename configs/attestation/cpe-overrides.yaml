@@ -121,5 +121,11 @@ overrides:
   lynx:            "cpe:2.3:a:lynx:lynx:*:*:*:*:*:*:*:*"
   nethack:         "cpe:2.3:a:nethack:nethack:*:*:*:*:*:*:*:*"
 
+  # --- Bootloaders (embedded in ISO, propagated from builder to target SBOM) ---
+  # NVD uses gnu:grub2 for GRUB 2.x releases.
+  grub:            "cpe:2.3:a:gnu:grub2:*:*:*:*:*:*:*:*"
+  # NVD uses hpa:syslinux (H. Peter Anvin is the upstream author/maintainer).
+  syslinux:        "cpe:2.3:a:hpa:syslinux:*:*:*:*:*:*:*:*"
+
   # --- Libraries ---
   popt:            "cpe:2.3:a:rpm:popt:*:*:*:*:*:*:*:*"

@@ -503,6 +503,51 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
         else:
             print("[enrich-sbom] WARNING: No dependency entries built.", file=sys.stderr)
 
+    # ── Propagate builder components embedded in the ISO ─────────────────────
+    # musl is statically linked into every target binary; GRUB and syslinux/isolinux
+    # have binary bits embedded in the ISO boot area. None appear in the sysroot
+    # portage DB, but all need to be in the target SBOM for license and CVE coverage.
+    if args.host_vdb:
+        _PROPAGATE = [
+            ("cross-i486-linux-musl", "musl"),    # static libc
+            ("sys-boot",              "grub"),     # GRUB EFI/BIOS core
+            ("sys-boot",              "syslinux"), # isolinux.bin
+        ]
+        _existing_names = {c.get("name", "") for c in components}
+        _host_vdb = Path(args.host_vdb)
+        for _cat, _pkg in _PROPAGATE:
+            if _pkg in _existing_names:
+                continue
+            _matches = sorted(_host_vdb.glob(f"{_cat}/{_pkg}-*/"))
+            if not _matches:
+                continue
+            _pkg_dir = _matches[-1]
+            _pvr_file = _pkg_dir / "PVR"
+            _ver_raw = _pvr_file.read_text().strip() if _pvr_file.exists() else _pkg_dir.name
+            _ver_raw = re.sub(rf"^{re.escape(_pkg)}-", "", _ver_raw)
+            _version = strip_gentoo_suffixes(_ver_raw)
+            if not _version:
+                continue
+            _cpe_template = overrides.get(_pkg, "")
+            _comp: dict = {
+                "type": "library",
+                "name": _pkg,
+                "version": _version,
+                "bom-ref": f"propagated-{_pkg}-{_version}",
+                "supplier": {"name": "Gentoo"},
+                "properties": [
+                    {"name": "syft:package:foundBy",    "value": "host-vdb-propagate"},
+                    {"name": "syft:monolith:source",    "value": "builder"},
+                    {"name": "syft:package:type",       "value": "portage"},
+                ],
+            }
+            if _cpe_template:
+                _comp["cpe"] = apply_version_to_cpe(_cpe_template, _version)
+            else:
+                no_cpe_names.add(_pkg)
+            components.append(_comp)
+            print(f"[enrich-sbom] Propagated from builder: {_pkg} {_version}", file=sys.stderr)
+
     # ── Populate metadata.tools (CycloneDX 1.5+ dict form) ───────────────────
     # Normalise whatever Syft wrote (array in 1.4, dict in 1.5+) into the
     # canonical 1.6 shape: {"components": [...]}.
@@ -711,6 +756,13 @@ Output:
                         help="Grype vulnerability DB schema version")
     parser.add_argument("--grype-db-checksum",  metavar="SUM", default="",
                         help="Grype vulnerability DB checksum")
+    parser.add_argument(
+        "--host-vdb",
+        metavar="PATH",
+        default="",
+        help="Path to host Portage VDB (e.g. /var/db/pkg) for propagating builder components "
+             "that are embedded in the ISO but absent from the sysroot portage DB",
+    )
     args = parser.parse_args()
 
     # Load inputs

@@ -305,6 +305,11 @@ Exit codes:
     # files that Syft emits when file.metadata.selection=all is enabled. They have
     # no license fields and are not packages; license checking them is meaningless.
     components = [c for c in sbom.get("components", []) if c.get("type") != "file"]
+    # Include the top-level product component (metadata.component) — it has a declared
+    # license (MIT) and should appear in the report rather than being silently omitted.
+    meta_comp = sbom.get("metadata", {}).get("component")
+    if meta_comp and meta_comp.get("type") != "file":
+        components = [meta_comp] + components
 
     results = [check_component(c, policy) for c in components]
 
