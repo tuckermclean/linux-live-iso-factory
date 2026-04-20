@@ -410,19 +410,19 @@ if [[ $INCLUDE_BUILDER -eq 1 ]]; then
     # mounts that are overlaid at runtime and are NOT part of the image itself.
     # The portage-cataloger reads /var/db/pkg, which lives in the image layer.
     syft dir:/ \
-        --exclude '/proc/**' \
-        --exclude '/sys/**' \
-        --exclude '/dev/**' \
-        --exclude '/run/**' \
-        --exclude '/output/**' \
-        --exclude '/configs/**' \
-        --exclude '/scripts/**' \
-        --exclude '/rootfs/**' \
-        --exclude '/build/**' \
-        --exclude '/var/db/repos/**' \
-        --exclude '/var/cache/distfiles/**' \
-        --exclude '/var/log/portage/**' \
-        --exclude '/root/.cache/**' \
+        --exclude './proc/**' \
+        --exclude './sys/**' \
+        --exclude './dev/**' \
+        --exclude './run/**' \
+        --exclude './output/**' \
+        --exclude './configs/**' \
+        --exclude './scripts/**' \
+        --exclude './rootfs/**' \
+        --exclude './build/**' \
+        --exclude './var/db/repos/**' \
+        --exclude './var/cache/distfiles/**' \
+        --exclude './var/log/portage/**' \
+        --exclude './root/.cache/**' \
         --override-default-catalogers portage-cataloger \
         -o "cyclonedx-json=${BUILDER_SBOM_FILE}" \
         2>&1 || BUILDER_SBOM_RC=$?
