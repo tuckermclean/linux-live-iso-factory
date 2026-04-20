@@ -409,7 +409,7 @@ if [[ $INCLUDE_BUILDER -eq 1 ]]; then
     # Scan the builder image's own filesystem via dir:/, excluding all bind/volume
     # mounts that are overlaid at runtime and are NOT part of the image itself.
     # The portage-cataloger reads /var/db/pkg, which lives in the image layer.
-    SYFT_FILE_METADATA_SELECTION=all syft dir:/ \
+    syft dir:/ \
         --exclude '/proc/**' \
         --exclude '/sys/**' \
         --exclude '/dev/**' \
