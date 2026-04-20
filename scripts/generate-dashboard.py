@@ -18,6 +18,7 @@ import argparse
 import html
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -609,6 +610,7 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
 
 <table style="width:auto">
   <tr><th>Build Tag</th><td>{h(tag)}</td></tr>
+  <tr><th>Build Type</th><td>{"<span class='unknown'>CI build (master)</span>" if re.match(r"^\d{8}-[0-9a-f]{7}$", tag) else "<span class='pass'>Tagged release</span>"}</td></tr>
   <tr><th>Timestamp</th><td>{h(ts)}</td></tr>
   <tr><th>Packages</th><td>{h(pkg_count)}</td></tr>
   <tr><th>Unmapped CPEs</th><td>{h(unmapped)}</td></tr>

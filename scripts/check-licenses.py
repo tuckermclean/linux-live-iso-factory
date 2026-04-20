@@ -23,6 +23,7 @@ Exit codes:
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -311,11 +312,14 @@ Exit codes:
     n_fail = sum(1 for r in results if r["status"] == "fail")
     n_unknown = sum(1 for r in results if r["status"] == "unknown")
 
+    policy_sha256 = hashlib.sha256(Path(args.policy).read_bytes()).hexdigest()
+
     report = {
         "build_tag": sbom.get("metadata", {}).get("component", {}).get("version", "unknown"),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "sbom_path": args.sbom,
         "policy_path": args.policy,
+        "policy_sha256": policy_sha256,
         "summary": {
             "total": len(results),
             "pass": n_pass,
