@@ -451,14 +451,14 @@ print(sum(1 for c in d.get('components', []) if c.get('type') != 'file'))
         if [[ $BUILDER_SBOM_RC -eq 0 ]]; then
             BUILDER_SBOM_FILE="${BUILDER_ENRICHED_FILE}"
 
+            # Rename gap file BEFORE reading it — enrich-sbom.py writes cpe-gap-count.txt
+            [[ -f "${OUTPUT_DIR}/cpe-gap-count.txt" ]] && \
+                mv "${OUTPUT_DIR}/cpe-gap-count.txt" "${OUTPUT_DIR}/builder-cpe-gap-count.txt"
+
             BUILDER_UNMAPPED_CPE_COUNT=0
             if [[ -f "${OUTPUT_DIR}/builder-cpe-gap-count.txt" ]]; then
                 BUILDER_UNMAPPED_CPE_COUNT="$(cat "${OUTPUT_DIR}/builder-cpe-gap-count.txt" | tr -d '[:space:]')"
             fi
-
-            # Move the gap file produced by enrich-sbom.py to its builder-specific name
-            [[ -f "${OUTPUT_DIR}/cpe-gap-count.txt" ]] && \
-                mv "${OUTPUT_DIR}/cpe-gap-count.txt" "${OUTPUT_DIR}/builder-cpe-gap-count.txt"
         else
             fail "Builder CPE enrichment failed (code $BUILDER_SBOM_RC) — using raw builder SBOM"
             BUILDER_SBOM_FILE="${OUTPUT_DIR}/builder-sbom.cdx.json"
@@ -508,10 +508,18 @@ if [[ -n "$ISO_SHA256" && "$ISO_SHA256" != "(not computed)" ]]; then
     BUILD_FINISHED_ON="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     BUILD_EPOCH_VAL="${BUILD_EPOCH:-}"
 
-    # Portage snapshot digest — Gentoo publishes a .sha256 sidecar alongside each snapshot.
-    PORTAGE_SNAPSHOT_SHA256=$(curl -fsSL \
-        "https://distfiles.gentoo.org/snapshots/gentoo-${BUILD_EPOCH_VAL}.tar.xz.sha256" \
-        2>/dev/null | awk '{print $1}' || echo "")
+    # Portage snapshot digest — hash the cached tarball from the monolith-distfiles volume.
+    # Gentoo does not publish a .sha256 sidecar; emerge-webrsync leaves the tarball on disk.
+    PORTAGE_SNAPSHOT_SHA256=""
+    for _snap in \
+        "/var/cache/distfiles/gentoo-${BUILD_EPOCH_VAL}.tar.xz" \
+        "/var/cache/distfiles/portage/snapshots/gentoo-${BUILD_EPOCH_VAL}.tar.xz" \
+        "/var/cache/distfiles/snapshots/gentoo-${BUILD_EPOCH_VAL}.tar.xz"; do
+        if [[ -f "$_snap" ]]; then
+            PORTAGE_SNAPSHOT_SHA256=$(sha256sum "$_snap" | awk '{print $1}')
+            break
+        fi
+    done
 
     # Kernel source digest — SHA-512 is already in the Portage Manifest (GPG-signed).
     KERNEL_SHA512=$(python3 -c "
