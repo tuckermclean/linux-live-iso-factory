@@ -223,7 +223,7 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
     if base_url:
         base = base_url.rstrip("/")
         iso_url      = f"{base}/themonolith-{tag}.iso"
-        sbom_url     = f"{base}/attestation/{tag}/sbom-enriched.cdx.json"
+        sbom_url     = f"{base}/attestation/{tag}/bom.cdx.json"
         cve_url      = f"{base}/attestation/{tag}/cve-report.json"
         lic_url      = f"{base}/attestation/{tag}/license-report.json"
         unowned_url  = f"{base}/attestation/{tag}/unowned-report.json"
@@ -231,7 +231,7 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
             f"<tr><th>ISO Download</th><td><a href=\"{h(iso_url)}\">"
             f"themonolith-{h(tag)}.iso</a></td></tr>\n"
             f"  <tr><th>SBOM (CycloneDX)</th><td><a href=\"{h(sbom_url)}\">"
-            f"sbom-enriched.cdx.json</a></td></tr>\n"
+            f"bom.cdx.json</a></td></tr>\n"
             f"  <tr><th>CVE Report</th><td><a href=\"{h(cve_url)}\">cve-report.json</a></td></tr>\n"
             f"  <tr><th>License Report</th><td><a href=\"{h(lic_url)}\">license-report.json</a></td></tr>\n"
             f"  <tr><th>Unowned Report</th><td><a href=\"{h(unowned_url)}\">unowned-report.json</a></td></tr>"
@@ -244,10 +244,14 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
     cve_report      = load_json_optional(os.path.join(source_dir, "cve-report.json"))
     unowned_report  = load_json_optional(os.path.join(source_dir, "unowned-report.json"))
     provenance_data = load_json_optional(os.path.join(source_dir, "slsa-provenance.json"))
-    sbom_data = load_json_optional(os.path.join(source_dir, "sbom-enriched.cdx.json"))
+    sbom_data = load_json_optional(os.path.join(source_dir, "bom.cdx.json"))
+    if not sbom_data:
+        sbom_data = load_json_optional(os.path.join(source_dir, "sbom-enriched.cdx.json"))
     if not sbom_data:
         sbom_data = load_json_optional(os.path.join(source_dir, "sbom.cdx.json"))
-    builder_sbom_data = load_json_optional(os.path.join(source_dir, "builder-sbom-enriched.cdx.json"))
+    builder_sbom_data = load_json_optional(os.path.join(source_dir, "builder-bom.cdx.json"))
+    if not builder_sbom_data:
+        builder_sbom_data = load_json_optional(os.path.join(source_dir, "builder-sbom-enriched.cdx.json"))
     if not builder_sbom_data:
         builder_sbom_data = load_json_optional(os.path.join(source_dir, "builder-sbom.cdx.json"))
     builder_cve_report = load_json_optional(os.path.join(source_dir, "builder-cve-report.json"))

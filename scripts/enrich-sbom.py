@@ -515,10 +515,10 @@ def main():
 Examples:
   %(prog)s --sbom attestation/sbom.cdx.json \\
            --overrides config/cpe-overrides.yaml \\
-           --output attestation/sbom-enriched.cdx.json \\
+           --output attestation/bom.cdx.json \\
            --product-name themonolith \\
-           --build-tag 20260406-9a8504e \\
-           --git-sha 9a8504e \\
+           --build-tag YYYYMMDD-<sha> \\
+           --git-sha <sha> \\
            --arch x86_64 \\
            --sysroot /output/sysroot \\
            --license-policy config/license-policy.yaml

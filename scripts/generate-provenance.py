@@ -173,7 +173,7 @@ def main() -> int:
     # ── Byproducts: other attestation artifacts in the same output dir ───────
     attestation_dir = output_path.parent
     byproduct_specs = [
-        ("sbom-enriched.cdx.json",   "application/vnd.cyclonedx+json"),
+        ("bom.cdx.json",             "application/vnd.cyclonedx+json"),
         ("sbom.cdx.json",            "application/vnd.cyclonedx+json"),
         ("cve-report.json",          "application/json"),
         ("license-report.json",      "application/json"),

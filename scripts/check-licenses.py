@@ -272,7 +272,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --sbom attestation/sbom-enriched.cdx.json \\
+  %(prog)s --sbom attestation/bom.cdx.json \\
            --policy config/license-policy.yaml \\
            --output attestation/license-report.json
 

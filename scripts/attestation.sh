@@ -35,13 +35,13 @@
 # Output files (in output-dir):
 #   sbom.cdx.json              Raw Syft SBOM (CycloneDX — for pillars 2 and 3)
 #   sbom.syft.json             Raw Syft SBOM (native JSON — for pillar 4)
-#   sbom-enriched.cdx.json     SBOM with CPE overrides applied
+#   bom.cdx.json               SBOM with CPE overrides applied
 #   license-report.json        License compliance report
 #   cve-report.json            Grype CVE findings
 #   unowned-report.json        Files not owned by any Portage package
 #   cpe-gap-count.txt          Number of packages with no CPE
 #   builder-sbom.cdx.json      Builder image SBOM (Pillar 5, if --include-builder)
-#   builder-sbom-enriched.cdx.json  Builder SBOM with CPE overrides (Pillar 5)
+#   builder-bom.cdx.json       Builder SBOM with CPE overrides (Pillar 5)
 #   builder-cve-report.json    Builder Grype CVE findings (Pillar 5)
 #   builder-cpe-gap-count.txt  Builder packages with no CPE (Pillar 5)
 #   attestation-summary.json   Machine-readable summary of all pillar results
@@ -197,7 +197,7 @@ BUILDER_CVE_RC=0
 PROVENANCE_RC=0
 SBOM_FILE="${OUTPUT_DIR}/sbom.cdx.json"
 SYFT_JSON_FILE="${OUTPUT_DIR}/sbom.syft.json"
-ENRICHED_FILE="${OUTPUT_DIR}/sbom-enriched.cdx.json"
+ENRICHED_FILE="${OUTPUT_DIR}/bom.cdx.json"
 
 # ── Header ───────────────────────────────────────────────────────────────────
 log "========================================================"
@@ -371,7 +371,7 @@ BUILDER_PKG_COUNT=0
 BUILDER_UNMAPPED_CPE_COUNT=0
 BUILDER_CVE_FAILURES="[]"
 BUILDER_SBOM_FILE="${OUTPUT_DIR}/builder-sbom.cdx.json"
-BUILDER_ENRICHED_FILE="${OUTPUT_DIR}/builder-sbom-enriched.cdx.json"
+BUILDER_ENRICHED_FILE="${OUTPUT_DIR}/builder-bom.cdx.json"
 
 # Collect builder metadata from the environment (set by Dockerfile/docker run)
 BUILDER_EPOCH="${BUILD_EPOCH:-unknown}"
