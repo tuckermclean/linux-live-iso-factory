@@ -224,7 +224,7 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
         base = base_url.rstrip("/")
         iso_url      = f"{base}/themonolith-{tag}.iso"
         sbom_url     = f"{base}/attestation/{tag}/bom.cdx.json"
-        cve_url      = f"{base}/attestation/{tag}/cve-report.json"
+        cve_url      = f"{base}/attestation/{tag}/cve-report.cdx.json"
         lic_url      = f"{base}/attestation/{tag}/license-report.json"
         unowned_url  = f"{base}/attestation/{tag}/unowned-report.json"
         download_rows = (
@@ -232,7 +232,7 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
             f"themonolith-{h(tag)}.iso</a></td></tr>\n"
             f"  <tr><th>SBOM (CycloneDX)</th><td><a href=\"{h(sbom_url)}\">"
             f"bom.cdx.json</a></td></tr>\n"
-            f"  <tr><th>CVE Report</th><td><a href=\"{h(cve_url)}\">cve-report.json</a></td></tr>\n"
+            f"  <tr><th>CVE Report</th><td><a href=\"{h(cve_url)}\">cve-report.cdx.json</a></td></tr>\n"
             f"  <tr><th>License Report</th><td><a href=\"{h(lic_url)}\">license-report.json</a></td></tr>\n"
             f"  <tr><th>Unowned Report</th><td><a href=\"{h(unowned_url)}\">unowned-report.json</a></td></tr>"
         )
@@ -241,7 +241,9 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
 
     # Load detail reports if available
     license_report  = load_json_optional(os.path.join(source_dir, "license-report.json"))
-    cve_report      = load_json_optional(os.path.join(source_dir, "cve-report.json"))
+    cve_report      = load_json_optional(os.path.join(source_dir, "cve-report.cdx.json"))
+    if not cve_report:
+        cve_report  = load_json_optional(os.path.join(source_dir, "cve-report.json"))
     unowned_report  = load_json_optional(os.path.join(source_dir, "unowned-report.json"))
     provenance_data = load_json_optional(os.path.join(source_dir, "slsa-provenance.json"))
     sbom_data = load_json_optional(os.path.join(source_dir, "bom.cdx.json"))
@@ -254,7 +256,9 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
         builder_sbom_data = load_json_optional(os.path.join(source_dir, "builder-sbom-enriched.cdx.json"))
     if not builder_sbom_data:
         builder_sbom_data = load_json_optional(os.path.join(source_dir, "builder-sbom.cdx.json"))
-    builder_cve_report = load_json_optional(os.path.join(source_dir, "builder-cve-report.json"))
+    builder_cve_report = load_json_optional(os.path.join(source_dir, "builder-cve-report.cdx.json"))
+    if not builder_cve_report:
+        builder_cve_report = load_json_optional(os.path.join(source_dir, "builder-cve-report.json"))
     builder_info = summary.get("builder") or {}
 
     unowned_status = summary.get("unowned_check", "unknown")
@@ -323,19 +327,47 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
         lic_table = "<p class='unknown'>License report not available.</p>"
 
     # ── CVE detail table ──────────────────────────────────────────────────────
+    # Build bom-ref → component lookup for CycloneDX VEX format
+    comp_by_ref = {
+        c.get("bom-ref", ""): c
+        for c in (sbom_data or {}).get("components", [])
+        if c.get("bom-ref")
+    }
+
     cve_rows = []
-    for m in (cve_report.get("matches") or []):
-        art = m.get("artifact", {})
-        vuln = m.get("vulnerability", {})
-        cve_rows.append(
-            f"<tr>"
-            f"<td>{h(art.get('name',''))}</td>"
-            f"<td>{h(art.get('version',''))}</td>"
-            f"<td>{h(vuln.get('id',''))}</td>"
-            f"<td>{h(vuln.get('severity',''))}</td>"
-            f"<td>{h(vuln.get('description','')[:120])}</td>"
-            f"</tr>"
-        )
+    if "vulnerabilities" in (cve_report or {}):
+        # CycloneDX VEX format (current)
+        for v in (cve_report.get("vulnerabilities") or []):
+            vuln_id  = v.get("id", "")
+            ratings  = v.get("ratings") or [{}]
+            severity = ratings[0].get("severity", "")
+            desc     = (v.get("description") or "")[:120]
+            for aff in (v.get("affects") or []):
+                ref  = aff.get("ref", "") if isinstance(aff, dict) else str(aff)
+                comp = comp_by_ref.get(ref, {})
+                cve_rows.append(
+                    f"<tr>"
+                    f"<td>{h(comp.get('name', ref))}</td>"
+                    f"<td>{h(comp.get('version', ''))}</td>"
+                    f"<td>{h(vuln_id)}</td>"
+                    f"<td>{h(severity)}</td>"
+                    f"<td>{h(desc)}</td>"
+                    f"</tr>"
+                )
+    else:
+        # Grype proprietary format (old builds)
+        for m in (cve_report.get("matches") or []):
+            art  = m.get("artifact", {})
+            vuln = m.get("vulnerability", {})
+            cve_rows.append(
+                f"<tr>"
+                f"<td>{h(art.get('name',''))}</td>"
+                f"<td>{h(art.get('version',''))}</td>"
+                f"<td>{h(vuln.get('id',''))}</td>"
+                f"<td>{h(vuln.get('severity',''))}</td>"
+                f"<td>{h(vuln.get('description','')[:120])}</td>"
+                f"</tr>"
+            )
 
     cve_table = ""
     if cve_rows:

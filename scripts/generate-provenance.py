@@ -175,7 +175,7 @@ def main() -> int:
     byproduct_specs = [
         ("bom.cdx.json",             "application/vnd.cyclonedx+json"),
         ("sbom.cdx.json",            "application/vnd.cyclonedx+json"),
-        ("cve-report.json",          "application/json"),
+        ("cve-report.cdx.json",      "application/vnd.cyclonedx+json"),
         ("license-report.json",      "application/json"),
         ("unowned-report.json",      "application/json"),
         ("attestation-summary.json", "application/json"),

@@ -94,7 +94,7 @@ PYEOF
 echo ""
 echo "[check-cves] Running Grype against SBOM..."
 GRYPE_RC=0
-grype "sbom:${SBOM}" -o json --file "${OUTPUT}" 2>&1 || GRYPE_RC=$?
+grype "sbom:${SBOM}" -o cyclonedx-json --file "${OUTPUT}" 2>&1 || GRYPE_RC=$?
 
 if [[ $GRYPE_RC -ne 0 ]]; then
     echo "[check-cves] ERROR: grype exited with code $GRYPE_RC" >&2
@@ -102,36 +102,9 @@ if [[ $GRYPE_RC -ne 0 ]]; then
     exit "$GRYPE_RC"
 fi
 
-# Extract scanner + DB metadata from the Grype report.
-# Written to a sidecar read by attestation.sh (summary JSON) and
-# generate-dashboard.py (build page). This is the only place in the
-# pipeline where we know both the scanner version and the DB build date.
-META_FILE="${OUTPUT%.json}-meta.json"
-python3 - "$OUTPUT" "$META_FILE" <<'PYEOF'
-import json, sys
-try:
-    report = json.load(open(sys.argv[1]))
-    descriptor = report.get("descriptor", {})
-    db = descriptor.get("db", {})
-    meta = {
-        "scanner":           descriptor.get("name", "grype"),
-        "scanner_version":   descriptor.get("version", "unknown"),
-        "db_built":          db.get("built", "unknown"),
-        "db_schema_version": str(db.get("schemaVersion", "unknown")),
-        "db_checksum":       db.get("checksum", ""),
-    }
-    with open(sys.argv[2], "w") as f:
-        f.write(json.dumps(meta, indent=2) + "\n")
-    print(f"[check-cves] Scanner: {meta['scanner']} {meta['scanner_version']}, "
-          f"DB built: {meta['db_built']}")
-except Exception as e:
-    print(f"[check-cves] WARNING: could not extract scanner metadata: {e}", file=sys.stderr)
-PYEOF
-
-# Parse and summarize results
+# Parse and summarize results (CycloneDX VEX format)
 python3 - "$OUTPUT" <<'PYEOF'
 import json, sys
-from collections import defaultdict
 
 try:
     report = json.load(open(sys.argv[1]))
@@ -139,29 +112,20 @@ except Exception as e:
     print(f"[check-cves] ERROR: could not parse grype output: {e}", file=sys.stderr)
     sys.exit(1)
 
-matches = report.get("matches") or []
+vulns = report.get("vulnerabilities") or []
 
-if not matches:
+if not vulns:
     print("[check-cves] \033[0;32mPASS\033[0m: No CVEs found.")
     sys.exit(0)
 
-# Group by package
-by_pkg = defaultdict(list)
-for m in matches:
-    art  = m.get("artifact", {})
-    name = art.get("name", "unknown")
-    ver  = art.get("version", "?")
-    vuln = m.get("vulnerability", {})
-    cve  = vuln.get("id", "?")
-    sev  = vuln.get("severity", "Unknown")
-    by_pkg[f"{name}@{ver}"].append((cve, sev))
-
-print(f"\n[check-cves] \033[0;31mFAIL\033[0m: {len(matches)} CVE(s) found across {len(by_pkg)} package(s):\n")
-for pkg in sorted(by_pkg):
-    cves = by_pkg[pkg]
-    print(f"  {pkg}:")
-    for cve, sev in sorted(cves):
-        print(f"    {cve} ({sev})")
+total_affects = sum(len(v.get("affects") or []) for v in vulns)
+print(f"\n[check-cves] \033[0;31mFAIL\033[0m: {len(vulns)} CVE(s) found "
+      f"affecting {total_affects} component reference(s):\n")
+for v in sorted(vulns, key=lambda x: x.get("id", "")):
+    ratings = v.get("ratings") or [{}]
+    sev = ratings[0].get("severity", "Unknown")
+    n = len(v.get("affects") or [])
+    print(f"  {v.get('id','?')} ({sev}) — {n} component(s)")
 
 sys.exit(1)
 PYEOF

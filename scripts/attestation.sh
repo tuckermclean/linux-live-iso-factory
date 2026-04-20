@@ -37,12 +37,12 @@
 #   sbom.syft.json             Raw Syft SBOM (native JSON — for pillar 4)
 #   bom.cdx.json               SBOM with CPE overrides applied
 #   license-report.json        License compliance report
-#   cve-report.json            Grype CVE findings
+#   cve-report.cdx.json        Grype CVE findings (CycloneDX VEX BOM)
 #   unowned-report.json        Files not owned by any Portage package
 #   cpe-gap-count.txt          Number of packages with no CPE
 #   builder-sbom.cdx.json      Builder image SBOM (Pillar 5, if --include-builder)
 #   builder-bom.cdx.json       Builder SBOM with CPE overrides (Pillar 5)
-#   builder-cve-report.json    Builder Grype CVE findings (Pillar 5)
+#   builder-cve-report.cdx.json Builder Grype CVE findings (CycloneDX VEX BOM, Pillar 5)
 #   builder-cpe-gap-count.txt  Builder packages with no CPE (Pillar 5)
 #   attestation-summary.json   Machine-readable summary of all pillar results
 #
@@ -308,30 +308,31 @@ fi
 log "--- Pillar 3: CVE Check (Grype) ---"
 bash "${CVE_SCRIPT}" \
     --sbom "${SBOM_FILE}" \
-    --output "${OUTPUT_DIR}/cve-report.json" || CVE_RC=$?
+    --output "${OUTPUT_DIR}/cve-report.cdx.json" || CVE_RC=$?
 
-# Read scanner metadata written by check-cves.sh
-SCANNER_META='{}'
-if [[ -f "${OUTPUT_DIR}/cve-report-meta.json" ]]; then
-    SCANNER_META="$(cat "${OUTPUT_DIR}/cve-report-meta.json")"
-fi
-
-# Collect CVE failures for summary
+# Collect CVE failures for summary (CycloneDX VEX — join to SBOM for package names)
 CVE_FAILURES="[]"
-if [[ -f "${OUTPUT_DIR}/cve-report.json" ]]; then
+if [[ -f "${OUTPUT_DIR}/cve-report.cdx.json" ]]; then
     CVE_FAILURES=$(python3 -c "
-import json, sys
+import json
 from collections import defaultdict
 try:
-    r = json.load(open('${OUTPUT_DIR}/cve-report.json'))
-    matches = r.get('matches') or []
+    r = json.load(open('${OUTPUT_DIR}/cve-report.cdx.json'))
+    vulns = r.get('vulnerabilities') or []
+    try:
+        bom = json.load(open('${OUTPUT_DIR}/bom.cdx.json'))
+        comp_by_ref = {c.get('bom-ref',''): c for c in bom.get('components',[])}
+    except Exception:
+        comp_by_ref = {}
     by_pkg = defaultdict(list)
-    for m in matches:
-        art = m.get('artifact', {})
-        name = art.get('name', '?')
-        ver = art.get('version', '?')
-        cve = m.get('vulnerability', {}).get('id', '?')
-        by_pkg[f'{name}-{ver}'].append(cve)
+    for v in vulns:
+        cve = v.get('id', '?')
+        for aff in (v.get('affects') or []):
+            ref  = aff.get('ref', '') if isinstance(aff, dict) else str(aff)
+            comp = comp_by_ref.get(ref, {})
+            name = comp.get('name', ref)
+            ver  = comp.get('version', '?')
+            by_pkg[f'{name}-{ver}'].append(cve)
     fails = [f\"{pkg}: {', '.join(cves)}\" for pkg, cves in sorted(by_pkg.items())]
     print(json.dumps(fails))
 except Exception:
@@ -441,22 +442,29 @@ print(sum(1 for c in d.get('components', []) if c.get('type') != 'file'))
         log "--- Pillar 5: Builder CVE Check (Grype) ---"
         bash "${CVE_SCRIPT}" \
             --sbom    "${BUILDER_SBOM_FILE}" \
-            --output  "${OUTPUT_DIR}/builder-cve-report.json" || BUILDER_CVE_RC=$?
+            --output  "${OUTPUT_DIR}/builder-cve-report.cdx.json" || BUILDER_CVE_RC=$?
 
-        if [[ -f "${OUTPUT_DIR}/builder-cve-report.json" ]]; then
+        if [[ -f "${OUTPUT_DIR}/builder-cve-report.cdx.json" ]]; then
             BUILDER_CVE_FAILURES=$(python3 -c "
 import json
 from collections import defaultdict
 try:
-    r = json.load(open('${OUTPUT_DIR}/builder-cve-report.json'))
-    matches = r.get('matches') or []
+    r = json.load(open('${OUTPUT_DIR}/builder-cve-report.cdx.json'))
+    vulns = r.get('vulnerabilities') or []
+    try:
+        bom = json.load(open('${OUTPUT_DIR}/builder-bom.cdx.json'))
+        comp_by_ref = {c.get('bom-ref',''): c for c in bom.get('components',[])}
+    except Exception:
+        comp_by_ref = {}
     by_pkg = defaultdict(list)
-    for m in matches:
-        art = m.get('artifact', {})
-        name = art.get('name', '?')
-        ver  = art.get('version', '?')
-        cve  = m.get('vulnerability', {}).get('id', '?')
-        by_pkg[f'{name}-{ver}'].append(cve)
+    for v in vulns:
+        cve = v.get('id', '?')
+        for aff in (v.get('affects') or []):
+            ref  = aff.get('ref', '') if isinstance(aff, dict) else str(aff)
+            comp = comp_by_ref.get(ref, {})
+            name = comp.get('name', ref)
+            ver  = comp.get('version', '?')
+            by_pkg[f'{name}-{ver}'].append(cve)
     fails = [f\"{pkg}: {', '.join(cves)}\" for pkg, cves in sorted(by_pkg.items())]
     print(json.dumps(fails))
 except Exception:
@@ -524,12 +532,6 @@ python3 - <<PYEOF
 import json
 from pathlib import Path
 
-# Load scanner metadata written by check-cves.sh via the sidecar file
-try:
-    scanner_meta = json.loads("""${SCANNER_META}""")
-except Exception:
-    scanner_meta = {}
-
 summary = {
     "build_tag": "${BUILD_TAG}",
     "timestamp": "${TIMESTAMP}",
@@ -543,7 +545,6 @@ summary = {
     "unowned_count": ${UNOWNED_COUNT},
     "provenance_check": "${OVERALL_PROVENANCE_STATUS}",
     "overall": "${OVERALL_STATUS}",
-    "scanner_meta": scanner_meta,
     "cve_failures": ${CVE_FAILURES},
     "license_failures": ${LICENSE_FAILURES},
     "unowned_files": ${UNOWNED_FILES},
