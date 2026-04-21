@@ -102,6 +102,7 @@ def strip_gentoo_suffixes(version: str) -> str:
     """
     v = re.sub(r"-r\d+$", "", version)   # strip Gentoo revision
     v = re.sub(r"_p\d+$", "", v)         # strip upstream patch-level suffix
+    v = re.sub(r"_pre\d*$", "", v)       # strip Portage pre-release suffix (_pre1 → "")
     return v
 
 
@@ -532,7 +533,12 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
         for _cat, _pkg in _PROPAGATE:
             if _pkg in _existing_names:
                 continue
-            _matches = sorted(_host_vdb.glob(f"{_cat}/{_pkg}-*/"))
+            # Filter to dirs where the version field starts with a digit — this
+            # excludes sibling packages like grub-themes-gentoo that share the prefix.
+            _matches = sorted(
+                d for d in _host_vdb.glob(f"{_cat}/{_pkg}-*/")
+                if re.match(rf"{re.escape(_pkg)}-\d", d.name)
+            )
             if not _matches:
                 continue
             _pkg_dir = _matches[-1]
@@ -543,6 +549,8 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
             if not _version:
                 continue
             _cpe_template = overrides.get(_pkg, "")
+            _license_file = _pkg_dir / "LICENSE"
+            _license_raw = _license_file.read_text().strip() if _license_file.exists() else ""
             _comp: dict = {
                 "type": "library",
                 "name": _pkg,
@@ -555,6 +563,8 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
                     {"name": "syft:package:type",       "value": "portage"},
                 ],
             }
+            if _license_raw:
+                _comp["licenses"] = [{"expression": _license_raw}]
             if _cpe_template:
                 _comp["cpe"] = apply_version_to_cpe(_cpe_template, _version)
             else:

@@ -130,6 +130,16 @@ overrides:
   # --- Libraries ---
   popt:            "cpe:2.3:a:rpm:popt:*:*:*:*:*:*:*:*"
 
+  # --- System libraries (often present in builder; relevant CVE targets) ---
+  pam:             "cpe:2.3:a:linux-pam_project:linux-pam:*:*:*:*:*:*:*:*"
+  libgcrypt:       "cpe:2.3:a:gnupg:libgcrypt:*:*:*:*:*:*:*:*"
+  libcap:          "cpe:2.3:a:kernel:libcap:*:*:*:*:*:*:*:*"
+
+  # --- Build tools ---
+  bison:           "cpe:2.3:a:gnu:bison:*:*:*:*:*:*:*:*"
+  flex:            "cpe:2.3:a:westes:flex:*:*:*:*:*:*:*:*"
+  nasm:            "cpe:2.3:a:nasm:nasm:*:*:*:*:*:*:*:*"
+
   # --- Build toolchain (builder-only; important for CVE scanning of the build env) ---
   # gcc: bare_name of sys-devel/gcc. _p suffix stripped to upstream version.
   gcc:             "cpe:2.3:a:gnu:gcc:*:*:*:*:*:*:*:*"
