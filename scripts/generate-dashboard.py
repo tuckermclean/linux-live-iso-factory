@@ -142,7 +142,8 @@ def render_index(summaries: list) -> str:
         tag = s.get("build_tag", "unknown")
         ts = s.get("timestamp", "")[:10]  # date only
         pkg_count = s.get("package_count", "?")
-        unmapped = s.get("unmapped_cpe_count", "?")
+        unmapped  = s.get("unmapped_cpe_count", "?")
+        excluded  = s.get("excluded_cpe_count")
         lic = s.get("license_check", "unknown")
         cve = s.get("cve_check", "unknown")
         overall = s.get("overall", "unknown")
@@ -152,12 +153,16 @@ def render_index(summaries: list) -> str:
         prev_unmapped = summaries[i + 1].get("unmapped_cpe_count") if i + 1 < len(summaries) else None
         delta_cell = _cpe_delta_cell(unmapped, prev_unmapped)
 
+        # Show "X + Y excl." if exclusions are present, otherwise just the gap count
+        excl_suffix = f" <span title='excluded by policy'>+{h(excluded)} excl.</span>" if excluded else ""
+        unmapped_cell = f"{h(unmapped)}{excl_suffix}"
+
         rows.append(f"""
   <tr class="{rc}">
     <td><a href="builds/{h(tag)}.html">{h(tag)}</a></td>
     <td>{h(ts)}</td>
     <td>{h(pkg_count)}</td>
-    <td>{h(unmapped)}</td>
+    <td>{unmapped_cell}</td>
     {delta_cell}
     <td>{status_badge(lic)}</td>
     <td>{status_badge(cve)}</td>
@@ -261,6 +266,7 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
     builder_cve_report = load_json_optional(os.path.join(source_dir, "builder-cve-report.cdx.json"))
     if not builder_cve_report:
         builder_cve_report = load_json_optional(os.path.join(source_dir, "builder-cve-report.json"))
+    cpe_exclusions_data = load_json_optional(os.path.join(source_dir, "cpe-exclusions.json"))
     builder_info = summary.get("builder") or {}
 
     unowned_status = summary.get("unowned_check", "unknown")
@@ -510,10 +516,16 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
 </div>"""
 
     # ── Packages without CPE (unscanned by Grype) ────────────────────────────
+    # Exclude packages that are in the policy-excluded set (acct-group/*, virtual/*, etc.)
+    # so only genuine gaps are shown here.
+    excluded_names = {
+        e.get("name", "") for e in (cpe_exclusions_data or {}).get("exclusions", [])
+    }
     no_cpe_pkgs = [
         (c.get("name", ""), c.get("version", ""))
         for c in sbom_data.get("components", [])
         if c.get("type") != "file" and not c.get("cpe")
+        and c.get("name", "") not in excluded_names
     ]
     if no_cpe_pkgs:
         no_cpe_count = len(no_cpe_pkgs)
@@ -531,6 +543,29 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
         )
     else:
         no_cpe_section = "<p class='pass'>All packages have CPE mappings — full CVE coverage.</p>"
+
+    # ── Policy-excluded packages (informational, not gaps) ───────────────────
+    excl_entries = (cpe_exclusions_data or {}).get("exclusions", [])
+    if excl_entries:
+        excl_count = len(excl_entries)
+        excl_rows = "".join(
+            f"<tr><td>{h(e.get('name',''))}</td><td>{h(e.get('version',''))}</td>"
+            f"<td>{h(e.get('pattern',''))}</td><td>{h(e.get('justification',''))}</td></tr>"
+            for e in sorted(excl_entries, key=lambda x: x.get("name", ""))
+        )
+        excl_section = (
+            f"<details><summary><strong>Excluded from CVE Scanning by Policy"
+            f" ({excl_count} package(s))</strong></summary>"
+            f"<p>These packages match patterns in <code>cpe-exclusions.yaml</code> and are "
+            f"categorically excluded from CPE mapping. They have no NVD presence and are not "
+            f"attestation gaps.</p>"
+            "<table><thead><tr><th>Package</th><th>Version</th><th>Pattern</th>"
+            "<th>Justification</th></tr></thead><tbody>"
+            + excl_rows
+            + "</tbody></table></details>"
+        )
+    else:
+        excl_section = ""
 
     # ── Scanner metadata ──────────────────────────────────────────────────────
     # Primary: read from bom.cdx.json metadata.tools.components (current builds).
@@ -693,6 +728,7 @@ def render_build_page(summary: dict, source_dir: str, base_url: str = "") -> str
 <div class="section">
   <h2>Packages Without CPE (unscanned)</h2>
   {no_cpe_section}
+  {excl_section}
 </div>
 
 <div class="section">

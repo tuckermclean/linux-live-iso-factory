@@ -270,6 +270,7 @@ if [[ $SBOM_RC -eq 0 ]]; then
         --license-policy "${POLICY_FILE}" \
         --iso-sha256 "${ISO_SHA256}" \
         --host-vdb "/var/db/pkg" \
+        --cpe-exclusions "${SCRIPT_DIR}/../configs/attestation/cpe-exclusions.yaml" \
         ${SYFT_VERSION:+--syft-version "${SYFT_VERSION}"} \
         ${GRYPE_VERSION:+--grype-version "${GRYPE_VERSION}"} \
         ${GRYPE_DB_BUILT:+--grype-db-built "${GRYPE_DB_BUILT}"} \
@@ -302,10 +303,14 @@ else
     warn "Skipping CPE enrichment (Syft failed)"
 fi
 
-# Read CPE gap count (written by enrich-sbom.py)
+# Read CPE gap count (written by enrich-sbom.py) — genuine gaps only
 UNMAPPED_CPE_COUNT=0
 if [[ -f "${OUTPUT_DIR}/cpe-gap-count.txt" ]]; then
-    UNMAPPED_CPE_COUNT="$(cat "${OUTPUT_DIR}/cpe-gap-count.txt" | tr -d '[:space:]')"
+    UNMAPPED_CPE_COUNT="$(tr -d '[:space:]' < "${OUTPUT_DIR}/cpe-gap-count.txt")"
+fi
+EXCLUDED_CPE_COUNT=0
+if [[ -f "${OUTPUT_DIR}/cpe-exclusions-count.txt" ]]; then
+    EXCLUDED_CPE_COUNT="$(tr -d '[:space:]' < "${OUTPUT_DIR}/cpe-exclusions-count.txt")"
 fi
 
 # ── Pillar 2: License compliance ─────────────────────────────────────────────
@@ -393,6 +398,7 @@ fi
 # ── Pillar 5: Builder environment SBOM + CVE ─────────────────────────────────
 BUILDER_PKG_COUNT=0
 BUILDER_UNMAPPED_CPE_COUNT=0
+BUILDER_EXCLUDED_CPE_COUNT=0
 BUILDER_CVE_FAILURES="[]"
 BUILDER_SBOM_FILE="${OUTPUT_DIR}/builder-sbom.cdx.json"
 BUILDER_ENRICHED_FILE="${OUTPUT_DIR}/builder-bom.cdx.json"
@@ -447,18 +453,25 @@ print(sum(1 for c in d.get('components', []) if c.get('type') != 'file'))
             --git-sha   "${GITHUB_SHA:-}" \
             --repo-url  "${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}" \
             --license-policy "${POLICY_FILE}" \
+            --cpe-exclusions "${SCRIPT_DIR}/../configs/attestation/cpe-exclusions.yaml" \
             || BUILDER_SBOM_RC=$?
 
         if [[ $BUILDER_SBOM_RC -eq 0 ]]; then
             BUILDER_SBOM_FILE="${BUILDER_ENRICHED_FILE}"
 
-            # Rename gap file BEFORE reading it — enrich-sbom.py writes cpe-gap-count.txt
+            # Rename gap/exclusion files BEFORE reading — enrich-sbom.py writes to fixed names
             [[ -f "${OUTPUT_DIR}/cpe-gap-count.txt" ]] && \
                 mv "${OUTPUT_DIR}/cpe-gap-count.txt" "${OUTPUT_DIR}/builder-cpe-gap-count.txt"
+            [[ -f "${OUTPUT_DIR}/cpe-exclusions-count.txt" ]] && \
+                mv "${OUTPUT_DIR}/cpe-exclusions-count.txt" "${OUTPUT_DIR}/builder-cpe-exclusions-count.txt"
 
             BUILDER_UNMAPPED_CPE_COUNT=0
             if [[ -f "${OUTPUT_DIR}/builder-cpe-gap-count.txt" ]]; then
-                BUILDER_UNMAPPED_CPE_COUNT="$(cat "${OUTPUT_DIR}/builder-cpe-gap-count.txt" | tr -d '[:space:]')"
+                BUILDER_UNMAPPED_CPE_COUNT="$(tr -d '[:space:]' < "${OUTPUT_DIR}/builder-cpe-gap-count.txt")"
+            fi
+            BUILDER_EXCLUDED_CPE_COUNT=0
+            if [[ -f "${OUTPUT_DIR}/builder-cpe-exclusions-count.txt" ]]; then
+                BUILDER_EXCLUDED_CPE_COUNT="$(tr -d '[:space:]' < "${OUTPUT_DIR}/builder-cpe-exclusions-count.txt")"
             fi
         else
             fail "Builder CPE enrichment failed (code $BUILDER_SBOM_RC) — using raw builder SBOM"
@@ -598,6 +611,7 @@ summary = {
     "iso_sha256": "${ISO_SHA256}",
     "package_count": ${PKG_COUNT},
     "unmapped_cpe_count": ${UNMAPPED_CPE_COUNT},
+    "excluded_cpe_count": ${EXCLUDED_CPE_COUNT},
     "sbom_check": "${OVERALL_SBOM_STATUS}",
     "license_check": "${OVERALL_LICENSE_STATUS}",
     "cve_check": "${OVERALL_CVE_STATUS}",
@@ -615,6 +629,7 @@ summary = {
         "image_digest": "${BUILDER_DIGEST}",
         "package_count": ${BUILDER_PKG_COUNT},
         "unmapped_cpe_count": ${BUILDER_UNMAPPED_CPE_COUNT},
+        "excluded_cpe_count": ${BUILDER_EXCLUDED_CPE_COUNT},
         "sbom_check": "${OVERALL_BUILDER_SBOM_STATUS}",
         "cve_check": "${OVERALL_BUILDER_CVE_STATUS}",
         "cve_failures": ${BUILDER_CVE_FAILURES},

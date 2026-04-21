@@ -1,0 +1,41 @@
+# cpe-exclusions.yaml
+#
+# Portage package patterns categorically excluded from CPE mapping and CVE scanning.
+# These have no NVD presence — not oversights in cpe-overrides.yaml, but packages
+# that genuinely have no CVE exposure.
+#
+# To add entries: match on bare package name (no category prefix) or on the full
+# "category/name" form that Syft produces. Glob patterns (* ?) are supported.
+#
+# Justification values mirror CycloneDX VEX analysis.justification:
+#   component_not_present    — no binary code is installed; only metadata/config
+#
+# These exclusions are written to cpe-exclusions.json per build and surfaced on
+# the dashboard alongside the genuine CPE gap count.
+
+exclusions:
+  - pattern: "acct-group/*"
+    justification: "component_not_present"
+    detail: >
+      Portage acct-group/* packages create system groups at install time via
+      /etc/group entries. No binary code is installed and no NVD entry exists
+      for any of them.
+
+  - pattern: "acct-user/*"
+    justification: "component_not_present"
+    detail: >
+      Portage acct-user/* packages create system users at install time via
+      /etc/passwd entries. No binary code is installed and no NVD entry exists
+      for any of them.
+
+  - pattern: "virtual/*"
+    justification: "component_not_present"
+    detail: >
+      Portage virtual/* packages are dependency aliases that install no files.
+      They have no binary content and no NVD entries.
+
+  - pattern: "app-alternatives/*"
+    justification: "component_not_present"
+    detail: >
+      Portage app-alternatives/* packages manage /usr/bin alternative symlinks
+      (e.g. selecting awk, sh). No binary content, no NVD entry.

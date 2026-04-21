@@ -5,6 +5,13 @@
 #
 # Updated: 2026-04-19T20:52:29-00:00
 
+# Cross-toolchain pins — passed to crossdev to prevent live-ebuild (9999) selection.
+# Verify versions against the portage tree at BUILD_EPOCH before rebuilding the image.
+sys-libs/musl:1.2.5:0
+sys-devel/gcc:15.2.1_p20260214:15
+# linux-headers for the cross-target sysroot — must be <= the built kernel's major.minor.
+# Portage packages headers as major.minor; kernel 6.12.80 → headers 6.12.
+sys-kernel/linux-headers:6.12:0
 sys-kernel/monolith-kernel:6.12.80:0
 sys-apps/busybox:1.36.1-r4:0
 app-shells/bash:5.3_p9-r1:0

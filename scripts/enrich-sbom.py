@@ -787,6 +787,13 @@ Output:
         help="Path to host Portage VDB (e.g. /var/db/pkg) for propagating builder components "
              "that are embedded in the ISO but absent from the sysroot portage DB",
     )
+    parser.add_argument(
+        "--cpe-exclusions",
+        metavar="PATH",
+        default="",
+        help="YAML file declaring package patterns excluded from CPE/CVE scanning "
+             "(e.g. acct-group/*, virtual/*); excluded packages are not counted as gaps",
+    )
     args = parser.parse_args()
 
     # Load inputs
@@ -806,6 +813,10 @@ Output:
     else:
         overrides = load_overrides(args.overrides)
 
+    cpe_exclusions = []
+    if args.cpe_exclusions and Path(args.cpe_exclusions).exists():
+        cpe_exclusions = load_yaml_simple(args.cpe_exclusions).get("exclusions", [])
+
     with open(sbom_path) as f:
         sbom = json.load(f)
 
@@ -821,18 +832,40 @@ Output:
         file=sys.stderr,
     )
 
-    # Report gaps
-    if no_cpe_names:
+    # Split gaps into policy-excluded (informational) vs genuine (need attention)
+    import fnmatch as _fnmatch
+    excluded_gaps = []  # (name, version, rule)
+    genuine_gaps  = []  # (name, version)
+    for _name, _ver in no_cpe_names:
+        _rule = next(
+            (r for r in cpe_exclusions if _fnmatch.fnmatch(_name, r["pattern"])),
+            None,
+        )
+        if _rule:
+            excluded_gaps.append((_name, _ver, _rule))
+        else:
+            genuine_gaps.append((_name, _ver))
+
+    if genuine_gaps:
         print(
-            f"[enrich-sbom] CPE GAPS ({len(no_cpe_names)} packages with no CPE — "
+            f"[enrich-sbom] CPE GAPS ({len(genuine_gaps)} packages with no CPE — "
             "Grype cannot scan these):",
             file=sys.stderr,
         )
-        for name, version in sorted(no_cpe_names):
-            ver_str = f" ({version})" if version else ""
-            print(f"  - {name}{ver_str}", file=sys.stderr)
+        for _name, _ver in sorted(genuine_gaps):
+            _ver_str = f" ({_ver})" if _ver else ""
+            print(f"  - {_name}{_ver_str}", file=sys.stderr)
     else:
         print("[enrich-sbom] No CPE gaps — all packages have CPE mappings.", file=sys.stderr)
+
+    if excluded_gaps:
+        print(
+            f"[enrich-sbom] CPE EXCLUSIONS ({len(excluded_gaps)} packages excluded by policy — "
+            "not counted as gaps):",
+            file=sys.stderr,
+        )
+        for _name, _ver, _ in sorted(excluded_gaps):
+            print(f"  - {_name}", file=sys.stderr)
 
     # Write enriched SBOM
     out_path = Path(args.output)
@@ -843,11 +876,31 @@ Output:
 
     print(f"[enrich-sbom] Enriched SBOM written to {args.output}", file=sys.stderr)
 
-    # Return gap count for use by attestation.sh summary
-    # (written to a sidecar file that attestation.sh can read)
-    gap_file = out_path.parent / "cpe-gap-count.txt"
-    with open(gap_file, "w") as f:
-        f.write(str(len(no_cpe_names)) + "\n")
+    # Genuine gap count — used by attestation.sh for the summary
+    (out_path.parent / "cpe-gap-count.txt").write_text(str(len(genuine_gaps)) + "\n")
+
+    # Excluded count and structured report — read by attestation.sh and dashboard
+    (out_path.parent / "cpe-exclusions-count.txt").write_text(str(len(excluded_gaps)) + "\n")
+
+    from datetime import datetime, timezone as _tz
+    _excl_report = {
+        "build_tag": getattr(args, "build_tag", ""),
+        "timestamp": datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "excluded_count": len(excluded_gaps),
+        "genuine_gap_count": len(genuine_gaps),
+        "exclusions": [
+            {
+                "name": n, "version": v,
+                "pattern": r["pattern"],
+                "justification": r["justification"],
+                "detail": r.get("detail", ""),
+            }
+            for n, v, r in sorted(excluded_gaps)
+        ],
+    }
+    with open(out_path.parent / "cpe-exclusions.json", "w") as _f:
+        json.dump(_excl_report, _f, indent=2)
+        _f.write("\n")
 
     sys.exit(0)
 

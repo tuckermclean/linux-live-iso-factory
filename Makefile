@@ -24,6 +24,12 @@ BUILD_EPOCH := $(shell grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
 # Kernel version — read from versions.lock so targets stay in sync with the pin
 KERNEL_VERSION := $(shell grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2)
 
+# Cross-toolchain version pins — all passed to crossdev to prevent live-ebuild (9999) selection
+CROSS_MUSL_VER     := $(shell grep '^sys-libs/musl:' configs/portage/versions.lock | cut -d: -f2)
+CROSS_GCC_VER      := $(shell grep '^sys-devel/gcc:' configs/portage/versions.lock | cut -d: -f2)
+CROSS_BINUTILS_VER := $(shell grep '^sys-devel/binutils:' configs/portage/versions.lock | cut -d: -f2)
+CROSS_HEADERS_VER  := $(shell echo $(KERNEL_VERSION) | cut -d. -f1-2)
+
 # Build artifact version — override with BUILD_VERSION=x.y.z for CI
 BUILD_VERSION ?= $(BUILD_EPOCH)
 VERSION_ENV := -e BUILD_VERSION=$(BUILD_VERSION)
@@ -236,7 +242,15 @@ build-image: ensure-dirs
 				$(LOGS_MOUNT) \
 				$(BASE_TOOLS_IMAGE) \
 				bash -c 'set -e && \
-				    crossdev --target "$$CROSS_TARGET" --stable --gcc 15 --portage --verbose && \
+				    printf ">=cross-%s/musl-9999\n>=cross-%s/binutils-9999\n=cross-%s/gcc-14.4.9999\n" \
+				        "$$CROSS_TARGET" "$$CROSS_TARGET" "$$CROSS_TARGET" \
+				        > /etc/portage/package.mask/crossdev-no-live && \
+				    crossdev --target "$$CROSS_TARGET" --stable \
+				        --gcc     "$(CROSS_GCC_VER)" \
+				        --libc    "$(CROSS_MUSL_VER)" \
+				        --binutils "$(CROSS_BINUTILS_VER)" \
+				        --kernel  "$(CROSS_HEADERS_VER)" \
+				        --portage --verbose && \
 				    echo "cross-$$CROSS_TARGET/gcc static-libs" \
 				        > /etc/portage/package.use/cross-gcc-static && \
 				    emerge --update --newuse "cross-$$CROSS_TARGET/gcc" && \
