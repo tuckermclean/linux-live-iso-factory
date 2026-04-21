@@ -16,6 +16,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKERFILE="${SCRIPT_DIR}/../Dockerfile"
+CROSSDEV_LOCK="${SCRIPT_DIR}/../configs/portage/crossdev.lock"
+BUILDER_IMAGE="monolith-builder"
 
 # Docker Hub API endpoint for gentoo/stage3 tags
 DOCKERHUB_TAGS_URL="https://hub.docker.com/v2/repositories/gentoo/stage3/tags?page_size=100&ordering=last_updated&name=amd64-openrc-"
@@ -133,6 +135,80 @@ cmd_check() {
     echo "  Run '$0 update' to apply updates."
 }
 
+# Query portageq inside the builder image for the best version of a package atom.
+# Returns the bare version string (e.g. "1.2.5" or "15.2.1_p20260214"), or "" on failure.
+query_portage_version() {
+    local atom="$1"
+    local strip_prefix="$2"   # e.g. "sys-libs/musl-"
+    if ! docker image inspect "${BUILDER_IMAGE}" >/dev/null 2>&1; then
+        return 0
+    fi
+    docker run --rm "${BUILDER_IMAGE}" \
+        portageq best_version / "${atom}" 2>/dev/null \
+        | sed "s|${strip_prefix}||"
+}
+
+# Update crossdev.lock with best versions from the current builder image.
+# NOTE: the builder's portage tree reflects the previous BUILD_EPOCH (one epoch behind
+# the newly-set one). Versions advance on the next update-build-pins cycle.
+update_crossdev_lock() {
+    if ! docker image inspect "${BUILDER_IMAGE}" >/dev/null 2>&1; then
+        echo "  WARNING: ${BUILDER_IMAGE} image not found — skipping crossdev.lock update"
+        return 0
+    fi
+
+    echo "  Querying builder image for crossdev package versions..."
+
+    local musl_ver gcc_ver
+    musl_ver=$(query_portage_version "sys-libs/musl" "sys-libs/musl-")
+    # Prefer the same gcc major as the current pin; fall back to any gcc 15
+    local gcc_major
+    gcc_major=$(grep '^sys-devel/gcc:' "${CROSSDEV_LOCK}" 2>/dev/null | cut -d: -f3 || echo "15")
+    gcc_ver=$(query_portage_version "=sys-devel/gcc-${gcc_major}*" "sys-devel/gcc-")
+
+    if [[ -z "${musl_ver}" && -z "${gcc_ver}" ]]; then
+        echo "  WARNING: Could not query portage versions — crossdev.lock unchanged"
+        return 0
+    fi
+
+    local current_musl current_gcc
+    current_musl=$(grep '^sys-libs/musl:' "${CROSSDEV_LOCK}" | cut -d: -f2 || true)
+    current_gcc=$(grep '^sys-devel/gcc:' "${CROSSDEV_LOCK}" | cut -d: -f2 || true)
+
+    local changed=0
+    [[ -n "${musl_ver}" && "${musl_ver}" != "${current_musl}" ]] && changed=1
+    [[ -n "${gcc_ver}"  && "${gcc_ver}"  != "${current_gcc}"  ]] && changed=1
+
+    if [[ "${changed}" -eq 0 ]]; then
+        echo "  crossdev.lock already up to date"
+        return 0
+    fi
+
+    musl_ver="${musl_ver:-${current_musl}}"
+    gcc_ver="${gcc_ver:-${current_gcc}}"
+    local gcc_slot="${gcc_ver%%.*}"   # major version as slot
+
+    cat > "${CROSSDEV_LOCK}" << EOF
+# crossdev.lock — Cross-toolchain version pins
+#
+# NOT updated by make update-versions — updated by make update-build-pins.
+# Run make build-image after changes to rebuild the cross-toolchain.
+#
+# linux-headers version is derived from the kernel pin in versions.lock (major.minor).
+# binutils version is read from versions.lock (world package, kept in sync automatically).
+#
+# Format: category/package:version:slot  (same as versions.lock)
+
+sys-libs/musl:${musl_ver}:0
+sys-devel/gcc:${gcc_ver}:${gcc_slot}
+EOF
+
+    [[ -n "${musl_ver}" && "${musl_ver}" != "${current_musl}" ]] && \
+        echo "  sys-libs/musl: ${current_musl} → ${musl_ver}"
+    [[ -n "${gcc_ver}"  && "${gcc_ver}"  != "${current_gcc}"  ]] && \
+        echo "  sys-devel/gcc: ${current_gcc} → ${gcc_ver}"
+}
+
 # Command: update
 cmd_update() {
     echo "==> Updating Dockerfile build pins"
@@ -174,6 +250,8 @@ cmd_update() {
         sed -i "s/^ENV SOURCE_DATE_EPOCH=.*/ENV SOURCE_DATE_EPOCH=${new_source_epoch}/" "${DOCKERFILE}"
     fi
 
+    echo ""
+    update_crossdev_lock
     echo ""
     echo "==> Done. Run 'make build-image' to rebuild the factory with the new base."
 }

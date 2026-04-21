@@ -25,8 +25,11 @@ BUILD_EPOCH := $(shell grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
 KERNEL_VERSION := $(shell grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2)
 
 # Cross-toolchain version pins — all passed to crossdev to prevent live-ebuild (9999) selection
-CROSS_MUSL_VER     := $(shell grep '^sys-libs/musl:' configs/portage/versions.lock | cut -d: -f2)
-CROSS_GCC_VER      := $(shell grep '^sys-devel/gcc:' configs/portage/versions.lock | cut -d: -f2)
+# musl and gcc come from crossdev.lock (managed by update-build-pins, not update-versions)
+# binutils comes from versions.lock (it is a world package)
+# linux-headers version is derived from the kernel version (major.minor)
+CROSS_MUSL_VER     := $(shell grep '^sys-libs/musl:' configs/portage/crossdev.lock | cut -d: -f2)
+CROSS_GCC_VER      := $(shell grep '^sys-devel/gcc:' configs/portage/crossdev.lock | cut -d: -f2)
 CROSS_BINUTILS_VER := $(shell grep '^sys-devel/binutils:' configs/portage/versions.lock | cut -d: -f2)
 CROSS_HEADERS_VER  := $(shell echo $(KERNEL_VERSION) | cut -d. -f1-2)
 
@@ -230,12 +233,14 @@ build-image: ensure-dirs
 			-t $(BASE_TOOLS_IMAGE) \
 			. && \
 		BASE_HASH=$$(docker inspect --format='{{json .RootFS.Layers}}' $(BASE_TOOLS_IMAGE) | sha256sum | cut -d' ' -f1) && \
+		CROSSDEV_PINS="$$(cat configs/portage/crossdev.lock | sha256sum | cut -d' ' -f1):$(CROSS_BINUTILS_VER):$(CROSS_HEADERS_VER)" && \
+		COMBINED_HASH=$$(printf '%s:%s' "$$BASE_HASH" "$$CROSSDEV_PINS" | sha256sum | cut -d' ' -f1) && \
 		EXISTING_HASH=$$(docker inspect --format='{{index .Config.Labels "base-tools-hash"}}' $(IMAGE_NAME) 2>/dev/null || true) && \
-		if [ -n "$$EXISTING_HASH" ] && [ "$$BASE_HASH" = "$$EXISTING_HASH" ]; then \
-			echo "==> Image $(IMAGE_NAME) is up to date — base-tools unchanged, skipping crossdev"; \
+		if [ -n "$$EXISTING_HASH" ] && [ "$$COMBINED_HASH" = "$$EXISTING_HASH" ]; then \
+			echo "==> Image $(IMAGE_NAME) is up to date — base-tools and crossdev pins unchanged, skipping crossdev"; \
 		else \
 			[ -n "$$EXISTING_HASH" ] \
-				&& echo "==> Base-tools layers changed — rebuilding crossdev toolchain" \
+				&& echo "==> Base-tools or crossdev pins changed — rebuilding crossdev toolchain" \
 				|| echo "==> Building crossdev toolchain (logs → output/portage-logs/)"; \
 			docker rm -f $(CROSSDEV_CONTAINER) 2>/dev/null || true; \
 			docker run --name $(CROSSDEV_CONTAINER) \
@@ -262,7 +267,7 @@ build-image: ensure-dirs
 				--change 'ENV BUILD_DIR=/build' \
 				--change 'ENV CONFIGS_DIR=/configs' \
 				--change 'ENV OUTPUT_DIR=/output' \
-				--change "LABEL base-tools-hash=$$BASE_HASH" \
+				--change "LABEL base-tools-hash=$$COMBINED_HASH" \
 				$(CROSSDEV_CONTAINER) $(IMAGE_NAME) && \
 			docker rm $(CROSSDEV_CONTAINER) && \
 			echo "==> Image $(IMAGE_NAME) ready"; \
