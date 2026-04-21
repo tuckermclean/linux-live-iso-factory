@@ -307,19 +307,20 @@ jobs:
           aws s3 sync output/attestation/ \
             s3://${{ secrets.S3_BUCKET }}/attestation/$BUILD_VERSION/
 
-      - name: Generate and upload dashboard
+      - name: Generate and upload site
         if: always()
         run: |
-          # Sync ALL historical attestation records from S3 into a staging directory.
-          # Each build's artifacts live under attestation/<build_version>/ on S3, so
-          # syncing the parent gives us one subdirectory per build. generate-dashboard.py
-          # uses rglob("attestation-summary.json") to find them all.
+          # Sync ALL historical attestation records from S3 so generate-dashboard.py
+          # can build the complete builds-index.json from all-time summaries.
           mkdir -p output/all-attestation
           aws s3 sync s3://${{ secrets.S3_BUCKET }}/attestation/ output/all-attestation/
 
-          make dashboard ATTEST_INPUT_DIR=output/all-attestation BUILD_VERSION=$BUILD_VERSION \
-            DASHBOARD_BASE_URL=${{ secrets.DASHBOARD_BASE_URL }}
-          aws s3 sync output/dashboard/ s3://${{ secrets.S3_BUCKET }}/dashboard/
+          # Generate builds-index.json + copy static SPA assets into output/web/
+          make dashboard ATTEST_INPUT_DIR=output/all-attestation
+
+          # Deploy to S3 bucket root — index.html, styles.css, app/*.js, builds-index.json
+          aws s3 sync output/web/ s3://${{ secrets.S3_BUCKET }}/ \
+            --exclude "attestation/*" --exclude "packages/*" --exclude "builds/*"
 
       - name: Fail if attestation failed
         run: |

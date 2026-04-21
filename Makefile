@@ -189,7 +189,7 @@ help:
 
 # Ensure output directories exist
 ensure-dirs:
-	@mkdir -p $(PROJECT_DIR)/output/{packages,logs,sysroot,portage-logs,attestation,dashboard}
+	@mkdir -p $(PROJECT_DIR)/output/{packages,logs,sysroot,portage-logs,attestation,dashboard,web}
 	@mkdir -p $(PROJECT_DIR)/configs
 
 # Ensure persistent volumes exist
@@ -409,26 +409,22 @@ attest-builder: ensure-volume ensure-dirs
 		--include-builder \
 		--builder-digest $$(docker inspect --format='{{.Id}}' $(IMAGE_NAME) 2>/dev/null || echo unknown)
 
-# Generate static HTML attestation dashboard.
+# Generate the builds-index.json consumed by the SPA and copy static web assets.
 # ATTEST_INPUT_DIR: directory containing per-build attestation subdirectories.
 # Default is output/attestation (current build only — useful for local dev).
-# In CI, pass the directory that has been pre-populated with all historical
-# records synced from S3 (see .github/workflows/build.yml dashboard step).
-# DASHBOARD_BASE_URL: public base URL for artifact downloads (e.g. https://assets.example.com).
-# When set, build detail pages include download links for the ISO and SBOM.
-ATTEST_INPUT_DIR    ?= output/attestation
-DASHBOARD_BASE_URL  ?=
-
-_DASHBOARD_BASE_URL_ARG = $(if $(DASHBOARD_BASE_URL),--base-url $(DASHBOARD_BASE_URL),)
+# In CI this is pre-populated with all historical records synced from S3.
+ATTEST_INPUT_DIR ?= output/attestation
 
 dashboard: ensure-dirs
-	@echo "==> Generating attestation dashboard (input: $(ATTEST_INPUT_DIR))"
+	@echo "==> Generating builds index (input: $(ATTEST_INPUT_DIR))"
 	$(DOCKER_RUN_ATTEST) \
 		-v $(PROJECT_DIR)/$(ATTEST_INPUT_DIR):/attest-input:ro \
 		$(IMAGE_NAME) python3 /scripts/generate-dashboard.py \
 		--input-dir /attest-input \
-		--output-dir /output/dashboard \
-		$(_DASHBOARD_BASE_URL_ARG)
+		--output-dir /output/web
+	@echo "==> Copying static web assets"
+	@mkdir -p output/web
+	cp -r $(PROJECT_DIR)/web/. output/web/
 
 # Update the Grype vulnerability database (stored in monolith-grype-db volume)
 grype-db-update: ensure-volume
