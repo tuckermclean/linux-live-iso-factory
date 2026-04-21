@@ -57,8 +57,8 @@ async function renderDownloads(root) {
   ]);
   latestCard.appendChild(hashPanel);
 
-  fetchBuild(latest.tag).then(d => {
-    const sha = d.pageMeta?.["ISO SHA-256"];
+  fetchSummary(latest.tag).then(d => {
+    const sha = d?.iso_sha256;
     const el = document.getElementById("latest-hash");
     if (!el) return;
     el.className = "col gap-8";
@@ -103,9 +103,9 @@ async function renderDownloads(root) {
     ]);
     tbody.appendChild(tr);
 
-    // Lazy-load SHA-256 from attestation summary
-    fetchBuild(b.tag).then(d => {
-      const sha = d.pageMeta?.["ISO SHA-256"];
+    // Lazy-load SHA-256 from attestation summary only (avoids fetching large SBOMs)
+    fetchSummary(b.tag).then(d => {
+      const sha = d?.iso_sha256;
       shaCell.innerHTML = "";
       shaCell.appendChild(sha ? hashCell(sha, { short: true }) : h("span", { class: "mutedm" }, "—"));
     }).catch(() => {

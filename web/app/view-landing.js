@@ -24,7 +24,7 @@ async function renderLanding(root) {
     h("p", { class: "landing-body" },
       "Every binary statically linked. Every package pinned. Every blob vetted and documented. Clean SBOM, clean license inventory, clean build."),
     h("p", { class: "landing-cite" },
-      "Built by someone who ran a similar pipeline professionally at Intel scale. This is what "I know what's in my software" actually looks like."),
+      `Built by someone who ran a similar pipeline professionally at Intel scale. This is what \u201CI know what\u2019s in my software\u201D actually looks like.`),
     h("div", { class: "landing-ctas" }, [
       h("a", { href: "#/boot",      class: "cta-primary"   }, "▶ BOOT IN BROWSER"),
       h("a", { href: "#/downloads", class: "cta-secondary" }, "↓ DOWNLOAD ISO"),
@@ -98,11 +98,11 @@ async function renderLanding(root) {
   }
 }
 
-// Fetch the sha256 for a build tag asynchronously and render it inline.
+// Fetch just the SHA-256 for a build tag — lightweight summary fetch only.
 function buildSha(tag) {
   const cell = h("span", { class: "mono tiny mutedm" }, "…");
-  MonolithData.fetchBuild(tag).then(d => {
-    const sha = d.pageMeta?.["ISO SHA-256"];
+  MonolithData.fetchSummary(tag).then(s => {
+    const sha = s?.iso_sha256;
     if (sha) cell.replaceWith(MonolithUI.hashCell(sha, { short: true }));
     else cell.textContent = "—";
   }).catch(() => { cell.textContent = "—"; });

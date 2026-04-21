@@ -21,6 +21,12 @@ async function fetchBuildIndex() {
   return getJSON(`${S3_ROOT}/builds-index.json`);
 }
 
+// Lightweight fetch of just the attestation-summary.json for a build.
+// Use this when you only need metadata (SHA-256, status) without the full SBOMs.
+async function fetchSummary(tag) {
+  return getJSON(`${ATTEST_ROOT}/${tag}/attestation-summary.json`);
+}
+
 // Per-build: fetch the attestation JSONs + summary for metadata.
 async function fetchBuild(tag) {
   const base = `${ATTEST_ROOT}/${tag}`;
@@ -144,7 +150,7 @@ function normStatus(s) {
 
 window.MonolithData = {
   S3_ROOT, ATTEST_ROOT, ISO_BASE,
-  fetchBuildIndex, fetchBuild,
+  fetchBuildIndex, fetchBuild, fetchSummary,
   extractPackages, extractCPEs, extractVulns, extractLicense,
   licenseFamilyCounts, normStatus, pkgKeyFromComponent,
 };
