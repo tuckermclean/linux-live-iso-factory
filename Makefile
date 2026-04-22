@@ -250,6 +250,7 @@ build-image: ensure-dirs
 				    printf "=cross-%s/musl-9999\n>=cross-%s/binutils-9999\n=cross-%s/gcc-14.4.9999\n" \
 				        "$$CROSS_TARGET" "$$CROSS_TARGET" "$$CROSS_TARGET" \
 				        > /etc/portage/package.mask/crossdev-no-live && \
+				    mkdir -p /etc/portage/package.unmask && \
 				    printf "=cross-%s/musl-$(CROSS_MUSL_VER)*\n" "$$CROSS_TARGET" \
 				        > /etc/portage/package.unmask/crossdev-musl && \
 				    crossdev --target "$$CROSS_TARGET" --stable \
