@@ -8,5 +8,5 @@
 #
 # Format: category/package:version:slot  (same as versions.lock)
 
-sys-libs/musl:1.2.5:0
+sys-libs/musl:1.2.6:0
 sys-devel/gcc:15.2.1_p20260214:15

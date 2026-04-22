@@ -247,9 +247,11 @@ build-image: ensure-dirs
 				$(LOGS_MOUNT) \
 				$(BASE_TOOLS_IMAGE) \
 				bash -c 'set -e && \
-				    printf ">=cross-%s/musl-9999\n>=cross-%s/binutils-9999\n=cross-%s/gcc-14.4.9999\n" \
+				    printf "=cross-%s/musl-9999\n>=cross-%s/binutils-9999\n=cross-%s/gcc-14.4.9999\n" \
 				        "$$CROSS_TARGET" "$$CROSS_TARGET" "$$CROSS_TARGET" \
 				        > /etc/portage/package.mask/crossdev-no-live && \
+				    printf "=cross-%s/musl-$(CROSS_MUSL_VER)*\n" "$$CROSS_TARGET" \
+				        > /etc/portage/package.unmask/crossdev-musl && \
 				    crossdev --target "$$CROSS_TARGET" --stable \
 				        --gcc     "$(CROSS_GCC_VER)" \
 				        --libc    "$(CROSS_MUSL_VER)" \
