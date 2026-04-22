@@ -135,16 +135,16 @@ cmd_check() {
     echo "  Run '$0 update' to apply updates."
 }
 
-# Query portageq inside the builder image for the best version of a package atom.
-# Returns the bare version string (e.g. "1.2.5" or "15.2.1_p20260214"), or "" on failure.
+# Query the best available (visible) version of a package from the builder image's
+# portage tree. Works whether or not the package is installed on the builder system.
 query_portage_version() {
     local atom="$1"
-    local strip_prefix="$2"   # e.g. "sys-libs/musl-"
+    local strip_prefix="$2"
     if ! docker image inspect "${BUILDER_IMAGE}" >/dev/null 2>&1; then
         return 0
     fi
     docker run --rm "${BUILDER_IMAGE}" \
-        portageq best_version / "${atom}" 2>/dev/null \
+        portageq best_visible / "${atom}" 2>/dev/null \
         | sed "s|${strip_prefix}||"
 }
 
@@ -161,7 +161,6 @@ update_crossdev_lock() {
 
     local musl_ver gcc_ver
     musl_ver=$(query_portage_version "sys-libs/musl" "sys-libs/musl-")
-    # Prefer the same gcc major as the current pin; fall back to any gcc 15
     local gcc_major
     gcc_major=$(grep '^sys-devel/gcc:' "${CROSSDEV_LOCK}" 2>/dev/null | cut -d: -f3 || echo "15")
     gcc_ver=$(query_portage_version "=sys-devel/gcc-${gcc_major}*" "sys-devel/gcc-")
@@ -186,16 +185,16 @@ update_crossdev_lock() {
 
     musl_ver="${musl_ver:-${current_musl}}"
     gcc_ver="${gcc_ver:-${current_gcc}}"
-    local gcc_slot="${gcc_ver%%.*}"   # major version as slot
+    local gcc_slot="${gcc_ver%%.*}"
 
     cat > "${CROSSDEV_LOCK}" << EOF
 # crossdev.lock — Cross-toolchain version pins
 #
-# NOT updated by make update-versions — updated by make update-build-pins.
-# Run make build-image after changes to rebuild the cross-toolchain.
+# Updated by: make update-build-pins
+# Applied by: make build-image (passed to crossdev --libc / --gcc)
 #
-# linux-headers version is derived from the kernel pin in versions.lock (major.minor).
-# binutils version is read from versions.lock (world package, kept in sync automatically).
+# linux-headers derived from kernel pin in versions.lock (major.minor).
+# binutils read from versions.lock (world package, kept in sync automatically).
 #
 # Format: category/package:version:slot  (same as versions.lock)
 

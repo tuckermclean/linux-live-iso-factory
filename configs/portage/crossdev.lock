@@ -1,10 +1,10 @@
 # crossdev.lock — Cross-toolchain version pins
 #
-# NOT updated by make update-versions — edit manually when changing the toolchain,
-# then run make build-image to trigger a rebuild.
+# Updated by: make update-build-pins
+# Applied by: make build-image (passed to crossdev --libc / --gcc)
 #
-# linux-headers version is derived from the kernel pin in versions.lock (major.minor).
-# binutils version is read from versions.lock (world package, kept in sync automatically).
+# linux-headers derived from kernel pin in versions.lock (major.minor).
+# binutils read from versions.lock (world package, kept in sync automatically).
 #
 # Format: category/package:version:slot  (same as versions.lock)
 

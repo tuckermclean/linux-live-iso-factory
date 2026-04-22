@@ -73,6 +73,14 @@ jobs:
         env:
           REGISTRY: ${{ env.REGISTRY }}
 
+      - name: Upload crossdev logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crossdev-logs-${{ github.run_id }}
+          path: output/portage-logs/
+          retention-days: 7
+
       - name: Check if image changed
         id: check-hash
         run: |
