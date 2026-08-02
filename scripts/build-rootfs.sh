@@ -160,8 +160,19 @@ EOF
     head -c -128 /configs/themonolith.ans > "$ROOTFS_DIR/etc/motd"
     printf 'tHE m0n0LiTH %s\n\n' "${BUILD_VERSION:-unknown}" >> "$ROOTFS_DIR/etc/motd"
 
-    # /etc/issue - shown before login prompt on the TTY
-    printf 'The Monolith %s - \\l\n' "${BUILD_VERSION:-unknown}" > "$ROOTFS_DIR/etc/issue"
+    # /etc/issue - shown before login prompt on the TTY.
+    # Root has no password (see /etc/shadow above) — intentional for a live
+    # ISO, but called out explicitly here rather than left as a silent
+    # default, so nobody boots this on a network they don't control assuming
+    # it's protected.
+    cat > "$ROOTFS_DIR/etc/issue" << EOF
+The Monolith ${BUILD_VERSION:-unknown} - \\l
+
+Root login has NO PASSWORD. This is intentional for a live/rescue ISO.
+Set one with "passwd" before exposing this system, or its network
+services (e.g. dropbear SSH, if started), to an untrusted network.
+
+EOF
 
     # /etc/os-release - standard distro identification
     cat > "$ROOTFS_DIR/etc/os-release" << EOF
@@ -240,8 +251,13 @@ s0:2345:respawn:/sbin/agetty -n -l /bin/bash -L ttyS0 115200 vt100
 # Ctrl-Alt-Del
 ca:12345:ctrlaltdel:/sbin/reboot
 
-# Shutdown
+# Shutdown / reboot: sysvinit's halt, poweroff and reboot commands request a
+# switch to runlevel 0 (halt/poweroff) or 6 (reboot) respectively. Both
+# runlevels must run the same kill script — killall5, sync, unmount,
+# remount-ro — or a `reboot` (runlevel 6) skips it while `halt`/`poweroff`
+# (runlevel 0) don't.
 l0:0:wait:/etc/init.d/rcK
+l6:6:wait:/etc/init.d/rcK
 EOF
 
     # /etc/init.d/rcS - startup script
@@ -271,6 +287,22 @@ touch /run/utmp
 
 # Set hostname
 [ -f /etc/hostname ] && echo "$(cat /etc/hostname)" > /proc/sys/kernel/hostname
+
+# Rebuild the man page whatis database (mandoc.db).
+#
+# mandoc's pkg_postinst builds mandoc.db during the build container's
+# postinst hook, and extract-packages.sh regenerates it again — but
+# makewhatis stores absolute paths, and the build path
+# (/output/sysroot/usr/share/man) is never the live path (/usr/share/man).
+# The db baked into the image is therefore always stale on first boot, and
+# `man` prints "outdated mandoc.db ... run makewhatis /usr/share/man" even
+# though pages display correctly. Rebuilding it once here (rootfs is a
+# tmpfs overlay in RAM, and there are only a few dozen man pages, so this
+# is sub-second) fixes the path and silences the warning for the rest of
+# the session.
+if [ -d /usr/share/man ] && command -v makewhatis >/dev/null 2>&1; then
+    makewhatis /usr/share/man >/dev/null 2>&1
+fi
 
 # Run init scripts
 echo ""
@@ -515,6 +547,25 @@ create_squashfs() {
 }
 
 #
+# Audit for dynamically-linked binaries (informational — never fails the build)
+#
+run_static_audit() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local audit_script="${script_dir}/static-audit.sh"
+
+    if [ -x "$audit_script" ]; then
+        log_info "Running static-link audit..."
+        # Runs against ROOTFS_DIR (already squashed into the image by this
+        # point) and writes only to OUTPUT_DIR/reports — it cannot change
+        # the SquashFS bytes or the attestation digest chain.
+        "$audit_script" "$ROOTFS_DIR" || log_warn "static-audit.sh reported an issue (non-fatal)"
+    else
+        log_warn "static-audit.sh not found or not executable — skipping audit"
+    fi
+}
+
+#
 # Main
 #
 main() {
@@ -526,6 +577,7 @@ main() {
     install_sysroot
     create_etc_files
     create_squashfs
+    run_static_audit
 
     log_info "========================================"
     log_info "  Root Filesystem Build Complete!"

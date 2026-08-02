@@ -6,6 +6,16 @@
 #   check    - Show available updates vs pinned versions
 #   update   - Query portageq and write new versions.lock
 #   validate - Check versions.lock format
+#
+# Coverage note: this already tracks the kernel and BusyBox, not just
+# userland. Both are ordinary entries in configs/portage/world
+# (sys-kernel/monolith-kernel and sys-apps/busybox) and get a real
+# category/package:version:slot line in versions.lock like every other
+# world package — there is no separate "kernel/BusyBox version" mechanism
+# to build. Host-only build tools (syslinux, grub, mtools, ...) are
+# intentionally NOT covered here: they never enter the target sysroot, so
+# they are pinned indirectly via the Dockerfile's BUILD_EPOCH instead (see
+# the comment above the host-tools `emerge` block in the Dockerfile).
 
 set -e
 
