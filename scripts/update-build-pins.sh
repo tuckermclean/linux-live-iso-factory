@@ -147,16 +147,23 @@ query_portage_version() {
     if ! docker image inspect "${BUILDER_IMAGE}" >/dev/null 2>&1; then
         return 0
     fi
-    # The builder image's repos.conf points the 'monolith' overlay at
-    # /configs/overlay, so /configs MUST be mounted or portageq aborts with
-    # "nonexistent directory: '/configs/overlay'" (empty output, non-zero exit).
-    # Mirror the mount the rest of the build uses. The trailing '|| true' keeps
-    # a transient/partial query failure from aborting the whole bump under
-    # 'set -euo pipefail' — update_crossdev_lock() falls back to the current
-    # pins when this returns empty (see its empty-result guard).
-    docker run --rm -v "${CONFIGS_DIR}:/configs:ro" "${BUILDER_IMAGE}" \
-        portageq best_visible / "${atom}" 2>/dev/null \
-        | sed "s|${strip_prefix}||" || true
+    # Two things this docker run must get right:
+    #  1. Mount /configs — the builder image's repos.conf points the 'monolith'
+    #     overlay at /configs/overlay, so without it portageq aborts with
+    #     "nonexistent directory: '/configs/overlay'" (empty output, non-zero).
+    #  2. Constrain keywords to '*/* ~*' — the builder image ships '*/* **',
+    #     which accepts LIVE 9999 ebuilds, so an unconstrained best_visible pins
+    #     e.g. sys-devel/gcc-15.3.9999 (a non-reproducible live ebuild). '~*'
+    #     keeps testing across arches but drops live ebuilds (they need '**').
+    #     Mirrors update-versions.sh's setup_keywords().
+    # Trailing '|| true' keeps a transient/partial query failure from aborting
+    # the whole bump under 'set -euo pipefail' — update_crossdev_lock() falls
+    # back to the current pins when this returns empty (see its empty guard).
+    docker run --rm -v "${CONFIGS_DIR}:/configs" "${BUILDER_IMAGE}" sh -euc '
+        kw=/etc/portage/package.accept_keywords/crossdev-all
+        if [ -f "$kw" ] && grep -qF "**" "$kw"; then echo "*/* ~*" > "$kw"; fi
+        portageq best_visible / "$1"
+    ' _ "${atom}" 2>/dev/null | sed "s|${strip_prefix}||" || true
 }
 
 # Update crossdev.lock with best versions from the current builder image.
