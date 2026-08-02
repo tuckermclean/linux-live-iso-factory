@@ -114,6 +114,7 @@ jobs:
       startsWith(github.ref, 'refs/tags/')
     outputs:
       build-started-on: ${{ steps.set-version.outputs.build-started-on }}
+      build-version: ${{ steps.set-version.outputs.build-version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -126,10 +127,12 @@ jobs:
           echo "BUILD_STARTED_ON=$BUILD_STARTED_ON" >> "$GITHUB_ENV"
           echo "build-started-on=$BUILD_STARTED_ON" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "BUILD_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+            BUILD_VERSION="${GITHUB_REF#refs/tags/v}"
           else
-            echo "BUILD_VERSION=$BUILD_EPOCH-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+            BUILD_VERSION="$BUILD_EPOCH-$(git rev-parse --short HEAD)"
           fi
+          echo "BUILD_VERSION=$BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "build-version=$BUILD_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -208,9 +211,30 @@ jobs:
           aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
           echo "==> Uploaded themonolith-$BUILD_VERSION.iso and themonolith.iso (latest)"
 
+  # Actually boots the ISO in QEMU (BIOS, UEFI, and toram+eject) and proves it
+  # reaches a working shell before anything downstream treats this build as
+  # releasable. See .github/workflows/boot-test.yml and scripts/boot-test.py.
+  #
+  # NOTE for whoever lands the dedicated release workflow (tag-triggered
+  # signing/publish, tracked separately from this build.yml): GitHub Actions
+  # `needs:` cannot cross workflow files, so that workflow must add its own
+  # `uses: ./.github/workflows/boot-test.yml` call (see the comment at the
+  # top of boot-test.yml) and gate its publish step on
+  # `needs.boot-test.result == 'success'`, exactly as done below for
+  # `attestation`. Until that workflow exists, this job only gates
+  # `attestation`, which is the closest thing to a "release" step currently
+  # in this repo (it signs SLSA provenance and publishes the dashboard site).
+  boot-test:
+    needs: build
+    if: needs.build.result == 'success'
+    uses: ./.github/workflows/boot-test.yml
+    with:
+      build-version: ${{ needs.build.outputs.build-version }}
+    secrets: inherit
+
   attestation:
     runs-on: ubuntu-latest
-    needs: [build-image, build]
+    needs: [build-image, build, boot-test]
     permissions:
       contents: read
       packages: read
@@ -219,7 +243,8 @@ jobs:
     if: >
       always() &&
       needs.build-image.result == 'success' &&
-      needs.build.result == 'success'
+      needs.build.result == 'success' &&
+      needs.boot-test.result == 'success'
     steps:
       - uses: actions/checkout@v4
 
