@@ -24,6 +24,7 @@ on:
       - Dockerfile
       - configs/portage/crossdev.lock
       - configs/portage/versions.lock
+      - .github/workflows/regen-pins.yml
   workflow_dispatch:
 
 permissions:
@@ -50,20 +51,25 @@ jobs:
           set -euo pipefail
           EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
           IMG="gentoo/stage3:amd64-openrc-${EPOCH}"
-          echo "Querying $IMG for musl/gcc/binutils (keywords '*/* ~*')..."
+          echo "Syncing $IMG portage tree (emerge-webrsync --revert=$EPOCH), then querying..."
           docker pull -q "$IMG"
-          # stage3 is stock (no 'monolith' overlay), so no /configs mount needed.
-          # '*/* ~*' accepts testing across arches but drops live 9999 ebuilds.
-          query() {
-            docker run --rm "$IMG" sh -euc '
-              mkdir -p /etc/portage/package.accept_keywords
-              echo "*/* ~*" > /etc/portage/package.accept_keywords/zz-regen
-              portageq best_visible / "$1"
-            ' _ "$1" 2>/dev/null || true
-          }
-          MUSL=$(query "sys-libs/musl"      | sed "s|sys-libs/musl-||")
-          GCC=$(query "=sys-devel/gcc-15*"  | sed "s|sys-devel/gcc-||")
-          BINU=$(query "sys-devel/binutils" | sed "s|sys-devel/binutils-||")
+          # stage3 ships NO ebuild tree, so sync the pinned snapshot first (same
+          # mechanism the Dockerfile uses). One throwaway container: sync once,
+          # set '*/* ~*' keywords (testing, but NOT live 9999 ebuilds), query all
+          # three atoms. stage3 is stock (no 'monolith' overlay) → no /configs.
+          OUT=$(docker run --rm "$IMG" sh -euc '
+            emerge-webrsync --revert='"$EPOCH"' >/tmp/sync.log 2>&1 \
+              || { echo "SYNC_FAILED"; tail -n 8 /tmp/sync.log; exit 3; }
+            mkdir -p /etc/portage/package.accept_keywords
+            echo "*/* ~*" > /etc/portage/package.accept_keywords/zz-regen
+            printf "MUSL=%s\n" "$(portageq best_visible / sys-libs/musl 2>/dev/null)"
+            printf "GCC=%s\n"  "$(portageq best_visible / "=sys-devel/gcc-15*" 2>/dev/null)"
+            printf "BINU=%s\n" "$(portageq best_visible / sys-devel/binutils 2>/dev/null)"
+          ' || true)
+          echo "$OUT"
+          MUSL=$(printf '%s\n' "$OUT" | sed -n 's|^MUSL=sys-libs/musl-||p')
+          GCC=$(printf '%s\n'  "$OUT" | sed -n 's|^GCC=sys-devel/gcc-||p')
+          BINU=$(printf '%s\n' "$OUT" | sed -n 's|^BINU=sys-devel/binutils-||p')
           echo "resolved: musl=${MUSL:-<empty>} gcc=${GCC:-<empty>} binutils=${BINU:-<empty>}"
           # Fail loudly rather than write an empty/garbage pin.
           if [ -z "$MUSL" ] || [ -z "$GCC" ] || [ -z "$BINU" ]; then
