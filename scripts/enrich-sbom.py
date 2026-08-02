@@ -491,6 +491,21 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
             if has_iso_sha:
                 dist_ref["hashes"] = [{"alg": "SHA-256", "content": iso_sha}]
             ext_refs.append(dist_ref)
+        # A second "distribution" reference pointing at the GitHub Release asset.
+        # CycloneDX permits repeated externalReferences of the same type, so this
+        # sits alongside (not instead of) the S3 --distribution-url entry above —
+        # both point at byte-identical copies of the same ISO, so both carry the
+        # same --iso-sha256 hash. The URL is computed by the caller (scripts/
+        # attestation.sh) from the tag name BEFORE the release is created — GitHub
+        # release asset download URLs are deterministic
+        # (.../releases/download/<tag>/<asset-name>), so no ordering dependency
+        # on the actual `gh release create` call is introduced, and the digest
+        # this SBOM embeds is never at risk of drifting from the asset it names.
+        if args.release_url:
+            release_ref = {"type": "distribution", "url": args.release_url}
+            if has_iso_sha:
+                release_ref["hashes"] = [{"alg": "SHA-256", "content": iso_sha}]
+            ext_refs.append(release_ref)
         if ext_refs:
             component_entry["externalReferences"] = ext_refs
 
@@ -1086,6 +1101,16 @@ Output:
         help="URL where the ISO artifact is published (e.g. an s3:// URI) — "
              "written as a 'distribution' externalReference on metadata.component, "
              "with the ISO's SHA-256 attached via --iso-sha256",
+    )
+    parser.add_argument(
+        "--release-url",
+        metavar="URL",
+        default="",
+        help="URL of the GitHub Release asset for this ISO (e.g. "
+             "https://github.com/<owner>/<repo>/releases/download/<tag>/<name>.iso) — "
+             "written as a second 'distribution' externalReference alongside "
+             "--distribution-url, with the same --iso-sha256 hash attached. Only "
+             "set on tag builds; omitted (not fabricated) otherwise.",
     )
     parser.add_argument(
         "--world",

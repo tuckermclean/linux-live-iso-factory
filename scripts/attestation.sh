@@ -203,6 +203,23 @@ if [[ -n "${S3_BUCKET:-}" ]]; then
     ISO_DISTRIBUTION_URL="s3://${S3_BUCKET}/themonolith-${BUILD_TAG}.iso"
 fi
 
+# ── ISO GitHub Release URL (tag builds only) ─────────────────────────────────
+# GitHub Release asset download URLs are deterministic
+# (<server>/<owner>/<repo>/releases/download/<tag>/<asset-name>) — they don't
+# require the release to exist yet, only the tag name and the asset filename
+# both of which are already known at attestation time. This lets
+# .github/workflows/release.yml call build.yml (which runs this script) BEFORE
+# `gh release create` runs, and still have the enriched SBOM point at the exact
+# asset that release step will publish. GITHUB_REF/GITHUB_REPOSITORY/
+# GITHUB_SERVER_URL are already forwarded via Makefile's GITHUB_ENV; on
+# non-tag builds (push/schedule/dispatch) GITHUB_REF won't match refs/tags/v*
+# and this stays empty — no URL is ever fabricated.
+ISO_RELEASE_URL=""
+if [[ "${GITHUB_REF:-}" == refs/tags/v* && -n "${GITHUB_REPOSITORY:-}" ]]; then
+    RELEASE_TAG="${GITHUB_REF#refs/tags/}"
+    ISO_RELEASE_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/themonolith-${BUILD_TAG}.iso"
+fi
+
 # ── Pillar result tracking ────────────────────────────────────────────────────
 SBOM_RC=0
 ENRICH_RC=0
@@ -290,6 +307,7 @@ if [[ $SBOM_RC -eq 0 ]]; then
         --cpe-exclusions "${SCRIPT_DIR}/../configs/attestation/cpe-exclusions.yaml" \
         --run-id "${GITHUB_RUN_ID:-}" \
         --distribution-url "${ISO_DISTRIBUTION_URL}" \
+        --release-url "${ISO_RELEASE_URL}" \
         --world "${SCRIPT_DIR}/../configs/portage/world" \
         --portage-tree "/var/db/repos/gentoo" \
         --versions-lock "${SCRIPT_DIR}/../configs/portage/versions.lock" \
