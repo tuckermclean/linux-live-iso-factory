@@ -240,8 +240,13 @@ s0:2345:respawn:/sbin/agetty -n -l /bin/bash -L ttyS0 115200 vt100
 # Ctrl-Alt-Del
 ca:12345:ctrlaltdel:/sbin/reboot
 
-# Shutdown
+# Shutdown / reboot: sysvinit's halt, poweroff and reboot commands request a
+# switch to runlevel 0 (halt/poweroff) or 6 (reboot) respectively. Both
+# runlevels must run the same kill script — killall5, sync, unmount,
+# remount-ro — or a `reboot` (runlevel 6) skips it while `halt`/`poweroff`
+# (runlevel 0) don't.
 l0:0:wait:/etc/init.d/rcK
+l6:6:wait:/etc/init.d/rcK
 EOF
 
     # /etc/init.d/rcS - startup script
