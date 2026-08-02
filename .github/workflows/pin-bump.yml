@@ -1,0 +1,342 @@
+name: Pin Bump
+
+# Automates the master BUILD_EPOCH pin lever documented in docs/version-pinning.md.
+#
+# Weekly (and on manual dispatch) this:
+#   1. Checks whether a newer stage3/portage snapshot is available (host-side, no Docker).
+#      No-ops with a clear log line if already current.
+#   2. Bumps Dockerfile's BUILD_EPOCH + SOURCE_DATE_EPOCH.
+#   3. Builds the new-epoch builder image and regenerates configs/portage/crossdev.lock
+#      and configs/portage/versions.lock from it (the same two locks `make build-image`
+#      + `make update-versions` regenerate today, just automated end to end).
+#   4. Pushes a branch and dispatches the existing build.yml workflow on it to run the
+#      full build + attestation (SBOM/license/CVE) pipeline as validation — build.yml
+#      is reused as-is via `gh workflow run`, not duplicated here, so there is exactly
+#      ONE definition of "how to build and validate The Monolith". Any job build.yml
+#      gains later (e.g. a dedicated CVE-gate job, a boot-test job) is picked up
+#      automatically the next time this workflow runs — no changes needed here.
+#   5. Opens a PR with the pin diff + validation results. Never auto-merges — a human
+#      always approves, and a failed validation still produces a PR (labeled for
+#      fixup) rather than silently disappearing, matching this repo's own history of
+#      landing an epoch bump and then following up with "Fix musl build pins" commits.
+
+on:
+  schedule:
+    # Monday 06:00 UTC — three hours after build.yml's own weekly build (Mondays
+    # 03:00 UTC per .github/workflows/build.yml), so that run's image/portage cache
+    # is warm before this workflow starts touching the same pins.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      target_epoch:
+        description: >-
+          Force a specific BUILD_EPOCH (YYYYMMDD) instead of using the latest
+          available stage3+portage snapshot. Leave empty for normal behavior.
+        required: false
+        type: string
+
+concurrency:
+  group: pin-bump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  # Cheap, host-only gate. Determines whether there is anything to do at all before
+  # any Docker/image work happens.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      update_available: ${{ steps.gate.outputs.update_available }}
+      current_epoch: ${{ steps.gate.outputs.current_epoch }}
+      target_epoch: ${{ steps.gate.outputs.target_epoch }}
+      check_output: ${{ steps.gate.outputs.check_output }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate target_epoch input
+        if: github.event_name == 'workflow_dispatch' && inputs.target_epoch != ''
+        run: |
+          if ! [[ "${{ inputs.target_epoch }}" =~ ^[0-9]{8}$ ]]; then
+            echo "::error::target_epoch must be YYYYMMDD, got: ${{ inputs.target_epoch }}"
+            exit 1
+          fi
+
+      - name: Check build pins
+        id: gate
+        run: |
+          set -euo pipefail
+
+          CURRENT=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
+          echo "current_epoch=${CURRENT}" >> "$GITHUB_OUTPUT"
+
+          OUT="$(scripts/update-build-pins.sh check)"
+          echo "${OUT}"
+
+          {
+            echo "check_output<<PINBUMP_EOF"
+            echo "${OUT}"
+            echo "PINBUMP_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          FORCED="${{ inputs.target_epoch }}"
+          if [[ -n "${FORCED}" ]]; then
+            if [[ "${FORCED}" == "${CURRENT}" ]]; then
+              echo "==> Forced target epoch (${FORCED}) equals current epoch — no-op."
+              echo "update_available=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "==> Forced target epoch requested: ${CURRENT} -> ${FORCED}"
+              echo "update_available=true" >> "$GITHUB_OUTPUT"
+              echo "target_epoch=${FORCED}" >> "$GITHUB_OUTPUT"
+            fi
+          elif echo "${OUT}" | grep -q 'BUILD_EPOCH.*\*'; then
+            LATEST=$(echo "${OUT}" | grep 'BUILD_EPOCH' | awk '{print $3}')
+            echo "==> Update available: ${CURRENT} -> ${LATEST}"
+            echo "update_available=true" >> "$GITHUB_OUTPUT"
+            echo "target_epoch=${LATEST}" >> "$GITHUB_OUTPUT"
+          else
+            echo "==> Already up to date at ${CURRENT} — nothing to do."
+            echo "update_available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  bump-and-validate:
+    needs: check
+    if: needs.check.outputs.update_available == 'true'
+    runs-on: ubuntu-latest
+    # Budget: ~100min for the local crossdev image rebuild + lock regeneration,
+    # ~240min bounded wait for the dispatched build.yml validation run, plus
+    # slack. GitHub-hosted runners hard-cap a single job at 360 minutes
+    # regardless of this setting — see the "Wait for validation" step, which
+    # degrades to a "timed_out" PR status rather than being silently killed.
+    timeout-minutes: 355
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+      packages: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OLD_EPOCH: ${{ needs.check.outputs.current_epoch }}
+      NEW_EPOCH: ${{ needs.check.outputs.target_epoch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Ensure labels exist
+        run: |
+          gh label create "pin-bump" --color "0e8a16" \
+            --description "Automated BUILD_EPOCH pin bump" --force
+          gh label create "needs-fixup" --color "d93f0b" \
+            --description "Automated pin bump failed or could not complete validation" --force
+          gh label create "validated" --color "0e8a16" \
+            --description "Automated pin bump passed full build+CVE+boot validation" --force
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: make ensure-dirs
+
+      - name: Pull current-epoch builder image for cache
+        run: |
+          docker pull "${REGISTRY}/monolith-builder:latest" || true
+          docker tag "${REGISTRY}/monolith-builder:latest" monolith-builder || true
+          docker pull "${REGISTRY}/monolith-builder-base-tools:latest" || true
+          docker tag "${REGISTRY}/monolith-builder-base-tools:latest" monolith-builder-base-tools || true
+
+      - name: Create branch
+        run: git switch -c "pins/bump-${OLD_EPOCH}-${NEW_EPOCH}"
+
+      - name: Bump BUILD_EPOCH + SOURCE_DATE_EPOCH
+        run: scripts/update-build-pins.sh update "${NEW_EPOCH}" | tee /tmp/pin-bump-update.log
+
+      - name: Build new-epoch builder image (needed to regenerate locks)
+        id: build-image
+        run: |
+          if make build-image; then
+            echo "rc=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "rc=$?" >> "$GITHUB_OUTPUT"
+            echo "::warning::make build-image failed for epoch ${NEW_EPOCH} — locks will NOT be regenerated; opening PR for manual fixup, same as historical 'Fix musl build pins' follow-ups."
+          fi
+
+      - name: Regenerate versions.lock
+        id: update-versions
+        if: steps.build-image.outputs.rc == '0'
+        run: |
+          if make update-versions; then
+            echo "rc=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "rc=$?" >> "$GITHUB_OUTPUT"
+            echo "::warning::make update-versions failed for epoch ${NEW_EPOCH}."
+          fi
+
+      - name: Compute pin diff summary
+        id: diff
+        run: |
+          git add -A
+          git diff --cached --stat -- Dockerfile configs/portage/crossdev.lock configs/portage/versions.lock \
+            > /tmp/diffstat.txt || true
+          git diff --cached -- configs/portage/crossdev.lock > /tmp/crossdev.diff || true
+          git diff --cached -- configs/portage/versions.lock | head -200 > /tmp/versions.diff || true
+
+      - name: Commit and push
+        run: |
+          git commit -m "chore(pins): bump BUILD_EPOCH ${OLD_EPOCH} -> ${NEW_EPOCH}
+
+          Automated by .github/workflows/pin-bump.yml.
+          - Dockerfile: BUILD_EPOCH + SOURCE_DATE_EPOCH
+          - configs/portage/crossdev.lock: regenerated ($( [[ '${{ steps.build-image.outputs.rc }}' == '0' ]] && echo yes || echo 'SKIPPED - build-image failed' ))
+          - configs/portage/versions.lock: regenerated ($( [[ '${{ steps.update-versions.outputs.rc }}' == '0' ]] && echo yes || echo 'SKIPPED - see PR body' ))"
+          git push -u origin "pins/bump-${OLD_EPOCH}-${NEW_EPOCH}"
+
+      - name: Dispatch full build + validation workflow
+        id: dispatch
+        if: steps.build-image.outputs.rc == '0' && steps.update-versions.outputs.rc == '0'
+        run: |
+          set -euo pipefail
+          BRANCH="pins/bump-${OLD_EPOCH}-${NEW_EPOCH}"
+          BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run build.yml --ref "${BRANCH}"
+
+          echo "==> Waiting for the dispatched run to register..."
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list --workflow=build.yml --branch "${BRANCH}" \
+              --json databaseId,createdAt,event \
+              --jq "[.[] | select(.event==\"workflow_dispatch\" and .createdAt>=\"${BEFORE}\")] | sort_by(.createdAt) | last | .databaseId // empty")
+            [[ -n "${RUN_ID}" ]] && break
+            sleep 10
+          done
+
+          if [[ -z "${RUN_ID}" ]]; then
+            echo "::warning::Could not find the dispatched build.yml run — check the Actions tab manually."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "found=true"
+              echo "run_id=${RUN_ID}"
+              echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for validation run to complete
+        id: wait
+        if: steps.dispatch.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ steps.dispatch.outputs.run_id }}"
+          DEADLINE=$(( $(date +%s) + 240*60 ))
+          STATUS="in_progress"
+          CONCLUSION=""
+
+          while [[ "$(date +%s)" -lt "${DEADLINE}" ]]; do
+            STATUS=$(gh run view "${RUN_ID}" --json status --jq .status)
+            if [[ "${STATUS}" == "completed" ]]; then
+              CONCLUSION=$(gh run view "${RUN_ID}" --json conclusion --jq .conclusion)
+              break
+            fi
+            sleep 60
+          done
+
+          if [[ "${STATUS}" != "completed" ]]; then
+            echo "conclusion=timed_out" >> "$GITHUB_OUTPUT"
+          else
+            echo "conclusion=${CONCLUSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+          gh run view "${RUN_ID}" --json jobs \
+            --jq '.jobs[] | "- " + .name + ": " + .conclusion' \
+            > /tmp/job-results.txt || echo "(job list unavailable)" > /tmp/job-results.txt
+
+      - name: Assemble PR body
+        id: body
+        run: |
+          {
+            echo "## Pin check delta"
+            echo '```'
+            echo "${{ needs.check.outputs.check_output }}"
+            echo '```'
+            echo ""
+            echo "## Lock diff summary"
+            echo '```'
+            cat /tmp/diffstat.txt 2>/dev/null || echo "(no diff captured)"
+            echo '```'
+            echo ""
+            echo "<details><summary>configs/portage/crossdev.lock diff</summary>"
+            echo ""
+            echo '```diff'
+            cat /tmp/crossdev.diff 2>/dev/null
+            echo '```'
+            echo "</details>"
+            echo ""
+            echo "<details><summary>configs/portage/versions.lock diff (first 200 lines)</summary>"
+            echo ""
+            echo '```diff'
+            cat /tmp/versions.diff 2>/dev/null
+            echo '```'
+            echo "</details>"
+            echo ""
+            echo "## Validation"
+            if [[ "${{ steps.build-image.outputs.rc }}" != "0" ]]; then
+              echo "**BLOCKED** — \`make build-image\` failed at the new epoch (rc=${{ steps.build-image.outputs.rc }})."
+              echo "Locks were not regenerated. Full build+CVE+boot validation was NOT run."
+              echo "See the crossdev-logs-* artifact on this repo's Actions run, and this repo's own"
+              echo "history (\"Fix musl build pins\", \"Fix musl build pins 2\") for the shape of the fix."
+            elif [[ "${{ steps.update-versions.outputs.rc }}" != "0" ]]; then
+              echo "**BLOCKED** — \`make update-versions\` failed (rc=${{ steps.update-versions.outputs.rc }})."
+              echo "versions.lock was not regenerated. Full build+CVE+boot validation was NOT run."
+            elif [[ "${{ steps.dispatch.outputs.found }}" != "true" ]]; then
+              echo "**UNKNOWN** — locks regenerated, but the validation run (\`build.yml\` dispatched on this"
+              echo "branch) could not be located. Check the Actions tab manually before merging."
+            else
+              echo "Full pipeline (build + attestation, which includes the CVE gate — Pillar 3 of"
+              echo "\`scripts/attestation.sh\`) dispatched at: ${{ steps.dispatch.outputs.run_url }}"
+              echo ""
+              echo "Result: **${{ steps.wait.outputs.conclusion }}**"
+              echo ""
+              echo "Per-job results:"
+              cat /tmp/job-results.txt 2>/dev/null || echo "(unavailable)"
+              echo ""
+              if [[ "${{ steps.wait.outputs.conclusion }}" == "timed_out" ]]; then
+                echo "The run did not complete within this workflow's wait budget. It may still be"
+                echo "running — check the link above directly."
+              fi
+            fi
+            echo ""
+            echo "---"
+            echo "This PR was opened automatically by \`.github/workflows/pin-bump.yml\`."
+            echo "It is never auto-merged. See \`docs/version-pinning.md\` for the fixup loop if"
+            echo "validation failed."
+          } > /tmp/pr-body.md
+
+          LABEL="pin-bump"
+          if [[ "${{ steps.build-image.outputs.rc }}" != "0" || "${{ steps.update-versions.outputs.rc }}" != "0" ]]; then
+            LABEL="${LABEL},needs-fixup"
+          elif [[ "${{ steps.dispatch.outputs.found }}" == "true" && "${{ steps.wait.outputs.conclusion }}" == "success" ]]; then
+            LABEL="${LABEL},validated"
+          elif [[ "${{ steps.dispatch.outputs.found }}" == "true" ]]; then
+            LABEL="${LABEL},needs-fixup"
+          fi
+          echo "labels=${LABEL}" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR
+        run: |
+          gh pr create \
+            --title "chore(pins): bump BUILD_EPOCH ${OLD_EPOCH} -> ${NEW_EPOCH}" \
+            --body-file /tmp/pr-body.md \
+            --base master \
+            --head "pins/bump-${OLD_EPOCH}-${NEW_EPOCH}" \
+            --label "${{ steps.body.outputs.labels }}"
