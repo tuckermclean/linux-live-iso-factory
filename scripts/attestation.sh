@@ -186,6 +186,15 @@ elif [[ -n "$ISO" ]]; then
     warn "ISO not found at $ISO — SHA-256 skipped"
 fi
 
+# ── ISO distribution URL ─────────────────────────────────────────────────────
+# S3_BUCKET is forwarded from the GitHub Actions runner (see Makefile GITHUB_ENV
+# and .github/workflows/build.yml). Local dev without S3_BUCKET set simply omits
+# the distribution externalReference — enrich-sbom.py never fabricates a URL.
+ISO_DISTRIBUTION_URL=""
+if [[ -n "${S3_BUCKET:-}" ]]; then
+    ISO_DISTRIBUTION_URL="s3://${S3_BUCKET}/themonolith-${BUILD_TAG}.iso"
+fi
+
 # ── Pillar result tracking ────────────────────────────────────────────────────
 SBOM_RC=0
 ENRICH_RC=0
@@ -271,6 +280,14 @@ if [[ $SBOM_RC -eq 0 ]]; then
         --iso-sha256 "${ISO_SHA256}" \
         --host-vdb "/var/db/pkg" \
         --cpe-exclusions "${SCRIPT_DIR}/../configs/attestation/cpe-exclusions.yaml" \
+        --run-id "${GITHUB_RUN_ID:-}" \
+        --distribution-url "${ISO_DISTRIBUTION_URL}" \
+        --world "${SCRIPT_DIR}/../configs/portage/world" \
+        --portage-tree "/var/db/repos/gentoo" \
+        --versions-lock "${SCRIPT_DIR}/../configs/portage/versions.lock" \
+        --kernel-manifest "${SCRIPT_DIR}/../configs/overlay/sys-kernel/monolith-kernel/Manifest" \
+        --stage3-epoch "${BUILD_EPOCH:-}" \
+        --stage3-digest "${STAGE3_DIGEST:-}" \
         ${SYFT_VERSION:+--syft-version "${SYFT_VERSION}"} \
         ${GRYPE_VERSION:+--grype-version "${GRYPE_VERSION}"} \
         ${GRYPE_DB_BUILT:+--grype-db-built "${GRYPE_DB_BUILT}"} \
@@ -454,6 +471,8 @@ print(sum(1 for c in d.get('components', []) if c.get('type') != 'file'))
             --repo-url  "${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}" \
             --license-policy "${POLICY_FILE}" \
             --cpe-exclusions "${SCRIPT_DIR}/../configs/attestation/cpe-exclusions.yaml" \
+            --run-id "${GITHUB_RUN_ID:-}" \
+            --portage-tree "/var/db/repos/gentoo" \
             || BUILDER_SBOM_RC=$?
 
         if [[ $BUILDER_SBOM_RC -eq 0 ]]; then
