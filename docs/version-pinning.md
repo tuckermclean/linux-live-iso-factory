@@ -142,8 +142,15 @@ in-flight branches (a CVE-gate job and a boot-test job) — touching it now
 would create merge conflicts across three branches for no functional gain.
 `gh workflow run build.yml --ref <branch>` + polling achieves the same
 practical goal (exactly one build definition, reused as-is, always current)
-without touching the file at all. See "Remaining wiring" in the PR/task
-notes for the follow-up once those branches land.
+without touching the file at all.
+
+**Update:** `build.yml` now exposes `workflow_call` (added by the release
+workflow, `.github/workflows/release.yml` — see `docs/releasing.md`), so the
+ideal end state described above is now possible. `pin-bump.yml` has not
+been migrated to use it yet — it still dispatches-and-polls as described
+here. That migration is a reasonable follow-up but is out of scope for the
+release workflow that added the trigger; the dispatch-and-poll approach
+above remains correct and doesn't need to change urgently.
 
 ### Wait budget
 

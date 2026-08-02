@@ -1,10 +1,28 @@
 name: Build
 
+# NOTE on tag pushes: this workflow used to also trigger directly on `push:
+# tags: ['*']`. That's now handled by .github/workflows/release.yml instead,
+# which calls this workflow via `workflow_call` for tags matching `v*.*.*`.
+# Keeping a tag trigger here too would mean every release tag kicks off TWO
+# independent full builds (one direct, one via release.yml) racing to write
+# the same S3 keys and each producing its own attestation/SLSA signature for
+# what should be a single, unambiguous release artifact. `workflow_call`
+# makes this workflow reusable as a library — release.yml is the ONLY tag
+# entry point now; this file is the ONLY definition of how a build+attest
+# happens.
 on:
   push:
     branches: [master]
-    tags: ['*']
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      build-version:
+        description: >-
+          Resolved BUILD_VERSION for this run — the tag with its leading 'v'
+          stripped (tag builds) or '<epoch>-<short-sha>' (all other triggers).
+          Same value used for S3 object keys, the ISO filename, and
+          attestation-summary.json's build_tag.
+        value: ${{ jobs.build.outputs.build-version }}
   schedule:
     - cron: '0 3 * * 1'
 
@@ -239,15 +257,12 @@ jobs:
   # reaches a working shell before anything downstream treats this build as
   # releasable. See .github/workflows/boot-test.yml and scripts/boot-test.py.
   #
-  # NOTE for whoever lands the dedicated release workflow (tag-triggered
-  # signing/publish, tracked separately from this build.yml): GitHub Actions
-  # `needs:` cannot cross workflow files, so that workflow must add its own
-  # `uses: ./.github/workflows/boot-test.yml` call (see the comment at the
-  # top of boot-test.yml) and gate its publish step on
-  # `needs.boot-test.result == 'success'`, exactly as done below for
-  # `attestation`. Until that workflow exists, this job only gates
-  # `attestation`, which is the closest thing to a "release" step currently
-  # in this repo (it signs SLSA provenance and publishes the dashboard site).
+  # release.yml (tag-triggered publish) calls this ENTIRE workflow via
+  # `workflow_call` rather than depending on this job directly — GitHub
+  # Actions `needs:` cannot cross workflow files, and reusing the whole file
+  # (rather than just this job) means release.yml's gate on
+  # `needs.<this-call>.result == 'success'` already covers boot-test AND
+  # attestation AND the build itself failing, with zero duplicated logic.
   boot-test:
     needs: build
     if: needs.build.result == 'success'

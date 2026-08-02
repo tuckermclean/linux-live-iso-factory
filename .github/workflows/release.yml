@@ -1,0 +1,238 @@
+name: Release
+
+# Tag-triggered publish pipeline. Pushing a `vMAJOR.MINOR.PATCH` tag (e.g.
+# `v0.1.0`) is the ONLY thing that starts this workflow — see
+# docs/releasing.md for the operator steps and the versioning scheme.
+#
+# This workflow does NOT reimplement the build. It calls .github/workflows/
+# build.yml as a reusable workflow (`workflow_call`), so the build, the CVE
+# gate, license checks, unowned-files audit, SLSA provenance signing, S3
+# artifact upload, and dashboard regen all run through the SAME code path a
+# push-to-master or scheduled build uses. There is exactly one definition of
+# "how to build and attest The Monolith" (build.yml + scripts/attestation.sh
+# + Makefile); this file only adds what's specific to cutting a release:
+# gating publish on that whole pipeline succeeding (build -> boot-test ->
+# attestation, all internal to build.yml), then creating the GitHub Release
+# itself.
+#
+# Digest-chain invariant (SBOM top-level component SHA-256 == SLSA
+# attestation subject digest == ISO SHA-256) is established INSIDE the
+# reused build.yml run (scripts/attestation.sh computes the ISO's SHA-256
+# once, feeds it to both enrich-sbom.py and generate-provenance.py, and
+# actions/attest@v2 signs over the literal ISO file with that hash) — this
+# workflow never recomputes or re-derives that value, it only reads it back
+# (from attestation-summary.json) and independently re-hashes the downloaded
+# ISO as a tamper check before publishing. See docs/releasing.md for the
+# full trace.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Generous top-level permissions: this is the ceiling available to jobs in
+# this workflow AND to jobs inside build.yml when called below via
+# `secrets: inherit` / `uses:`. Individual jobs still only exercise what
+# they actually need (see each job's own `permissions:`).
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  # Runs the entire existing build+attest pipeline (changes -> build-image ->
+  # build -> boot-test -> attestation) unmodified. If ANY job in that chain
+  # fails — including the boot-test gate or the CVE/license/unowned-files
+  # gates inside the attestation job — this call's own result is "failure"
+  # and `publish` below never runs. A release that doesn't boot, or that
+  # fails the CVE policy, does not get published.
+  build:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+
+  publish:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Resolve version + previous tag
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          BUILD_VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "build-version=${BUILD_VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Nearest ancestor tag reachable from this tag's parent commit.
+          # Empty on the very first release (no prior tag reachable) —
+          # docs/releasing.md documents that v0.0.1 is the pre-release
+          # baseline and v0.1.0 is the first public release, so this SHOULD
+          # resolve to v0.0.1 for that first cut.
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
+          echo "prev-tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+          if [[ -n "${PREV_TAG}" ]]; then
+            echo "==> Version ${BUILD_VERSION} (tag ${TAG}), previous tag: ${PREV_TAG}"
+          else
+            echo "==> Version ${BUILD_VERSION} (tag ${TAG}), no previous tag found — full history"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Download release artifacts from S3
+        env:
+          BUILD_VERSION: ${{ steps.version.outputs.build-version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${BUILD_VERSION}.iso" \
+            "release-assets/themonolith-${BUILD_VERSION}.iso"
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/attestation/${BUILD_VERSION}/bom.cdx.json" \
+            "release-assets/bom.cdx.json"
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/attestation/${BUILD_VERSION}/attestation-summary.json" \
+            "attestation-summary.json"
+
+      - name: Verify digest-chain invariant before publishing
+        env:
+          BUILD_VERSION: ${{ steps.version.outputs.build-version }}
+        run: |
+          set -euo pipefail
+          # The build.yml run this workflow just gated on already established
+          # sha256(ISO) == SBOM metadata.component.hashes[0].content == SLSA
+          # subject digest, all from the SAME sha256sum computed once inside
+          # scripts/attestation.sh. This step doesn't re-derive that chain —
+          # it independently re-hashes the ISO we just downloaded and checks
+          # it against attestation-summary.json's recorded value, as a
+          # tamper/corruption check on the S3 round-trip, before that hash
+          # goes into the release notes and SHA256SUMS.
+          COMPUTED_SHA256=$(sha256sum "release-assets/themonolith-${BUILD_VERSION}.iso" | cut -d' ' -f1)
+          RECORDED_SHA256=$(python3 -c "import json; print(json.load(open('attestation-summary.json'))['iso_sha256'])")
+          echo "==> Computed:  ${COMPUTED_SHA256}"
+          echo "==> Recorded:  ${RECORDED_SHA256}"
+          if [[ "${COMPUTED_SHA256}" != "${RECORDED_SHA256}" ]]; then
+            echo "::error::ISO SHA-256 mismatch between the downloaded artifact and attestation-summary.json — refusing to publish a release whose digest chain doesn't hold."
+            exit 1
+          fi
+          SBOM_SHA256=$(python3 -c "import json; print(json.load(open('release-assets/bom.cdx.json'))['metadata']['component']['hashes'][0]['content'])")
+          echo "==> SBOM component hash: ${SBOM_SHA256}"
+          if [[ "${SBOM_SHA256}" != "${RECORDED_SHA256}" ]]; then
+            echo "::error::SBOM metadata.component hash does not match attestation-summary.json — refusing to publish."
+            exit 1
+          fi
+          echo "iso-sha256=${COMPUTED_SHA256}" >> "$GITHUB_OUTPUT"
+        id: digest
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd release-assets
+          sha256sum *.iso bom.cdx.json > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Read kernel + BusyBox versions
+        id: pkgversions
+        run: |
+          KERNEL_VERSION=$(grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2)
+          BUSYBOX_VERSION=$(grep '^sys-apps/busybox:' configs/portage/versions.lock | cut -d: -f2)
+          echo "kernel=${KERNEL_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "busybox=${BUSYBOX_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog since previous tag
+        id: changelog
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PREV_TAG: ${{ steps.version.outputs.prev-tag }}
+        run: |
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            if [[ -n "${PREV_TAG}" ]]; then
+              git log --no-merges --pretty=format:'- %s (%h)' "${PREV_TAG}..${TAG}"
+            else
+              echo "- Initial release."
+            fi
+            echo ""
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Assemble release notes
+        id: notes
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          BUILD_VERSION: ${{ steps.version.outputs.build-version }}
+          PREV_TAG: ${{ steps.version.outputs.prev-tag }}
+          ISO_SHA256: ${{ steps.digest.outputs.iso-sha256 }}
+          KERNEL_VERSION: ${{ steps.pkgversions.outputs.kernel }}
+          BUSYBOX_VERSION: ${{ steps.pkgversions.outputs.busybox }}
+          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
+        run: |
+          {
+            echo "## The Monolith ${TAG}"
+            echo ""
+            echo "Kernel \`${KERNEL_VERSION}\` · BusyBox \`${BUSYBOX_VERSION}\` · musl / Gentoo crossdev, i486 target"
+            echo ""
+            echo "### Verify"
+            echo ""
+            echo '```bash'
+            echo "gh attestation verify themonolith-${BUILD_VERSION}.iso --owner tuckermclean"
+            echo '```'
+            echo ""
+            echo "ISO SHA-256:"
+            echo ""
+            echo '```'
+            echo "${ISO_SHA256}"
+            echo '```'
+            echo ""
+            echo "This is the same digest recorded in the SLSA provenance subject and in \`bom.cdx.json\`'s \`metadata.component.hashes[0]\` — SBOM, SLSA attestation subject, and \`sha256sum\` on the file you download are all the same value by construction (see docs/releasing.md)."
+            echo ""
+            echo "### Dashboard"
+            echo ""
+            echo "Full build detail, per-package CVE/license status, and comparison against the previous build:"
+            echo "https://${{ secrets.S3_BUCKET }}.s3.amazonaws.com/#/build/${BUILD_VERSION}"
+            echo ""
+            echo "### Changelog"
+            if [[ -n "${PREV_TAG}" ]]; then
+              echo ""
+              echo "Since \`${PREV_TAG}\`:"
+            fi
+            echo ""
+            echo "${CHANGELOG}"
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "${TAG}" \
+            --title "The Monolith ${TAG}" \
+            --notes-file release-notes.md \
+            release-assets/themonolith-*.iso \
+            release-assets/SHA256SUMS \
+            release-assets/bom.cdx.json
+
+      - name: Upload SHA256SUMS to S3 (mirrors attestation/<version>/ layout)
+        env:
+          BUILD_VERSION: ${{ steps.version.outputs.build-version }}
+        run: |
+          aws s3 cp release-assets/SHA256SUMS \
+            "s3://${{ secrets.S3_BUCKET }}/attestation/${BUILD_VERSION}/SHA256SUMS"
