@@ -24,7 +24,6 @@ on:
       - Dockerfile
       - configs/portage/crossdev.lock
       - configs/portage/versions.lock
-      - .github/workflows/regen-pins.yml
   workflow_dispatch:
 
 permissions:
@@ -127,6 +126,12 @@ jobs:
 
       - name: Rebuild toolchain image against the pinned epoch
         run: make build-image
+
+      - name: Publish the rebuilt toolchain image to GHCR
+        # Don't throw away the ~50min crossdev build: push it so build.yml's
+        # build-image job (and the next regen) reuse it as cache instead of
+        # rebuilding the toolchain from scratch.
+        run: make push-image
 
       - name: Upload crossdev logs on failure
         if: failure()
