@@ -63,6 +63,11 @@ async function renderIndex(root) {
     pillarRow("SBOM", "PASS"),
     pillarRow("License policy", latest.licenses),
     pillarRow("CVE scan",       latest.cves),
+    h("div", { class: "mutedm tiny mono", style: { paddingLeft: "0", marginTop: "-4px", marginBottom: "4px" } },
+      `${latest.cveScanner || "grype"} ${latest.cveScannerVer || ""} · DB ${latest.cveDbBuilt || "unknown"} · ${latest.cveScanned ?? "?"} scanned / ${latest.cveUnscanned ?? "?"} unscanned`),
+    latest.cveDbAgeWarning ? h("div", { class: "callout warn", style: { padding: "6px 8px", marginBottom: "4px" } }, [
+      h("div", { class: "glyph" }, "!"), h("div", { class: "tiny" }, latest.cveDbAgeWarning),
+    ]) : null,
     pillarRow("Unowned files",  latest.unowned),
     h("div", { class: "row between", style: { paddingTop: "6px" } }, [
       h("span", { class: "label mutedm" }, "CPE delta"),
@@ -220,7 +225,7 @@ async function renderIndex(root) {
         h("td", { class: "num" }, [String(b.unmappedCPEs), b.excludedCPEs ? h("span", { class: "mutedm tiny" }, ` +${b.excludedCPEs}`) : null]),
         h("td", { class: "num" }, deltaCell(b.cpeDelta)),
         h("td", {}, statusChip(b.licenses)),
-        h("td", {}, statusChip(b.cves)),
+        h("td", { title: `${b.cveScanner || "grype"} ${b.cveScannerVer || ""} · DB built ${b.cveDbBuilt || "unknown"} · ${b.cveScanned ?? "?"} scanned, ${b.cveUnscanned ?? "?"} unscanned, ${b.cveTotalFindings ?? 0} raw findings` }, statusChip(b.cves)),
         h("td", {}, statusChip(b.unowned)),
         h("td", {}, statusChip(b.overall)),
         h("td", { class: "mono mutedm tiny", style: { textAlign: "right" }}, "→"),

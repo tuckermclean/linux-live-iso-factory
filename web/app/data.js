@@ -30,13 +30,15 @@ async function fetchSummary(tag) {
 // Per-build: fetch the attestation JSONs + summary for metadata.
 async function fetchBuild(tag) {
   const base = `${ATTEST_ROOT}/${tag}`;
-  const [bom, cve, license, unowned, builderBom, builderCve, summary] = await Promise.allSettled([
+  const [bom, cve, cveCoverage, license, unowned, builderBom, builderCve, builderCveCoverage, summary] = await Promise.allSettled([
     getJSON(`${base}/bom.cdx.json`),
     getJSON(`${base}/cve-report.cdx.json`),
+    getJSON(`${base}/cve-report-coverage.json`),
     getJSON(`${base}/license-report.json`),
     getJSON(`${base}/unowned-report.json`),
     getJSON(`${base}/builder-bom.cdx.json`),
     getJSON(`${base}/builder-cve-report.cdx.json`),
+    getJSON(`${base}/builder-cve-report-coverage.json`),
     getJSON(`${base}/attestation-summary.json`),
   ]);
 
@@ -49,10 +51,16 @@ async function fetchBuild(tag) {
     bom:        bom.status        === "fulfilled" ? bom.value        : null,
     bomErr:     bom.status        === "rejected"  ? bom.reason.message : null,
     cve:        cve.status        === "fulfilled" ? cve.value        : null,
+    // cve-report-coverage.json (scanner/DB metadata, policy, coverage counts,
+    // per-finding gating/waiver/fix-state) — written by check-cves.sh. Older
+    // builds attested before this field existed simply won't have the file;
+    // the UI falls back to pageMeta / the raw CycloneDX report in that case.
+    cveCoverage: cveCoverage.status === "fulfilled" ? cveCoverage.value : null,
     license:    license.status    === "fulfilled" ? license.value    : null,
     unowned:    unowned.status    === "fulfilled" ? unowned.value    : null,
     builderBom: builderBom.status === "fulfilled" ? builderBom.value : null,
     builderCve: builderCve.status === "fulfilled" ? builderCve.value : null,
+    builderCveCoverage: builderCveCoverage.status === "fulfilled" ? builderCveCoverage.value : null,
   };
 }
 
@@ -69,12 +77,29 @@ function summaryToPageMeta(s, tag) {
   const unmapped = s.unmapped_cpe_count != null
     ? String(s.unmapped_cpe_count) + (s.excluded_cpe_count ? ` +${s.excluded_cpe_count} excl.` : "")
     : "";
+  const scanner = s.cve_scanner || {};
+  const db = s.cve_db || {};
+  const cvePolicy = s.cve_policy || {};
+  const cov = s.cve_coverage || {};
+  const builderCov = s.builder?.cve_coverage || {};
   return {
     "Build Type":           tag.includes("-") ? "CI build (master)" : "tagged release",
     "Timestamp":            s.timestamp || "",
     "Packages":             s.package_count != null ? String(s.package_count) : "",
     "Unmapped CPEs":        unmapped,
-    "Scanner":              "grype",
+    "Scanner":              scanner.name ? `${scanner.name} ${scanner.version || "unknown version"}` : "grype (version unknown)",
+    "CVE DB built":         db.built || "unknown",
+    "CVE DB schema":        db.schema_version || "",
+    "CVE DB checksum":      db.checksum || "",
+    "CVE DB age warning":   db.age_warning || "",
+    "CVE Policy":           cvePolicy.path || "",
+    "CVE Policy SHA-256":   cvePolicy.sha256 || "",
+    "CVE Scanned":          cov.scanned != null ? String(cov.scanned) : "",
+    "CVE Matched":          cov.matched != null ? String(cov.matched) : "",
+    "CVE Clean":            cov.clean != null ? String(cov.clean) : "",
+    "CVE Unscanned":        cov.unscanned != null ? String(cov.unscanned) : "",
+    "CVE Total Findings":   cov.total_findings != null ? String(cov.total_findings) : "",
+    "CVE Waived Findings":  cov.waived_findings != null ? String(cov.waived_findings) : "",
     "ISO SHA-256":          s.iso_sha256 || "",
     "ISO Download":         `${ISO_BASE}/themonolith-${tag}.iso`,
     "SBOM":                 (s.sbom_check      || "").toUpperCase(),
@@ -87,6 +112,9 @@ function summaryToPageMeta(s, tag) {
     "Cross target":         s.builder?.cross_target || "",
     "Builder packages":     s.builder?.package_count != null ? String(s.builder.package_count) : "",
     "Unmapped CPEs (builder)": s.builder?.unmapped_cpe_count != null ? String(s.builder.unmapped_cpe_count) : "",
+    "Builder CVE Scanned":  builderCov.scanned != null ? String(builderCov.scanned) : "",
+    "Builder CVE Unscanned": builderCov.unscanned != null ? String(builderCov.unscanned) : "",
+    "Builder CVE DB built": s.builder?.cve_db_built || "",
     ...urls,
     __urls: urls,
   };

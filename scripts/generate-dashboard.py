@@ -45,6 +45,9 @@ def main():
         if not s:
             continue
         tag = s.get("build_tag", summary_path.parent.name)
+        cve_coverage = s.get("cve_coverage") or {}
+        cve_scanner = s.get("cve_scanner") or {}
+        cve_db = s.get("cve_db") or {}
         entries.append({
             "tag":          tag,
             "date":         s.get("timestamp", "")[:10],   # YYYY-MM-DD
@@ -56,6 +59,19 @@ def main():
             "cves":         (s.get("cve_check")     or "").upper(),
             "unowned":      (s.get("unowned_check") or "").upper(),
             "overall":      (s.get("overall")       or "").upper(),
+            # CVE gate honesty fields (see docs/cve-gate.md) — surfaced on the
+            # build list so "PASS" is never shown without what produced it.
+            "cveScanner":     cve_scanner.get("name", ""),
+            "cveScannerVer":  cve_scanner.get("version", ""),
+            "cveDbBuilt":     cve_db.get("built"),
+            "cveDbAgeWarning": cve_db.get("age_warning"),
+            "cveScanned":     cve_coverage.get("scanned", 0),
+            "cveMatched":     cve_coverage.get("matched", 0),
+            "cveClean":       cve_coverage.get("clean", 0),
+            "cveUnscanned":   cve_coverage.get("unscanned", 0),
+            "cveTotalFindings": cve_coverage.get("total_findings", 0),
+            "cveWaivedFindings": cve_coverage.get("waived_findings", 0),
+            "cvePolicyPath":  (s.get("cve_policy") or {}).get("path", ""),
         })
 
     # Sort newest first by tag (YYYYMMDD-hash lexsort works correctly).

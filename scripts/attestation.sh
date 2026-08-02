@@ -21,6 +21,7 @@
 #   --output-dir PATH    Directory for attestation artifacts [default: <iso-dir>/attestation]
 #   --overrides PATH     CPE overrides YAML [default: /configs/attestation/cpe-overrides.yaml]
 #   --policy PATH        License policy YAML [default: /configs/attestation/license-policy.yaml]
+#   --cve-policy PATH    CVE gate policy YAML [default: /configs/attestation/cve-policy.yaml]
 #   --unowned-allowlist PATH
 #                        Unowned files allowlist YAML [default: /configs/attestation/unowned-allowlist.yaml]
 #   --include-builder    Also attest to the builder image itself (Pillar 5): scans the
@@ -64,6 +65,7 @@ BUILD_TAG=""
 OUTPUT_DIR=""
 OVERRIDES_FILE="/configs/attestation/cpe-overrides.yaml"
 POLICY_FILE="/configs/attestation/license-policy.yaml"
+CVE_POLICY_FILE="/configs/attestation/cve-policy.yaml"
 UNOWNED_ALLOWLIST_FILE="/configs/attestation/unowned-allowlist.yaml"
 INCLUDE_BUILDER=1
 BUILDER_DIGEST=""
@@ -96,6 +98,8 @@ Optional:
                        Fallback: config/cpe-overrides.yaml (relative to cwd)
   --policy PATH        License policy YAML [default: /configs/attestation/license-policy.yaml]
                        Fallback: config/license-policy.yaml (relative to cwd)
+  --cve-policy PATH    CVE gate policy YAML [default: /configs/attestation/cve-policy.yaml]
+                       Fallback: config/cve-policy.yaml (relative to cwd)
   --include-builder    Pillar 5: attest the builder image (SBOM + CVE scan of dir:/)
   --builder-digest ID  Docker image digest to record (from: docker inspect --format='{{.Id}}' monolith-builder)
   --help               Show this help
@@ -111,6 +115,7 @@ while [[ $# -gt 0 ]]; do
         --output-dir)   OUTPUT_DIR="$2";   shift 2 ;;
         --overrides)          OVERRIDES_FILE="$2";         shift 2 ;;
         --policy)             POLICY_FILE="$2";            shift 2 ;;
+        --cve-policy)         CVE_POLICY_FILE="$2";        shift 2 ;;
         --unowned-allowlist)  UNOWNED_ALLOWLIST_FILE="$2"; shift 2 ;;
         --include-builder)    INCLUDE_BUILDER=1;           shift ;;
         --builder-digest)     BUILDER_DIGEST="$2";         shift 2 ;;
@@ -147,6 +152,9 @@ if [[ ! -f "$OVERRIDES_FILE" && -f "config/cpe-overrides.yaml" ]]; then
 fi
 if [[ ! -f "$POLICY_FILE" && -f "config/license-policy.yaml" ]]; then
     POLICY_FILE="config/license-policy.yaml"
+fi
+if [[ ! -f "$CVE_POLICY_FILE" && -f "config/cve-policy.yaml" ]]; then
+    CVE_POLICY_FILE="config/cve-policy.yaml"
 fi
 if [[ ! -f "$UNOWNED_ALLOWLIST_FILE" && -f "config/unowned-allowlist.yaml" ]]; then
     UNOWNED_ALLOWLIST_FILE="config/unowned-allowlist.yaml"
@@ -336,7 +344,54 @@ fi
 log "--- Pillar 3: CVE Check (Grype) ---"
 bash "${CVE_SCRIPT}" \
     --sbom "${SBOM_FILE}" \
-    --output "${OUTPUT_DIR}/cve-report.cdx.json" || CVE_RC=$?
+    --output "${OUTPUT_DIR}/cve-report.cdx.json" \
+    --policy "${CVE_POLICY_FILE}" || CVE_RC=$?
+
+# Read cve-report-coverage.json (written by check-cves.sh) — scanner metadata,
+# vuln DB build timestamp, policy identity, and scanned/matched/clean/unscanned
+# coverage counts. These are folded into attestation-summary.json below so the
+# dashboard can show them without a second fetch, and so a PASS can never be
+# rendered without also showing what actually produced it.
+CVE_SCANNER_NAME="grype"
+CVE_SCANNER_VERSION=""
+CVE_DB_BUILT=""
+CVE_DB_SCHEMA=""
+CVE_DB_CHECKSUM=""
+CVE_DB_AGE_WARNING=""
+CVE_POLICY_PATH=""
+CVE_POLICY_SHA256=""
+CVE_SCANNED_COUNT=0
+CVE_MATCHED_COUNT=0
+CVE_CLEAN_COUNT=0
+CVE_UNSCANNED_COUNT=0
+CVE_TOTAL_FINDINGS=0
+CVE_WAIVED_FINDINGS=0
+if [[ -f "${OUTPUT_DIR}/cve-report-coverage.json" ]]; then
+    eval "$(python3 -c "
+import json, shlex
+c = json.load(open('${OUTPUT_DIR}/cve-report-coverage.json'))
+scanner, db, policy, cov, summary = c.get('scanner',{}), c.get('db',{}), c.get('policy',{}), c.get('coverage',{}), c.get('summary',{})
+pairs = {
+    'CVE_SCANNER_VERSION': scanner.get('version',''),
+    'CVE_DB_BUILT':        db.get('built') or '',
+    'CVE_DB_SCHEMA':       db.get('schema_version') or '',
+    'CVE_DB_CHECKSUM':     db.get('checksum') or '',
+    'CVE_DB_AGE_WARNING':  db.get('age_warning') or '',
+    'CVE_POLICY_PATH':     policy.get('path') or '',
+    'CVE_POLICY_SHA256':   policy.get('sha256') or '',
+    'CVE_SCANNED_COUNT':   cov.get('scanned', 0),
+    'CVE_MATCHED_COUNT':   cov.get('matched', 0),
+    'CVE_CLEAN_COUNT':     cov.get('clean', 0),
+    'CVE_UNSCANNED_COUNT': cov.get('unscanned', 0),
+    'CVE_TOTAL_FINDINGS':  summary.get('total_findings', 0),
+    'CVE_WAIVED_FINDINGS': summary.get('waived_findings', 0),
+}
+for k, v in pairs.items():
+    print(f'{k}={shlex.quote(str(v))}')
+" 2>/dev/null)"
+else
+    warn "cve-report-coverage.json not found — CVE scanner/DB/policy metadata will be missing from the summary"
+fi
 
 # Collect CVE failures for summary (CycloneDX VEX — join to SBOM for package names)
 CVE_FAILURES="[]"
@@ -400,6 +455,13 @@ BUILDER_PKG_COUNT=0
 BUILDER_UNMAPPED_CPE_COUNT=0
 BUILDER_EXCLUDED_CPE_COUNT=0
 BUILDER_CVE_FAILURES="[]"
+BUILDER_CVE_SCANNER_VERSION=""
+BUILDER_CVE_DB_BUILT=""
+BUILDER_CVE_SCANNED_COUNT=0
+BUILDER_CVE_MATCHED_COUNT=0
+BUILDER_CVE_CLEAN_COUNT=0
+BUILDER_CVE_UNSCANNED_COUNT=0
+BUILDER_CVE_TOTAL_FINDINGS=0
 BUILDER_SBOM_FILE="${OUTPUT_DIR}/builder-sbom.cdx.json"
 BUILDER_ENRICHED_FILE="${OUTPUT_DIR}/builder-bom.cdx.json"
 
@@ -482,7 +544,28 @@ print(sum(1 for c in d.get('components', []) if c.get('type') != 'file'))
         log "--- Pillar 5: Builder CVE Check (Grype) ---"
         bash "${CVE_SCRIPT}" \
             --sbom    "${BUILDER_SBOM_FILE}" \
-            --output  "${OUTPUT_DIR}/builder-cve-report.cdx.json" || BUILDER_CVE_RC=$?
+            --output  "${OUTPUT_DIR}/builder-cve-report.cdx.json" \
+            --policy  "${CVE_POLICY_FILE}" || BUILDER_CVE_RC=$?
+
+        # Same coverage/policy/DB metadata extraction as the target scan (Pillar 3) above.
+        if [[ -f "${OUTPUT_DIR}/builder-cve-report-coverage.json" ]]; then
+            eval "$(python3 -c "
+import json, shlex
+c = json.load(open('${OUTPUT_DIR}/builder-cve-report-coverage.json'))
+scanner, db, cov, summary = c.get('scanner',{}), c.get('db',{}), c.get('coverage',{}), c.get('summary',{})
+pairs = {
+    'BUILDER_CVE_SCANNER_VERSION': scanner.get('version',''),
+    'BUILDER_CVE_DB_BUILT':        db.get('built') or '',
+    'BUILDER_CVE_SCANNED_COUNT':   cov.get('scanned', 0),
+    'BUILDER_CVE_MATCHED_COUNT':   cov.get('matched', 0),
+    'BUILDER_CVE_CLEAN_COUNT':     cov.get('clean', 0),
+    'BUILDER_CVE_UNSCANNED_COUNT': cov.get('unscanned', 0),
+    'BUILDER_CVE_TOTAL_FINDINGS':  summary.get('total_findings', 0),
+}
+for k, v in pairs.items():
+    print(f'{k}={shlex.quote(str(v))}')
+" 2>/dev/null)"
+        fi
 
         if [[ -f "${OUTPUT_DIR}/builder-cve-report.cdx.json" ]]; then
             BUILDER_CVE_FAILURES=$(python3 -c "
@@ -601,9 +684,25 @@ fi
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 SUMMARY_FILE="${OUTPUT_DIR}/attestation-summary.json"
 
+# Optional/possibly-empty CVE fields are passed via the environment rather than
+# interpolated as JSON literals into the heredoc below — an empty shell
+# variable can't safely become a JSON `null` via string substitution (and a
+# value containing a quote would break the heredoc's Python syntax outright).
+export MONO_CVE_DB_BUILT="${CVE_DB_BUILT}"
+export MONO_CVE_DB_SCHEMA="${CVE_DB_SCHEMA}"
+export MONO_CVE_DB_CHECKSUM="${CVE_DB_CHECKSUM}"
+export MONO_CVE_DB_AGE_WARNING="${CVE_DB_AGE_WARNING}"
+export MONO_CVE_POLICY_SHA256="${CVE_POLICY_SHA256}"
+export MONO_BUILDER_CVE_DB_BUILT="${BUILDER_CVE_DB_BUILT}"
+
 python3 - <<PYEOF
 import json
+import os
 from pathlib import Path
+
+def _s_or_none(name):
+    v = os.environ.get(name, "")
+    return v if v else None
 
 summary = {
     "build_tag": "${BUILD_TAG}",
@@ -615,6 +714,25 @@ summary = {
     "sbom_check": "${OVERALL_SBOM_STATUS}",
     "license_check": "${OVERALL_LICENSE_STATUS}",
     "cve_check": "${OVERALL_CVE_STATUS}",
+    "cve_scanner": {"name": "${CVE_SCANNER_NAME}", "version": "${CVE_SCANNER_VERSION}"},
+    "cve_db": {
+        "built": _s_or_none("MONO_CVE_DB_BUILT"),
+        "schema_version": _s_or_none("MONO_CVE_DB_SCHEMA"),
+        "checksum": _s_or_none("MONO_CVE_DB_CHECKSUM"),
+        "age_warning": _s_or_none("MONO_CVE_DB_AGE_WARNING"),
+    },
+    "cve_policy": {
+        "path": "${CVE_POLICY_PATH}",
+        "sha256": _s_or_none("MONO_CVE_POLICY_SHA256"),
+    },
+    "cve_coverage": {
+        "scanned": ${CVE_SCANNED_COUNT},
+        "matched": ${CVE_MATCHED_COUNT},
+        "clean": ${CVE_CLEAN_COUNT},
+        "unscanned": ${CVE_UNSCANNED_COUNT},
+        "total_findings": ${CVE_TOTAL_FINDINGS},
+        "waived_findings": ${CVE_WAIVED_FINDINGS}
+    },
     "unowned_check": "${OVERALL_UNOWNED_STATUS}",
     "unowned_count": ${UNOWNED_COUNT},
     "provenance_check": "${OVERALL_PROVENANCE_STATUS}",
@@ -630,6 +748,15 @@ summary = {
         "package_count": ${BUILDER_PKG_COUNT},
         "unmapped_cpe_count": ${BUILDER_UNMAPPED_CPE_COUNT},
         "excluded_cpe_count": ${BUILDER_EXCLUDED_CPE_COUNT},
+        "cve_scanner": {"name": "grype", "version": "${BUILDER_CVE_SCANNER_VERSION}"},
+        "cve_db_built": _s_or_none("MONO_BUILDER_CVE_DB_BUILT"),
+        "cve_coverage": {
+            "scanned": ${BUILDER_CVE_SCANNED_COUNT},
+            "matched": ${BUILDER_CVE_MATCHED_COUNT},
+            "clean": ${BUILDER_CVE_CLEAN_COUNT},
+            "unscanned": ${BUILDER_CVE_UNSCANNED_COUNT},
+            "total_findings": ${BUILDER_CVE_TOTAL_FINDINGS}
+        },
         "sbom_check": "${OVERALL_BUILDER_SBOM_STATUS}",
         "cve_check": "${OVERALL_BUILDER_CVE_STATUS}",
         "cve_failures": ${BUILDER_CVE_FAILURES},
