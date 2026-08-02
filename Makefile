@@ -95,8 +95,10 @@ DOCKER_RUN_ATTEST := docker run --rm \
 	$(GRYPE_MOUNT) \
 	$(PARALLEL_ENV)
 
-# GitHub Actions context vars — forwarded into Docker for SLSA provenance (Pillar 6).
-# When unset on the host (local dev), Docker omits them and the script uses placeholders.
+# GitHub Actions context vars — forwarded into Docker for SLSA provenance (Pillar 6)
+# and SBOM enrichment (Pillar 1b: build-system/distribution externalReferences,
+# formulation). When unset on the host (local dev), Docker omits them and the
+# scripts either use placeholders or omit the corresponding SBOM field (never fabricated).
 GITHUB_ENV := \
 	-e GITHUB_SERVER_URL \
 	-e GITHUB_REPOSITORY \
@@ -115,7 +117,8 @@ GITHUB_ENV := \
 	-e GITHUB_ACTOR_ID \
 	-e BUILD_EPOCH \
 	-e BUILD_STARTED_ON \
-	-e STAGE3_DIGEST
+	-e STAGE3_DIGEST \
+	-e S3_BUCKET
 
 .PHONY: help build-image push-image pull-image restore-cache \
         sync-portage build-packages build-packages-resume \

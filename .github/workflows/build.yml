@@ -310,6 +310,42 @@ jobs:
       - name: Run attestation pipeline
         run: make attestation BUILD_VERSION=$BUILD_VERSION
         continue-on-error: true
+        env:
+          # Bucket name only (no credentials) — used to build the SBOM's
+          # "distribution" externalReference URL for the ISO artifact.
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+
+      - name: Validate CycloneDX SBOM schema
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --quiet check-jsonschema \
+            || python3 -m pip install --user --break-system-packages --quiet check-jsonschema
+
+          SCHEMA_DIR="$(mktemp -d)"
+          curl -fsSL -o "${SCHEMA_DIR}/spdx.schema.json" \
+            https://raw.githubusercontent.com/CycloneDX/specification/master/schema/spdx.schema.json
+          curl -fsSL -o "${SCHEMA_DIR}/jsf-0.82.schema.json" \
+            https://raw.githubusercontent.com/CycloneDX/specification/master/schema/jsf-0.82.schema.json
+
+          validate_sbom() {
+            local sbom_file="$1"
+            [[ -f "$sbom_file" ]] || { echo "==> $sbom_file not found, skipping"; return 0; }
+            local spec_version
+            spec_version=$(python3 -c "import json; print(json.load(open('${sbom_file}')).get('specVersion','1.6'))")
+            local schema_file="${SCHEMA_DIR}/bom-${spec_version}.schema.json"
+            if [[ ! -f "$schema_file" ]]; then
+              curl -fsSL -o "$schema_file" \
+                "https://raw.githubusercontent.com/CycloneDX/specification/master/schema/bom-${spec_version}.schema.json"
+            fi
+            echo "==> Validating ${sbom_file} against CycloneDX ${spec_version} schema"
+            python3 -m check_jsonschema --schemafile "$schema_file" "$sbom_file"
+          }
+
+          FAIL=0
+          validate_sbom output/attestation/bom.cdx.json || FAIL=1
+          validate_sbom output/attestation/builder-bom.cdx.json || FAIL=1
+          exit $FAIL
 
       - name: Read SLSA predicate
         id: read-predicate

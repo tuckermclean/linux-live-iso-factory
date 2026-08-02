@@ -32,10 +32,12 @@ Exit code: always 0. Gaps are informational, not failures.
 """
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -317,6 +319,96 @@ def build_dependency_graph(sysroot: str, bom_ref_by_bare: dict) -> list:
     return deps
 
 
+def sha256_file(path: Path) -> str:
+    """Return the SHA-256 hex digest of a file, or '' if it can't be read."""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return ""
+
+
+def extract_dist_sha512(manifest_path: Path, name_prefix: str, version_hint: str = "") -> tuple:
+    """
+    Extract a distfile SHA-512 from a Portage Manifest file.
+
+    Portage "thin" Manifests contain lines of the form:
+        DIST <filename> <size> BLAKE2B <hex> SHA512 <hex>
+
+    Returns (filename, sha512_hex) for the first DIST entry whose filename starts
+    with name_prefix and (if version_hint given) contains that substring. Returns
+    ("", "") if the file is missing, unreadable, or no matching entry is found —
+    never fabricates a hash.
+    """
+    try:
+        content = manifest_path.read_text(errors="replace")
+    except OSError:
+        return "", ""
+    pattern = re.compile(
+        rf"DIST\s+({re.escape(name_prefix)}\S+)\s+\d+\s+BLAKE2B\s+\S+\s+SHA512\s+(\S+)"
+    )
+    for m in pattern.finditer(content):
+        fname, sha512 = m.group(1), m.group(2)
+        if not version_hint or version_hint in fname:
+            return fname, sha512
+    return "", ""
+
+
+def parse_upstream_maintainers(metadata_xml_path: Path) -> list:
+    """
+    Parse a Portage metadata.xml and return the upstream project's maintainer(s)
+    (the <upstream><maintainer> block — the people who author the software
+    upstream) as CycloneDX organizationalContact entries.
+
+    Deliberately distinct from the top-level <maintainer> element, which
+    identifies the Gentoo packager/proxy-maintainer, not the upstream author.
+
+    Returns [] if the file is missing, unparsable, or has no <upstream> block —
+    never fabricates authorship.
+    """
+    try:
+        tree = ET.parse(metadata_xml_path)
+    except (ET.ParseError, OSError):
+        return []
+    authors = []
+    for upstream in tree.getroot().findall("upstream"):
+        for maint in upstream.findall("maintainer"):
+            name_el = maint.find("name")
+            email_el = maint.find("email")
+            name = (name_el.text or "").strip() if name_el is not None else ""
+            email = (email_el.text or "").strip() if email_el is not None else ""
+            if not name and not email:
+                continue
+            contact = {}
+            if name:
+                contact["name"] = name
+            if email:
+                contact["email"] = email
+            if contact not in authors:
+                authors.append(contact)
+    return authors
+
+
+def read_vdb_homepage(vdb_pkg_dir: Path) -> str:
+    """
+    Read the first URL from a Portage vdb package directory's HOMEPAGE file.
+
+    HOMEPAGE may list multiple space-separated URLs; only the first is used.
+    Returns '' if the file is absent/empty — never fabricates a URL.
+    """
+    homepage_file = vdb_pkg_dir / "HOMEPAGE"
+    try:
+        content = homepage_file.read_text(errors="replace").strip()
+    except OSError:
+        return ""
+    if not content:
+        return ""
+    return content.split()[0]
+
+
 def _run_version(cmd: list[str]) -> str:
     """Run a command and return its first output line, or '' on any failure."""
     try:
@@ -344,12 +436,30 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
 
     metadata = sbom.setdefault("metadata", {})
 
+    # ── specVersion floor ──────────────────────────────────────────────────────
+    # formulation and externalReference.hashes need CycloneDX 1.5+; per-component
+    # `authors` (plural, array of organizationalContact — used for upstream
+    # authorship below) is 1.6+. Bump the spec version if Syft emitted something
+    # older; never downgrade a newer version Syft may already be emitting.
+    try:
+        _spec_ver = float(sbom.get("specVersion", "0") or "0")
+    except ValueError:
+        _spec_ver = 0.0
+    if _spec_ver < 1.6:
+        sbom["specVersion"] = "1.6"
+
+    # Captured here so the dependency-graph section (below) can attach a root
+    # entry — {"ref": product_bom_ref, "dependsOn": [...world packages...]} —
+    # to the same bom-ref used for metadata.component.
+    product_bom_ref = None
+
     # ── Fix metadata.component ─────────────────────────────────────────────────
     if args.product_name:
         build_tag = args.build_tag or "unknown"
+        product_bom_ref = f"{args.product_name}-{build_tag}"
         component_entry = {
             "type": "operating-system",
-            "bom-ref": f"{args.product_name}-{build_tag}",
+            "bom-ref": product_bom_ref,
             "name": args.product_name,
             "version": build_tag,
             "supplier": {"name": "Tucker McLean"},
@@ -358,15 +468,33 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
             # not reported as UNKNOWN by downstream SBOM consumers.
             "licenses": [{"license": {"id": "MIT"}}],
         }
-        if args.git_sha:
-            repo_url = args.repo_url.rstrip("/") if args.repo_url else ""
-            if repo_url:
-                component_entry["externalReferences"] = [{
-                    "type": "vcs",
-                    "url": f"{repo_url}/commit/{args.git_sha}",
-                }]
+
         iso_sha = getattr(args, "iso_sha256", "")
-        if iso_sha and iso_sha not in ("", "(not computed)"):
+        has_iso_sha = bool(iso_sha) and iso_sha != "(not computed)"
+        repo_url = args.repo_url.rstrip("/") if args.repo_url else ""
+
+        # externalReferences: vcs (exact commit), build-system (CI run that
+        # produced this SBOM), distribution (where the ISO artifact lives).
+        ext_refs = []
+        if args.git_sha and repo_url:
+            ext_refs.append({
+                "type": "vcs",
+                "url": f"{repo_url}/commit/{args.git_sha}",
+            })
+        if repo_url and args.run_id:
+            ext_refs.append({
+                "type": "build-system",
+                "url": f"{repo_url}/actions/runs/{args.run_id}",
+            })
+        if args.distribution_url:
+            dist_ref = {"type": "distribution", "url": args.distribution_url}
+            if has_iso_sha:
+                dist_ref["hashes"] = [{"alg": "SHA-256", "content": iso_sha}]
+            ext_refs.append(dist_ref)
+        if ext_refs:
+            component_entry["externalReferences"] = ext_refs
+
+        if has_iso_sha:
             component_entry["hashes"] = [{"alg": "SHA-256", "content": iso_sha}]
         metadata["component"] = component_entry
         # Remove Syft's auto-detected OS distro component — identified by its
@@ -487,7 +615,35 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
                 del component["properties"]
 
         # ── Supplier ──────────────────────────────────────────────────────────
+        # supplier stays "Gentoo Linux" — the distributor that packaged and
+        # patched this build. publisher/author (below) is the upstream project,
+        # kept distinct so downstream consumers don't lose upstream authorship
+        # just because every package flows through the same distributor.
         component.setdefault("supplier", {"name": "Gentoo Linux"})
+
+        # ── Publisher/author split (upstream project, best-effort) ───────────
+        # metadata.xml's <upstream><maintainer> names the upstream project's
+        # author(s) — distinct from the top-level <maintainer>, which is the
+        # Gentoo packager. HOMEPAGE (from the vdb) is recorded as a "website"
+        # externalReference. Both are best-effort: left absent when the
+        # Portage tree/vdb doesn't provide them. Never fabricated.
+        if "/" in name:
+            category, pkg_short = name.split("/", 1)
+
+            if args.portage_tree:
+                upstream_authors = parse_upstream_maintainers(
+                    Path(args.portage_tree) / category / pkg_short / "metadata.xml"
+                )
+                if upstream_authors:
+                    component["authors"] = upstream_authors
+
+            if args.sysroot and version:
+                vdb_pkg_dir = Path(args.sysroot) / "var" / "db" / "pkg" / category / f"{pkg_short}-{version}"
+                homepage = read_vdb_homepage(vdb_pkg_dir)
+                if homepage:
+                    ext = component.setdefault("externalReferences", [])
+                    if not any(r.get("url") == homepage for r in ext):
+                        ext.append({"type": "website", "url": homepage})
 
         # ── Component type reclassification ───────────────────────────────────
         # Syft defaults all Portage packages to "library" — reclassify by category
@@ -509,6 +665,33 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
     if args.sysroot:
         print("[enrich-sbom] Building dependency graph from Portage vdb...", file=sys.stderr)
         deps = build_dependency_graph(args.sysroot, bom_ref_by_bare)
+
+        # Root the graph at the product component: dependsOn = the packages the
+        # world file names directly (configs/portage/world) as opposed to the
+        # transitive deps RDEPEND/DEPEND already captured above. Without this,
+        # the graph is a forest with no single root a consumer can walk from
+        # the ISO itself. Best-effort: only added when both the product
+        # bom-ref and world atoms are available and resolve to real components.
+        if product_bom_ref and args.world:
+            world_path = Path(args.world)
+            if world_path.exists():
+                root_deps = []
+                for line in world_path.read_text().splitlines():
+                    atom = line.split("#", 1)[0].strip()
+                    if not atom:
+                        continue
+                    atom = re.sub(r"^[><=~!]+", "", atom).split(":")[0]
+                    ref = bom_ref_by_bare.get(bare_name(atom))
+                    if ref and ref not in root_deps:
+                        root_deps.append(ref)
+                if root_deps:
+                    deps.insert(0, {"ref": product_bom_ref, "dependsOn": root_deps})
+                    print(
+                        f"[enrich-sbom] Dependency graph: rooted at {product_bom_ref} "
+                        f"with {len(root_deps)} world package(s).",
+                        file=sys.stderr,
+                    )
+
         if deps:
             sbom["dependencies"] = deps
             print(
@@ -571,6 +754,100 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
                 no_cpe_names.append((_pkg, _version))
             sbom["components"].append(_comp)
             print(f"[enrich-sbom] Propagated from builder: {_pkg} {_version}", file=sys.stderr)
+
+    # ── Formulation: build inputs (CycloneDX 1.5+) ────────────────────────────
+    # Captures the external inputs that determined the ISO's contents, as
+    # transient pseudo-components under formulation[0].components, plus a
+    # pointer to the exact workflow file/commit/run under formulation[0].properties.
+    # Everything here is either read directly from a file in the repo/build
+    # context or passed in from a value the caller (attestation.sh) already
+    # computed on the host — nothing is guessed or fabricated. Any input that
+    # can't be resolved is silently omitted rather than filled with a placeholder.
+    _formula_components: list[dict] = []
+
+    # Docker base image (Gentoo stage3) — the toolchain bootstrap layer.
+    if args.stage3_epoch:
+        _stage3_entry: dict = {
+            "type": "container",
+            "name": "gentoo/stage3",
+            "version": f"amd64-openrc-{args.stage3_epoch}",
+            "purl": f"pkg:docker/gentoo/stage3@amd64-openrc-{args.stage3_epoch}",
+        }
+        if args.stage3_digest:
+            _stage3_entry["hashes"] = [{
+                "alg": "SHA-256",
+                "content": args.stage3_digest.removeprefix("sha256:"),
+            }]
+        _formula_components.append(_stage3_entry)
+
+    # versions.lock — pins every world package's exact version; hashed directly
+    # since it's a file already present in this checkout.
+    if args.versions_lock:
+        _vl_path = Path(args.versions_lock)
+        if _vl_path.exists():
+            _vl_digest = sha256_file(_vl_path)
+            if _vl_digest:
+                _formula_components.append({
+                    "type": "data",
+                    "name": "versions.lock",
+                    "hashes": [{"alg": "SHA-256", "content": _vl_digest}],
+                })
+
+    # Kernel source tarball — digest read from the overlay ebuild's Manifest
+    # (Gentoo Manifests are Gemini/GPG-signed at sync time), matched to the
+    # actual installed kernel version so the recorded hash is never stale.
+    if args.kernel_manifest:
+        _kernel_component = next(
+            (c for c in components if bare_name(c.get("name", "")) == "monolith-kernel"),
+            None,
+        )
+        if _kernel_component:
+            _kver = strip_gentoo_suffixes(_kernel_component.get("version", ""))
+            _kfname, _ksha512 = extract_dist_sha512(Path(args.kernel_manifest), "linux-", _kver)
+            if _kfname and _ksha512:
+                _formula_components.append({
+                    "type": "file",
+                    "name": _kfname,
+                    "hashes": [{"alg": "SHA-512", "content": _ksha512}],
+                })
+
+    # BusyBox source tarball — same approach, read from the main Gentoo tree's
+    # Manifest (not the overlay; BusyBox is a stock Gentoo ebuild).
+    if args.portage_tree:
+        _busybox_component = next(
+            (c for c in components if bare_name(c.get("name", "")) == "busybox"),
+            None,
+        )
+        if _busybox_component:
+            _bver = strip_gentoo_suffixes(_busybox_component.get("version", ""))
+            _bb_manifest = Path(args.portage_tree) / "sys-apps" / "busybox" / "Manifest"
+            _bfname, _bsha512 = extract_dist_sha512(_bb_manifest, "busybox-", _bver)
+            if _bfname and _bsha512:
+                _formula_components.append({
+                    "type": "file",
+                    "name": _bfname,
+                    "hashes": [{"alg": "SHA-512", "content": _bsha512}],
+                })
+
+    _formula_properties: list[dict] = []
+    if args.workflow_path:
+        _formula_properties.append({"name": "monolith:workflow:path", "value": args.workflow_path})
+    if args.git_sha:
+        _formula_properties.append({"name": "monolith:workflow:commit", "value": args.git_sha})
+    if args.run_id:
+        _formula_properties.append({"name": "monolith:workflow:run_id", "value": args.run_id})
+
+    if _formula_components or _formula_properties:
+        _formula: dict = {"bom-ref": "monolith-build-formula"}
+        if _formula_components:
+            _formula["components"] = _formula_components
+        if _formula_properties:
+            _formula["properties"] = _formula_properties
+        sbom["formulation"] = [_formula]
+        print(
+            f"[enrich-sbom] Formulation: {len(_formula_components)} build input(s) recorded.",
+            file=sys.stderr,
+        )
 
     # ── Populate metadata.tools (CycloneDX 1.5+ dict form) ───────────────────
     # Normalise whatever Syft wrote (array in 1.4, dict in 1.5+) into the
@@ -793,6 +1070,69 @@ Output:
         default="",
         help="YAML file declaring package patterns excluded from CPE/CVE scanning "
              "(e.g. acct-group/*, virtual/*); excluded packages are not counted as gaps",
+    )
+    # ── SBOM completeness: CI pointer, distribution, formulation, authorship ──
+    parser.add_argument(
+        "--run-id",
+        metavar="ID",
+        default="",
+        help="GitHub Actions run ID ($GITHUB_RUN_ID) — used to build the "
+             "build-system externalReference and recorded in formulation.properties",
+    )
+    parser.add_argument(
+        "--distribution-url",
+        metavar="URL",
+        default="",
+        help="URL where the ISO artifact is published (e.g. an s3:// URI) — "
+             "written as a 'distribution' externalReference on metadata.component, "
+             "with the ISO's SHA-256 attached via --iso-sha256",
+    )
+    parser.add_argument(
+        "--world",
+        metavar="PATH",
+        default="",
+        help="Path to configs/portage/world — used to root the dependency graph "
+             "at metadata.component, with dependsOn = the world-file packages",
+    )
+    parser.add_argument(
+        "--portage-tree",
+        metavar="PATH",
+        default="",
+        help="Path to the main Gentoo portage tree (e.g. /var/db/repos/gentoo) — "
+             "used to read metadata.xml (upstream author) and the BusyBox Manifest "
+             "(formulation build input) for each package",
+    )
+    parser.add_argument(
+        "--versions-lock",
+        metavar="PATH",
+        default="",
+        help="Path to configs/portage/versions.lock — hashed and recorded as a "
+             "formulation build input",
+    )
+    parser.add_argument(
+        "--kernel-manifest",
+        metavar="PATH",
+        default="",
+        help="Path to the monolith-kernel overlay ebuild's Manifest — the kernel "
+             "source tarball's SHA-512 is read from here for formulation",
+    )
+    parser.add_argument(
+        "--stage3-epoch",
+        metavar="EPOCH",
+        default="",
+        help="BUILD_EPOCH used for the gentoo/stage3 Docker base image (formulation)",
+    )
+    parser.add_argument(
+        "--stage3-digest",
+        metavar="SHA256",
+        default="",
+        help="Docker manifest digest of the stage3 base image (formulation)",
+    )
+    parser.add_argument(
+        "--workflow-path",
+        metavar="PATH",
+        default=".github/workflows/build.yml",
+        help="Repo-relative path to the CI workflow file (formulation.properties)",
     )
     args = parser.parse_args()
 
