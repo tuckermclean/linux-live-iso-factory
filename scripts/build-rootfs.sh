@@ -547,6 +547,25 @@ create_squashfs() {
 }
 
 #
+# Audit for dynamically-linked binaries (informational — never fails the build)
+#
+run_static_audit() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local audit_script="${script_dir}/static-audit.sh"
+
+    if [ -x "$audit_script" ]; then
+        log_info "Running static-link audit..."
+        # Runs against ROOTFS_DIR (already squashed into the image by this
+        # point) and writes only to OUTPUT_DIR/reports — it cannot change
+        # the SquashFS bytes or the attestation digest chain.
+        "$audit_script" "$ROOTFS_DIR" || log_warn "static-audit.sh reported an issue (non-fatal)"
+    else
+        log_warn "static-audit.sh not found or not executable — skipping audit"
+    fi
+}
+
+#
 # Main
 #
 main() {
@@ -558,6 +577,7 @@ main() {
     install_sysroot
     create_etc_files
     create_squashfs
+    run_static_audit
 
     log_info "========================================"
     log_info "  Root Filesystem Build Complete!"
