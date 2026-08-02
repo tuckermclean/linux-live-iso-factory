@@ -1,56 +1,197 @@
 # Release Readiness Report
 
-Audit date: 2026-03-05 (original: 2026-02-08)
+Audit date: 2026-08-02 (previous: 2026-03-05, original: 2026-02-08)
 
----
-
-## Package Build Status (2026-03-04)
-
-### Build system fix
-`build-packages.sh` was reporting all 54 successfully-built packages as failures. GPKG format
-stores binpkgs in `PKGDIR/CATEGORY/PKGNAME/PKGNAME-VERSION.gpkg.tar` — an extra directory vs.
-the old XPAK format — and the success check was looking one level too shallow. Fixed.
-Individual per-package build logs are now copied to `output/logs/*.build.log` on failure.
-
-### Man pages restored
-Removed `noman noinfo nodoc` from `FEATURES` in `make.conf`. Man pages are now installed for
-all packages. `app-text/mandoc` postinst (`makewhatis`) will succeed now that there are pages
-to index.
-
-### Dropped packages (build failures, not worth fixing now)
-
-| Package | Failure | Replacement |
-|---------|---------|-------------|
-| `dev-debug/gdb` | Compile fails — native i486+musl GDB cross-compile is a significant undertaking | `dev-debug/strace` |
-| `www-client/w3m` | econf fails — dependency/configure issue | `www-client/lynx` |
-| `sys-process/dcron` | `emake install` fails — Makefile hardcodes or uid/gid issues in cross env | None currently |
-
-### fortune-mod and nethack — BUILD RESOLVED, nethack runtime known gap
-
-Both packages now build and install correctly. See git log for details.
-
-**Nethack runtime**: "Configuration incompatibility for file 'dungeon'. Dungeon description not valid."
-
-The nethack data files (`nhdat`, `*.lev`) are built by `dlb`, `dgn_comp`, and `lev_comp` — which
-our CC_FOR_BUILD bashrc hook compiles as x86_64 binaries so they can run on the build host.
-x86_64 uses 64-bit `long` (8 bytes); i486 uses 32-bit `long` (4 bytes). The `dlb_fentry` struct
-contains `long foffset` and `long fsize`, so the archive index is misread by the i486 binary →
-dungeon data corruption.
-
-**Fix:** In the bashrc CC_FOR_BUILD section, add `-m32` to `CFLAGS_FOR_BUILD` and confirm the
-host gcc has 32-bit multilib support (`gcc -m32`). This compiles the build tools as 32-bit x86,
-matching the i486 ABI for `long`. Alternatively, patch nethack to use `int32_t`/`int64_t` instead
-of `long` in the DLB archive structs.
+This pass re-verified every item from the 2026-03-05 audit against the current
+tree (not against memory of past audits), closed out an engineering cleanup
+batch (nethack ABI verification, mandoc.db, clean shutdown, root password
+banner, static-linking audit tooling, persistence, version-pin honesty), and
+found one new gap while doing so (dropbear is never actually started — see
+Open Issues). Items are only listed as resolved where the current code was
+directly inspected; nothing here is carried forward from the previous report
+without re-checking.
 
 ---
 
 ## Project Summary
 
-A Gentoo crossdev-based Docker build system that cross-compiles a Linux live ISO targeting i486 (Pentium-class) hardware. The pipeline goes: Docker image build -> Portage cross-compile -> kernel build -> initramfs -> SquashFS rootfs -> ISOLINUX ISO.
+A Gentoo crossdev-based Docker build system that cross-compiles a Linux live
+ISO targeting i486 (Pentium-class) hardware. The pipeline goes: Docker image
+build -> Portage cross-compile -> kernel build -> initramfs -> SquashFS
+rootfs -> ISO (ISOLINUX BIOS + GRUB EFI, hybrid CD/USB).
 
-The package set has grown from a minimal BusyBox-based image to a full GNU/Linux userland with editors, development tools, network clients, filesystem utilities, and amusements (~61 world packages). The ISO size will be significantly larger than the original ~23 MB estimate; exact size TBD after the expanded build completes.
+The package set is a full GNU/Linux userland — editors, development tools,
+network clients, filesystem utilities, and amusements (~65 world packages) —
+built musl-libc, i486, and as close to fully statically linked as upstream
+ebuilds allow.
 
-**Overall assessment: The core build pipeline is complete and functional.** The gaps are mostly around release polish, not missing functionality.
+**Overall assessment: the core build pipeline, boot chain (BIOS + UEFI), and
+CI are complete and functional.** Remaining gaps are release polish (a few
+small runtime rough edges) and nice-to-haves (persistence boot-testing,
+developer docs, optional bigger variants).
+
+---
+
+## Resolved Issues
+
+Dated entries below reflect when this audit pass verified/fixed the item, not
+necessarily when the underlying code first landed (git history is the source
+of truth for that).
+
+### Nethack dungeon ABI mismatch — RESOLVED (verified 2026-08-02)
+- Original finding: `dlb`/`dgn_comp`/`lev_comp` build-host tools compiled as
+  x86_64 (64-bit `long`) but are read by i486 nethack (32-bit `long`),
+  corrupting the DLB archive index (`nhdat`).
+- The fix (`CFLAGS_FOR_BUILD="-O2 -m32"` in `configs/portage/make.conf`,
+  consumed by the `CC_FOR_BUILD` hook in `configs/portage/bashrc`, which also
+  forces `LFLAGS`/`LDFLAGS` to `-m32` for `makedefs`/`lev_comp`/`dgn_comp`/
+  `dlb`) was already present in the tree (git commit `bfb3a1d`) — this audit
+  verified it's wired correctly end to end.
+- **Added 2026-08-02:** the Dockerfile now fails the image build early with a
+  clear error if the host `gcc` lacks `-m32` multilib support, instead of
+  letting a missing prerequisite surface later as silent dungeon-data
+  corruption.
+- **Still deferred:** confirming nethack actually launches with a valid
+  dungeon on real i486 hardware/QEMU is a boot-time check — defers to the T5
+  CI boot harness. This audit could only verify the build-time toolchain
+  configuration (no Docker/QEMU available in this environment).
+
+### mandoc.db stale on first boot — RESOLVED (2026-08-02)
+- `man` worked, but printed `outdated mandoc.db ... run makewhatis
+  /usr/share/man` on first boot, because `makewhatis` bakes in the
+  build-container path, not the live `/usr/share/man` path.
+- **Fixed:** `scripts/build-rootfs.sh`'s generated `rcS` now runs
+  `makewhatis /usr/share/man` once at startup (sub-second — rootfs is a tmpfs
+  overlay in RAM and there are only a few dozen man pages).
+
+### Clean shutdown sequence — RESOLVED (2026-08-02)
+- `rcK` (kill script: `killall5 -15`/`-9`, `umount -a -r`, `sync`) and its
+  wiring into `/etc/inittab` (`ca:12345:ctrlaltdel:/sbin/reboot`,
+  `l0:0:wait:/etc/init.d/rcK`) already existed in the tree — this was more
+  complete than the previous audit's "no rc.K, no shutdown scripts" implied.
+- **Gap found and fixed:** `/etc/inittab` only ran `rcK` for runlevel 0
+  (halt/poweroff). Runlevel 6 (`reboot`) had no matching entry, so a plain
+  `reboot` skipped the kill script entirely — processes weren't signalled and
+  filesystems weren't synced/unmounted before the kernel reboot syscall.
+  Added `l6:6:wait:/etc/init.d/rcK` to close this.
+
+### Root password policy — RESOLVED (2026-08-02)
+- Root has always been intentionally passwordless (fine for a live ISO), but
+  it was never stated anywhere a user would see it before logging in.
+- **Fixed:** `/etc/issue` (shown before the login prompt on every console) now
+  explicitly states root has no password and tells the user how to set one.
+- **Still open (by design):** the longer-form security note belongs in
+  `README.md`, which this batch intentionally did not touch (another agent
+  owns README changes in this round). Suggested text for that agent to fold
+  in, e.g. under a "Security" heading:
+
+  > **Root has no password by default.** This is intentional — it's a live/
+  > rescue ISO, and requiring a password before you can even get a shell
+  > would defeat the point. `/etc/issue` states this on every console before
+  > login. If you expose this system (network services, a shared machine),
+  > run `passwd` first, or expect anyone on the wire/console to have root.
+
+### Static-linking audit — PARTIALLY RESOLVED (2026-08-02), see Open Issues
+- Verified `configs/portage/env/static.conf` (`-static -no-pie`,
+  `--disable-shared`) and `configs/portage/package.use/static` (`*/* static
+  static-libs` plus ~50 explicit per-package overrides, including the
+  specific packages the previous audit called out: util-linux, iproute2,
+  dhcpcd, procps, tar, gawk) are both already comprehensive — this is much
+  further along than the previous audit's framing suggested.
+- **Added:** `scripts/static-audit.sh` — walks a built rootfs/sysroot with
+  `file`, reports every dynamically-linked ELF to
+  `output/reports/static-audit.txt`, wired into `build-rootfs.sh` to run
+  automatically after `create_squashfs` (report-only, writes outside
+  `ROOTFS_DIR`, so it cannot perturb the SquashFS bytes or the attestation
+  digest chain). Supports `--strict` for CI gating once the known-offender
+  list below is empty.
+- **Known remaining gap:** `sys-apps/util-linux`'s client utilities (`mount`,
+  `agetty`, `mountpoint`) have no `static` USE flag upstream — the
+  `static -nls -udev` line in `package.use/static` is honored for the parts
+  of util-linux that support it, but silently ignored for the rest. BusyBox
+  already provides static `mount`/`mountpoint` as substitutes; there is no
+  BusyBox `agetty` substitute currently wired in (`CONFIG_GETTY is not set`
+  in the BusyBox savedconfig) — `/etc/inittab` still spawns util-linux's
+  `agetty`. Not fixed in this pass — this environment cannot build the
+  sysroot to verify a substitution end to end, and it's exactly the kind of
+  change that needs a real boot test. Left for a future batch with build
+  access, verified via `scripts/static-audit.sh`.
+- **`ld-musl-i386.so.1` symlink→binary copy in `extract-packages.sh`:
+  evaluated, kept.** As long as util-linux's client utilities remain
+  dynamically linked, a working dynamic linker must exist on the live
+  system, or those binaries fail to exec at all. Removing this is deferred
+  to CI: run `static-audit.sh --strict` against a real build; only remove
+  once it comes back clean.
+
+### Persistence support — RESOLVED (2026-08-02), boot-test pending
+- Added a `persist` kernel parameter. `rootfs/init` now coldplug-scans block
+  devices with BusyBox `mdev -s` (populates `/dev/disk/by-label/*` via
+  BusyBox's built-in volume-ID probing — already compiled in via
+  `CONFIG_VOLUMEID=y` in the savedconfig, just never invoked before), looks
+  for a partition labeled `MONOLITH_PERSIST`, and if found mounts it as the
+  overlayfs upper/work storage instead of tmpfs. Falls back to tmpfs (with a
+  clear warning) if `persist` is requested but no such partition exists, or
+  if mounting it fails.
+- Added `LABEL persist` to the ISOLINUX config and a matching GRUB
+  `menuentry` in `scripts/build-iso.sh`.
+- Create the partition with: `mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN`
+- **Known limitation, documented in code:** the initramfs only has BusyBox,
+  which provides `fsck.minix` but no ext4/vfat fsck. A full fsck before
+  mount is best-effort (attempted only if an `fsck` applet happens to be on
+  PATH); an ext4 journal replay on mount covers ordinary unclean-shutdown
+  recovery. A real fsck could be added later by shipping a static
+  `fsck.ext4` binary in the initramfs, at the cost of initrd size.
+- **Boot-test variant needed:** this audit could not build or boot-test the
+  round trip (write a file with `persist`, reboot, confirm it's still
+  there). Coordinate with whoever owns the T5 CI boot harness to add a
+  persistence boot-test variant (boot with `persist` + a pre-labeled
+  scratch disk, write a marker file, reboot, verify the marker survives).
+
+### Version pinning honesty — RESOLVED (2026-08-02)
+- Kernel (`sys-kernel/monolith-kernel`) and BusyBox (`sys-apps/busybox`) were
+  already fully covered by `configs/portage/versions.lock` /
+  `scripts/update-versions.sh` — both are ordinary entries in
+  `configs/portage/world`, so `make update-versions` already tracks them
+  like every other world package. The previous audit's claim that these were
+  "hardcoded in Dockerfile ENV vars" no longer matches the tree (no such ENV
+  vars exist in the current Dockerfile) — corrected.
+- SYSLINUX: confirmed the informational `ENV SYSLINUX_VERSION=6.03` no longer
+  exists in the Dockerfile either, but nothing had replaced it with an
+  explanation. **Fixed:** added a comment block above the host-tools
+  `emerge` line in the Dockerfile explaining that syslinux/grub/mtools/etc.
+  are intentionally pinned only indirectly, via `BUILD_EPOCH` (the portage
+  snapshot date) — not a per-package version atom — and why that's the
+  correct model for host-only build tools that never enter the target
+  sysroot. `scripts/update-versions.sh`'s header comment now states this
+  scope boundary explicitly too.
+
+### Package build system — RESOLVED (2026-03-04, re-verified 2026-08-02)
+- `build-packages.sh`'s GPKG success-check depth bug, `noman noinfo nodoc`
+  removal (man pages now install for every package), and the `dlb`/nethack
+  build (as opposed to runtime) failures were fixed in the 2026-03-04 pass
+  and remain fixed.
+- **Dropped packages** (confirmed still absent from `configs/portage/world`,
+  decision still stands): `dev-debug/gdb` (replaced by `dev-debug/strace`),
+  `www-client/w3m` (replaced by `www-client/lynx`), `sys-process/dcron` (no
+  replacement).
+
+### rescue label, README PPP example, toram documentation, .gitignore — RESOLVED (2026-03-05, re-verified 2026-08-02)
+- All four fixes from the previous audit were re-checked against the current
+  tree and remain correct: `LABEL rescue` passes `rescue` on the kernel
+  command line; the README's networking quick-start uses `slattach` and
+  notes `pppd` isn't installed; `toram` is documented in the README boot
+  options table; `.claude/` is in `.gitignore`.
+
+### EFI boot support — RESOLVED (previously; re-verified 2026-08-02)
+- GRUB EFI (32-bit and 64-bit) via `grub-mkstandalone`, the El Torito
+  sector-count overflow fix, GPT ESP type-GUID patch, and FAT16-not-FAT32
+  ESP image are all present and unchanged in `scripts/build-iso.sh`.
+  `make test-uefi` exists in the Makefile for local QEMU+OVMF verification.
+
+### CI/CD pipeline — RESOLVED (previously; re-verified 2026-08-02)
+- `.github/workflows/build.yml` exists and runs the build. (The previous
+  audit listed this as entirely missing — that's no longer accurate; exact
+  date it was added isn't tracked here, but it is present and current.)
 
 ---
 
@@ -58,142 +199,87 @@ The package set has grown from a minimal BusyBox-based image to a full GNU/Linux
 
 ### Should Fix
 
-### 1. Dynamic linking — performance and correctness gap
+#### 1. Dynamic linking gap: util-linux client utilities (agetty, mount, mountpoint)
+See "Static-linking audit" above under Resolved for the full analysis —
+listed here too because it's the one concrete remaining action item.
+`scripts/static-audit.sh` now exists to verify this on a real build; the fix
+itself (patch the ebuild, or wire in a BusyBox/alternate `agetty`) needs
+build access this environment doesn't have.
 
-Several packages ignore `USE=static` and build as dynamically-linked PIE binaries:
-`sys-apps/util-linux` (mount, agetty, mountpoint, etc.), `sys-apps/iproute2` (ip),
-`net-misc/dhcpcd`, `sys-process/procps`, `app-arch/tar`, `sys-apps/gawk`, and others.
+#### 2. dropbear SSH daemon is installed but never started (newly found, 2026-08-02)
+- `net-misc/dropbear` is in `configs/portage/world`, and `S20keygen`
+  generates its ECDSA host key on first boot — but no init script actually
+  starts the `dropbear` daemon itself. Grepped the full `scripts/` and
+  `rootfs/` trees to confirm: `dropbear` (the daemon binary) is invoked
+  nowhere except `dropbearkey` in `S20keygen`.
+- Practical effect: SSH is currently unreachable on this image regardless of
+  the passwordless-root banner added this pass — there's no listening
+  service to reach. Not a security regression (arguably safer as shipped),
+  but almost certainly not the intent given the host-key generation script
+  and the `net-misc/dropbear` dependency exist.
+- **Fix:** add an `/etc/init.d/S6xdropbear` (after `S40network`) that starts
+  `dropbear` (likely `dropbear -R` since keys are pre-generated by
+  `S20keygen`, or drop `-R` and rely on the existing keygen step).
 
-This matters for two reasons:
-- **Performance**: every exec of these binaries requires the dynamic linker to do library
-  lookups and relocations. On a 486 booting from CD-ROM, that means extra seeks and page
-  faults on every shell command. A fully static userland would be noticeably snappier.
-- **Correctness**: the live sysroot installs `lib/ld-musl-i386.so.1` as a symlink to the
-  crossdev absolute path (`/usr/i486-linux-musl/usr/lib/libc.so`), which is dangling on
-  the live system. `extract-packages.sh` works around this by replacing the symlink with
-  the actual binary, but this is a band-aid.
+### Nice to Have
 
-**Fix:** Audit each dynamic binary. Many can be forced static with package-specific
-`LDFLAGS=-static` env overrides or USE flags. For packages with no static option
-(e.g. util-linux), consider patching the ebuild or replacing with a BusyBox applet
-equivalent (BusyBox provides static mount, ip, agetty, etc. and is designed for exactly
-this use case).
+#### 3. QEMU test target has no automated pass/fail check
+- `make test` / `make test-uefi` boot the ISO in QEMU but don't validate
+  boot-to-login automatically.
+- **Fix:** a QEMU + expect/pexpect (or similar) script that validates the
+  boot sequence reaches a login prompt. This is presumably the scope of the
+  "T5 boot harness" referenced elsewhere in this project's task tracking;
+  if so, the persistence and nethack boot-test items above should be folded
+  into that harness rather than built separately.
 
-### 2. Root login with no password
-- `/etc/shadow` is created by `build-rootfs.sh`, but root has no password set
-- Anyone booting the ISO has passwordless root
-- For a live ISO this may be intentional, but should be explicitly documented
-- **Fix:** At least add a warning banner on the login console, or a first-boot password prompt. Document the decision either way.
+#### 4. No CONTRIBUTING or developer onboarding docs
+- No architecture overview for contributors, no troubleshooting guide for
+  cross-compilation's rough edges, no explanation of the accumulated
+  workarounds (`BUILD_DIR` unsetting, libtool patching, the CC_FOR_BUILD
+  nethack hook, etc.) collected in `configs/portage/bashrc`.
 
-### 2. `rescue` boot label was broken (fixed in `build-iso.sh`)
-- The `LABEL rescue` entry in the generated `isolinux.cfg` was not passing `rescue` to the kernel
-- The init script parses a `rescue` kernel parameter to drop to a shell — without it, the rescue label just booted silently without `quiet`, not to a rescue shell
-- **Fixed:** `APPEND initrd=/boot/initrd.img rescue` now correctly passes the parameter
+#### 5. Kernel module support is compiled in but unused
+- Correction to the previous audit: `configs/kernel.config` does have
+  `CONFIG_MODULES=y` set — the kernel itself can load modules. However,
+  `sys-kernel/monolith-kernel`'s ebuild doesn't run `make modules` /
+  `modules_install`, so no `.ko` files are ever built or shipped, and
+  nothing in the initrd/rootfs would install them if they existed. In
+  practice this is still "no module support" — just a smaller gap to close
+  (wire up module build/install) than "recompile the kernel with
+  `CONFIG_MODULES=y` first."
 
-### 3. README PPP example referenced `pppd`, which is not installed
-- The Networking Quick Start section showed `slattach -p ppp /dev/ttyS0` followed by "Then configure pppd as needed"
-- `pppd` is not in the world file and is not built into the image; `slattach` provides SLIP line attachment only
-- **Fixed:** README example updated to SLIP and notes that pppd is not included
+#### 6. man-db replaced by mandoc — unchanged, confirmed still correct
+- `sys-apps/man-db` pulls in `virtual/tmpfiles` → `systemd-utils[tmpfiles]`
+  with a hard Python `REQUIRED_USE`; `app-text/mandoc` avoids this while
+  still providing `man`/`apropos`/`whatis`. Still the right call.
 
-### 4. `toram` kernel parameter is undocumented
-- The init script supports `toram`, which copies the SquashFS rootfs entirely into RAM before mounting
-- This allows the boot media (CD/USB) to be removed after boot — a significant usability feature for live systems
-- **Fix:** Document `toram` in README boot options (now done) and consider adding it as an explicit ISOLINUX label
+#### 7. nmap not included
+- `net-analyzer/nmap`'s `REQUIRED_USE` still forces a `PYTHON_SINGLE_TARGET`
+  selection even with `-nse -ndiff -zenmap`. Unchanged from previous audit.
 
-### 5. mandoc.db stale on first boot
+#### 8. No native compiler on the live system
+- `sys-devel/gcc` still intentionally omitted (200-400 MB uncompressed).
+  Unchanged from previous audit; a "developer" ISO variant remains a
+  reasonable follow-up.
 
-`man` works correctly, but on first boot it will print:
-```
-man: outdated mandoc.db lacks <pkg>(N) entry, run makewhatis /usr/share/man
-```
+#### 9. No graphical environment
+- Unchanged from previous audit (minimal fbdev + dwm + st + dmenu stack was
+  scoped but not built).
 
-Root cause: `mandoc.db` is built during `mandoc`'s `pkg_postinst` in the build container,
-at which point only mandoc itself is installed. It is also regenerated in `extract-packages.sh`,
-but `makewhatis` stores absolute paths — the build path (`/output/sysroot/usr/share/man`)
-is not the live path (`/usr/share/man`), so the db is always stale on the live system.
+#### 10. `toram` has no explicit ISOLINUX label
+- GRUB already has a `toram` menuentry (`scripts/build-iso.sh`); ISOLINUX
+  does not have a matching `LABEL toram` (it's reachable via manual kernel
+  append at the ISOLINUX prompt, just not a menu entry). Small, low-risk
+  follow-up — noticed while adding the `persist` label in this pass but out
+  of scope for this batch.
 
-**Workaround:** Run `makewhatis /usr/share/man` once on the live system. The warning can be
-suppressed and the db corrected in one command. Pages display correctly regardless of the warning.
-
-**Fix:** Add `makewhatis /usr/share/man` to the rcS startup script (run once, fast, in RAM).
-
-### 6. No clean shutdown sequence
-- BusyBox init with a basic `/etc/inittab`
-- `rcS` startup script created by `build-rootfs.sh` is minimal (mount filesystems, start mdev, bring up networking)
-- No service management, no shutdown scripts, no `rc.K` (kill script)
-- **Fix:** Add a shutdown/reboot script that kills processes, syncs filesystems, and unmounts cleanly
-
-### 7. Incomplete `.gitignore`
-- `.gitignore` was missing `.claude/` (Claude Code project settings directory)
-- **Fixed:** `.claude/` entry added
-
----
-
-## Nice to Have
-
-### 7. Hardcoded kernel/BusyBox/SYSLINUX versions with no update mechanism
-- Kernel 6.12.11, BusyBox 1.36.1 are hardcoded in Dockerfile `ENV` vars
-- `update-versions.sh` handles Portage package versions but NOT kernel/BusyBox
-- SYSLINUX is installed via `emerge sys-boot/syslinux` with no version pin; the `ENV SYSLINUX_VERSION=6.03` in the Dockerfile is purely informational — it doesn't actually constrain what emerge installs, so it could silently become wrong
-- **Fix:** Either document the manual update process or extend `update-versions.sh` to cover these; replace `ENV SYSLINUX_VERSION` with a comment
-
-### 8. EFI boot support — RESOLVED
-- GRUB EFI (32-bit and 64-bit) is now embedded via `grub-mkstandalone`.
-- Three bugs were fixed in `build-iso.sh`:
-  1. **El Torito sector_count overflow**: the 32 MB `efi.img` hit the 16-bit limit (max 65535 × 512 = 31.9 MiB); xorriso stored 0, causing OVMF's `CdExpressDxe` to skip the EFI entry entirely. Fixed by sizing `efi.img` dynamically from the actual EFI binary sizes + 1 MB FAT overhead.
-  2. **Wrong GPT partition type GUID**: xorriso's `-isohybrid-gpt-basdat` marks the EFI partition with the Microsoft Basic Data GUID (`EBD0A0A2-...`). OVMF requires the EFI System Partition GUID (`C12A7328-...`). Fixed by post-processing the ISO with a Python script that patches both primary and backup GPT headers (with corrected CRC32s).
-  3. **Malformed FAT32**: at 14 MB the image has ~28 000 clusters, below FAT32's minimum of 65 525; `mkfs.vfat -F 32` produces a non-standard filesystem that UEFI's FatDxe rejects. Fixed by using FAT16, which the UEFI spec explicitly supports for ESP partitions ≤ 512 MiB.
-- UEFI CD boot and UEFI USB/hybrid boot both verified working under QEMU + OVMF.
-
-### 9. No persistence support
-- System uses tmpfs overlay over SquashFS — all changes lost on reboot
-- No option to save session to USB or partition
-- **Fix:** Add a `persist` kernel parameter that looks for a labeled partition to use as the overlay upper dir
-
-### 10. No CI/CD
-- No `.github/workflows/`, `.gitlab-ci.yml`, or equivalent
-- The build requires Docker and takes significant time, but at minimum a smoke test that the Dockerfile builds would catch regressions
-- **Fix:** A GitHub Actions workflow that runs `make build-image` on push
-
-### 11. QEMU test target is minimal
-- `make test` just launches QEMU with the ISO — no automated validation
-- No check that the system boots successfully, network comes up, or SSH is reachable
-- **Fix:** A QEMU + expect/pexpect script that validates boot-to-login
-
-### 12. No CONTRIBUTING or developer onboarding docs
-- The README exists and is decent, but there's no:
-  - Architecture overview for contributors
-  - Troubleshooting guide (cross-compilation is notoriously finicky)
-  - Explanation of the weird workarounds (BUILD_DIR unsetting, libtool patching, etc.)
-
-### 13. No kernel module support
-- All drivers built-in, no loadable module support
-- Fine for current minimal use case, but limits extensibility
-- If additional hardware support is ever needed, the kernel must be recompiled
-
-### 14. man-db replaced by mandoc
-- `sys-apps/man-db` pulls in `virtual/tmpfiles` → `sys-apps/systemd-utils[tmpfiles]`, which has a hard `REQUIRED_USE` on `PYTHON_SINGLE_TARGET` with no lightweight alternative available in the tree
-- Replaced by `app-text/mandoc`, which provides `man`, `apropos`, and `whatis` without the dependency chain
-- Man page content (`sys-apps/man-pages`) is still installed
-
-### 15. nmap not included
-- `net-analyzer/nmap` has a hard `REQUIRED_USE` constraint requiring a `PYTHON_SINGLE_TARGET` selection even when all Python-dependent features (`-nse -ndiff -zenmap`) are disabled
-- Adding Python to the cross-compilation environment is too heavy a dependency for one tool
-- **Fix:** Add `dev-lang/python` to world, then add `net-analyzer/nmap PYTHON_SINGLE_TARGET=python3_12 -nse -ndiff -zenmap` to package.use; or wait until nmap upstream decouples its Python dependency
-
-### 15. No native compiler on the live system
-- `sys-devel/gcc` was omitted to keep the ISO small (gcc adds 200-400 MB uncompressed)
-- Users cannot compile software on the running system
-- **Fix:** Add `sys-devel/gcc` to world with C/C++ only (`-ada -d -fortran -go -objc -objc++`), plus `dev-lang/perl` (required by build tooling) and optionally `games-misc/cowsay` (fun, Perl script)
-- Consider building a separate "developer" ISO variant with gcc included
-
-### 17. No graphical environment
-- Minimal X stack: xorg-server (fbdev driver) + dwm + st + dmenu + terminus-font + xinit
-- Piggybacks on the existing boot-time framebuffer — no GPU driver or udev needed
-- xf86-video-fbdev talks directly to /dev/fb0; xf86-input-evdev handles keyboard/mouse
-- dwm is ~2000 lines of C; configured by editing source and recompiling
-- May require an /etc/X11/xorg.conf.d/10-evdev.conf snippet in build-rootfs.sh
-  to declare input devices explicitly (xorg-server without udev can't auto-detect them)
+#### 11. package.use/static references packages no longer in world
+- `mail-client/mutt`, `net-irc/irssi`, and `www-client/w3m` all have USE
+  overrides in `configs/portage/package.use/static` but are not in
+  `configs/portage/world` (confirmed via grep). Harmless (Portage ignores
+  USE settings for packages it isn't building) but worth a cleanup pass —
+  either re-add them to world if they were meant to ship, or delete the
+  dead entries.
 
 ---
 
@@ -203,51 +289,39 @@ suppressed and the db corrected in one command. Pages display correctly regardle
 - **`ACCEPT_KEYWORDS="*"`** — correct for embedded profile without arch parent chain
 - **`BUILD_DIR` unset before emerge** — documented workaround for multilib-minimal.eclass
 - **Bash-specific syntax in scripts** — all scripts have `#!/bin/bash` shebang
+  (`rootfs/init` is the one script that must stay POSIX `/bin/sh` — it runs
+  under BusyBox ash in the initramfs before bash exists; verified it still
+  has no bashisms after this pass's edits)
 - **Large Docker image (~1.5-2 GB)** — unavoidable with Gentoo stage3 + crossdev toolchain
-- **No kernel modules** — intentional, everything built-in for simplicity
-- **Libtool bashrc patching** — necessary workaround for static linking, properly implemented
 - **initrd uses XZ, rootfs SquashFS uses gzip** — intentional asymmetry: the initrd is small and xz decompresses once at boot; the SquashFS is decompressed continuously at runtime so gzip is faster and less memory-intensive on i486 hardware
 - **SquashFS uses gzip, not xz** — kernel has `CONFIG_SQUASHFS_XZ=y` but mksquashfs uses `-comp gzip` explicitly; xz would save ~30% space but gzip is faster to decompress on memory-constrained i486 machines; this is a deliberate trade-off
-
----
-
-## Resolved Issues (from original 2026-02-08 audit)
-
-### R1. Missing LICENSE file — RESOLVED
-- Original finding: no LICENSE file; README incorrectly said "Public domain"
-- **Fixed:** MIT License added; README updated to say "MIT License"
-
-### R2. USB boot media detection was limited — RESOLVED
-- Original finding: `rootfs/init` only scanned CD-ROM devices and disk-by-label paths; no scanning of `/dev/sd*` or `/dev/vd*`
-- **Fixed:** init now falls back to iterating `/sys/block/*`, trying every block device and its partitions
-
-### R3. No SSH host key generation — RESOLVED
-- Original finding: Dropbear installed but no host key generation; dropbear would fail to start
-- **Fixed:** `build-rootfs.sh` creates `/etc/init.d/S20keygen` which generates RSA and ECDSA host keys on first boot if missing
+- **`scripts/static-audit.sh` runs unconditionally in `build-rootfs.sh`, but never fails the build** — by design; it's a verification/reporting step, not a gate, and gating on it would require actually fixing the util-linux gap first (see Open Issues #1)
 
 ---
 
 ## Priority Summary
 
-| Priority | # | Item | Effort |
-|----------|---|------|--------|
-| Should-fix | 1 | Dynamic linking — static rebuild or BusyBox replacement | 4-8 hr |
-| Should-fix | 1b | Nethack dungeon ABI mismatch — `-m32` for CC_FOR_BUILD | 1 hr |
-| Should-fix | 2 | Document/handle root password | 15 min |
-| Should-fix | 2 | rescue label bug | fixed |
-| Should-fix | 3 | README PPP example | fixed |
-| Should-fix | 4 | Document toram | fixed |
-| Should-fix | 5 | mandoc.db stale on first boot — add makewhatis to rcS | 5 min |
-| Should-fix | 6 | Clean shutdown sequence | 30 min |
-| Should-fix | 7 | .gitignore cleanup | fixed |
-| Nice-to-have | 7 | Version update docs/tooling + SYSLINUX_VERSION | 1 hr |
-| Nice-to-have | 8 | EFI boot support | 2-4 hr |
-| Nice-to-have | 9 | Persistence support | 2-3 hr |
-| Nice-to-have | 10 | CI/CD pipeline | 1-2 hr |
-| Nice-to-have | 11 | Automated boot testing | 2-3 hr |
-| Nice-to-have | 12 | Developer docs | 1-2 hr |
-| Nice-to-have | 13 | Kernel module support | 1+ hr |
-| Nice-to-have | 14 | man-db (replaced by mandoc; man-db needs Python via tmpfiles) | 1-2 hr |
-| Nice-to-have | 15 | nmap (needs Python dep) | 1-2 hr |
-| Nice-to-have | 16 | Native compiler (gcc + perl + cowsay) | 2-4 hr |
-| Nice-to-have | 17 | Graphical environment (dwm over fbdev) | 2-4 hr |
+| Priority | Item | Status |
+|----------|------|--------|
+| Should-fix | Dynamic linking (util-linux client utils) | Open — needs build access |
+| Should-fix | dropbear never started | Open — newly found 2026-08-02 |
+| Nice-to-have | Automated QEMU boot validation (T5 harness) | Open |
+| Nice-to-have | CONTRIBUTING / developer docs | Open |
+| Nice-to-have | Kernel module build/install wiring | Open |
+| Nice-to-have | nmap (Python dep) | Open |
+| Nice-to-have | Native compiler variant | Open |
+| Nice-to-have | Graphical environment | Open |
+| Nice-to-have | `toram` ISOLINUX label | Open |
+| Nice-to-have | Dead package.use entries (mutt/irssi/w3m) | Open |
+| Resolved | Nethack ABI (`-m32`) + Dockerfile multilib check | 2026-08-02 |
+| Resolved | mandoc.db stale on boot | 2026-08-02 |
+| Resolved | Clean shutdown (runlevel 6 gap) | 2026-08-02 |
+| Resolved | Root password banner | 2026-08-02 |
+| Resolved | Static-audit tooling (partial — see Open #1) | 2026-08-02 |
+| Resolved | Persistence (`persist` param) | 2026-08-02, boot-test pending |
+| Resolved | Version-pin honesty (SYSLINUX comment, kernel/BusyBox already covered) | 2026-08-02 |
+| Resolved | Package build system (GPKG depth, man pages) | 2026-03-04 |
+| Resolved | rescue label / README PPP / toram docs / .gitignore | 2026-03-05 |
+| Resolved | EFI boot support | previously, re-verified 2026-08-02 |
+| Resolved | CI/CD pipeline | previously, re-verified 2026-08-02 |
+| Resolved | LICENSE file, USB boot detection, SSH host keygen | original audit |
