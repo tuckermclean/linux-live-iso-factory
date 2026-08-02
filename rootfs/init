@@ -16,6 +16,11 @@
 #   debug           - Enable verbose output
 #   rescue          - Force rescue shell
 #   toram           - Copy squashfs to RAM (uses more memory, allows ejecting CD)
+#   persist         - Use a partition labeled MONOLITH_PERSIST as the overlay
+#                     upper/work dir instead of tmpfs, so changes survive a
+#                     reboot. Falls back to tmpfs (with a warning) if no such
+#                     partition is found. Create one with:
+#                       mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN
 
 # Enable job control (needed for proper shell behavior)
 set -m
@@ -136,6 +141,14 @@ fi
 mkdir -p /dev/pts
 mount -t devpts devpts /dev/pts 2>/dev/null || true
 
+# Coldplug scan: populates /dev/disk/by-label/* and /dev/disk/by-uuid/* using
+# BusyBox mdev's built-in volume-ID probing (CONFIG_VOLUMEID). Needed for
+# label-based device lookup below (boot media by-label fallback, and the
+# 'persist' partition search) since there is no udev/blkid in the initramfs.
+if command -v mdev >/dev/null 2>&1; then
+    mdev -s 2>/dev/null || true
+fi
+
 # ============================================================================
 # Parse kernel command line
 # ============================================================================
@@ -151,8 +164,9 @@ ROOT_TYPE=$(cmdline_get rootfstype "auto")
 ROOT_FLAGS=$(cmdline_get rootflags "ro")
 INIT_PROG=$(cmdline_get init "/sbin/init")
 TORAM=$(cmdline_has toram && echo 1 || echo 0)
+PERSIST=$(cmdline_has persist && echo 1 || echo 0)
 
-dbg "ROOT_DEV=$ROOT_DEV ROOT_TYPE=$ROOT_TYPE INIT_PROG=$INIT_PROG TORAM=$TORAM"
+dbg "ROOT_DEV=$ROOT_DEV ROOT_TYPE=$ROOT_TYPE INIT_PROG=$INIT_PROG TORAM=$TORAM PERSIST=$PERSIST"
 
 # ============================================================================
 # If root= specified, use traditional mount (no overlay)
@@ -285,12 +299,53 @@ if [ "$OVERLAY_MODE" = "1" ]; then
         rescue_shell
     fi
 
-    # Create tmpfs for overlay upper/work
-    msg "Creating tmpfs overlay..."
-    mount -t tmpfs -o size=50% tmpfs /overlay || {
-        err "Failed to mount overlay tmpfs"
-        rescue_shell
-    }
+    # Set up storage for the overlay upper/work dirs: a persistent partition
+    # if 'persist' was requested and found, tmpfs otherwise (the default).
+    if [ "$PERSIST" = "1" ]; then
+        msg "Persistence requested — looking for MONOLITH_PERSIST partition..."
+        PERSIST_DEV=""
+        if [ -e /dev/disk/by-label/MONOLITH_PERSIST ]; then
+            PERSIST_DEV="/dev/disk/by-label/MONOLITH_PERSIST"
+        fi
+
+        if [ -n "$PERSIST_DEV" ] && wait_for_device "$PERSIST_DEV" 5; then
+            msg "Found persistence partition: $PERSIST_DEV"
+
+            # Best-effort fsck. BusyBox in the initramfs only provides
+            # fsck.minix (CONFIG_FSCK_MINIX) — there is no e2fsck/dosfsck
+            # here to check ext4/vfat, so this is a no-op unless a fsck
+            # applet for the partition's filesystem happens to be present.
+            # A journaled filesystem (ext4 is what the mkfs one-liner above
+            # recommends) replays its journal on mount, which covers the
+            # common "unclean shutdown" case even without an explicit fsck.
+            if command -v fsck >/dev/null 2>&1; then
+                msg "Checking persistence filesystem..."
+                fsck -y "$PERSIST_DEV" 2>/dev/null || dbg "fsck reported issues or is unsupported for this fs; continuing"
+            else
+                dbg "No fsck applet in initramfs; relying on filesystem journal replay on mount"
+            fi
+
+            if mount -t auto -o rw "$PERSIST_DEV" /overlay; then
+                msg "Persistence partition mounted — changes will survive reboot"
+            else
+                err "Failed to mount $PERSIST_DEV; falling back to tmpfs (changes will NOT persist)"
+                PERSIST=0
+            fi
+        else
+            err "'persist' requested but no MONOLITH_PERSIST partition found"
+            err "Falling back to tmpfs (changes will NOT persist). Create one with:"
+            err "  mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN"
+            PERSIST=0
+        fi
+    fi
+
+    if [ "$PERSIST" != "1" ]; then
+        msg "Creating tmpfs overlay..."
+        mount -t tmpfs -o size=50% tmpfs /overlay || {
+            err "Failed to mount overlay tmpfs"
+            rescue_shell
+        }
+    fi
     mkdir -p /overlay/upper /overlay/work
 
     # Mount overlayfs

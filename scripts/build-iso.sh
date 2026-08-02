@@ -152,6 +152,7 @@ SAY   linux     - Normal boot (text console)
 SAY   fb        - Framebuffer 1024x768
 SAY   fb800     - Framebuffer 800x600
 SAY   serial    - Serial console
+SAY   persist   - Boot with persistent storage (needs MONOLITH_PERSIST partition)
 SAY   vga=ask   - Choose video mode
 SAY
 
@@ -195,6 +196,16 @@ LABEL debug
     MENU LABEL Boot with Debug Output
     KERNEL /boot/vmlinuz
     APPEND initrd=/boot/initrd.img debug
+
+# Persistent storage — init looks for a partition labeled MONOLITH_PERSIST
+# and, if found, uses it as the overlay upper/work dir instead of tmpfs, so
+# changes survive a reboot. Falls back to tmpfs (with a warning) if the
+# partition isn't found. Create the partition with:
+#   mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN
+LABEL persist
+    MENU LABEL Boot with Persistence (MONOLITH_PERSIST partition)
+    KERNEL /boot/vmlinuz
+    APPEND initrd=/boot/initrd.img persist
 
 # Rescue shell — passes 'rescue' to kernel so init drops to a shell
 LABEL rescue
@@ -264,6 +275,14 @@ menuentry "tHE m0n0LiTH ${BUILD_VERSION} (rescue shell)" {
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (toram)" {
     linux /boot/vmlinuz toram    initrd /boot/initrd.img
+}
+
+# Persistent storage — see the LABEL persist comment above (isolinux.cfg) for
+# how init finds and uses the MONOLITH_PERSIST partition. Create one with:
+#   mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN
+menuentry "tHE m0n0LiTH ${BUILD_VERSION} (persistent)" {
+    linux /boot/vmlinuz persist
+    initrd /boot/initrd.img
 }
 GRUBEOF
 
