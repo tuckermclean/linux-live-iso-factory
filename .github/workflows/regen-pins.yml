@@ -139,6 +139,28 @@ jobs:
       - name: Regenerate versions.lock from the rebuilt image
         run: make update-versions
 
+      - name: Reclaim ownership of container-written files
+        if: always()
+        # make update-versions writes versions.lock from inside a root Docker
+        # container (bind-mounted configs/), so it lands root-owned and
+        # unreadable to the non-root runner ("Permission denied" on git add /
+        # artifact upload). Reclaim ownership before anything reads it.
+        run: sudo chown -R "$(id -u):$(id -g)" configs Dockerfile || true
+
+      - name: Upload regenerated locks as an artifact
+        if: always()
+        # Belt-and-suspenders: even if the push below fails, the regenerated
+        # locks are retrievable here without repeating the ~50min rebuild.
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-locks-${{ github.run_id }}
+          path: |
+            Dockerfile
+            configs/portage/versions.lock
+            configs/portage/crossdev.lock
+          retention-days: 14
+          if-no-files-found: warn
+
       - name: Commit regenerated locks back to the branch
         run: |
           set -euo pipefail
