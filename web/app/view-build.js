@@ -75,7 +75,7 @@ async function renderBuild(root, tag) {
     pillar("Unowned files", pm["Unowned Files"] || "PASS"),
     pillar("Builder CVEs", pm["Builder CVEs"] || (builderVulns.length ? "FAIL" : "PASS")),
     h("div", { class: "row between", style: { paddingTop: "4px" }}, [
-      h("span", { class: "mutedm mono tiny" }, `grype · CVE DB ${pm["CVE DB built"] || ""}`),
+      h("span", { class: "mutedm mono tiny" }, `${pm["Scanner"] || "grype (version unknown)"} · DB built ${pm["CVE DB built"] || "unknown"}`),
     ]),
   ]));
 
@@ -142,7 +142,7 @@ function renderOverview(root, { tag, pm, licSum, vulns, portagePkgs, data }) {
   const facts = h("dl", { class: "kv" });
   const factKeys = [
     "Build Type", "Timestamp", "Packages", "Unmapped CPEs",
-    "Scanner", "CVE DB built",
+    "Scanner", "CVE DB built", "CVE DB schema", "CVE Policy",
   ];
   factKeys.forEach(k => {
     if (pm[k]) { facts.appendChild(h("dt", {}, k)); facts.appendChild(h("dd", {}, pm[k])); }
@@ -176,15 +176,39 @@ function renderOverview(root, { tag, pm, licSum, vulns, portagePkgs, data }) {
   ]);
   grid.appendChild(card("LICENSE COMPLIANCE", licBody, { meta: `${licSum.summary.total} components` }));
 
-  // CVEs summary
+  // CVEs summary — never state a bare "no findings" without also stating what
+  // was actually scanned, by what, and against what DB. See docs/cve-gate.md:
+  // a "PASS" with no scanner/DB/coverage context is exactly the unfalsifiable
+  // claim this dashboard used to make.
+  const scannerLabel = pm["Scanner"] || "grype (version unknown)";
+  const dbBuilt = pm["CVE DB built"] || "unknown";
+  const covScanned = parseInt(pm["CVE Scanned"], 10);
+  const covUnscanned = parseInt(pm["CVE Unscanned"], 10);
+  const covMatched = parseInt(pm["CVE Matched"], 10);
+  const hasCoverageData = !Number.isNaN(covScanned);
+  const totalPkgs = pm["Packages"] || portagePkgs.length;
+
+  const coverageNote = hasCoverageData
+    ? h("p", { class: "mutedm tiny mt-8" }, [
+        `${scannerLabel} · DB built ${dbBuilt} · `,
+        `${covScanned} of ${totalPkgs} packages scanned (had a CPE), `,
+        `${covMatched || 0} matched a CVE, ${covUnscanned || 0} `,
+        covUnscanned === 1 ? "package has" : "packages have",
+        " no CPE mapping and were never evaluated.",
+      ])
+    : h("p", { class: "mutedm tiny mt-8" }, `${scannerLabel} · DB built ${dbBuilt}`);
+
   let cveBody;
   if (!vulns.length) {
-    cveBody = h("div", { class: "callout pass" }, [
-      h("div", { class: "glyph" }, "✓"),
-      h("div", {}, [
-        h("h4", {}, "No CVE findings"),
-        h("p", {}, `Grype matched ${pm["Packages"] || portagePkgs.length} packages against the NVD snapshot and found nothing.`),
+    cveBody = h("div", {}, [
+      h("div", { class: "callout pass" }, [
+        h("div", { class: "glyph" }, "✓"),
+        h("div", {}, [
+          h("h4", {}, "No gating CVE findings"),
+          h("p", {}, `${scannerLabel} found zero CVEs among the ${covScanned || totalPkgs} scanned package(s).${covUnscanned ? ` ${covUnscanned} additional package(s) were unscanned (no CPE) — not counted as clean.` : ""}`),
+        ]),
       ]),
+      coverageNote,
     ]);
   } else {
     const sev = groupBySeverity(vulns);
@@ -194,9 +218,10 @@ function renderOverview(root, { tag, pm, licSum, vulns, portagePkgs, data }) {
         h("div", { class: "glyph" }, "!"),
         h("div", {}, [h("h4", {}, `${vulns.length} vulnerabilities require review`), h("p", {}, "Open the CVEs tab for details, affected components, and suggested fixes.")]),
       ]),
+      coverageNote,
     ]);
   }
-  grid.appendChild(card("CVE POSTURE", cveBody, { meta: pm["Scanner"] || "grype" }));
+  grid.appendChild(card("CVE POSTURE", cveBody, { meta: scannerLabel }));
 
   // Unowned
   const u = data.unowned?.summary;
@@ -316,23 +341,84 @@ function extractPkgLicense(p) {
 }
 function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
-function renderCves(root, { vulns, builderVulns, pm }) {
+function renderCves(root, { vulns, builderVulns, pm, data }) {
+  const cov = data.cveCoverage;         // cve-report-coverage.json (target) — may be absent on older builds
+  const builderCov = data.builderCveCoverage;
+  const scannerLabel = pm["Scanner"] || "grype (version unknown)";
+
+  // ── Scanner / DB / policy banner — always shown first, before any verdict.
+  // This is the fix for the original problem: a PASS/FAIL used to render with
+  // no way to tell what produced it. See docs/cve-gate.md.
+  root.appendChild(card("SCANNER, DATABASE & POLICY", h("dl", { class: "kv" }, [
+    h("dt", {}, "Scanner"), h("dd", {}, scannerLabel),
+    h("dt", {}, "Vulnerability DB built"), h("dd", {}, pm["CVE DB built"] || "unknown"),
+    h("dt", {}, "DB schema"), h("dd", {}, pm["CVE DB schema"] || "—"),
+    h("dt", {}, "DB checksum"), h("dd", {}, pm["CVE DB checksum"] ? hashCell(pm["CVE DB checksum"], { short: false }) : "—"),
+    h("dt", {}, "Policy"), h("dd", {}, pm["CVE Policy"]
+      // Policy is a repo config file, not an S3 attestation artifact — link to
+      // the source of truth on GitHub (master; the SHA-256 below is what was
+      // actually loaded for this specific build, so a later policy edit is
+      // still detectable even though this link isn't commit-pinned).
+      ? h("a", { href: `https://github.com/tuckermclean/linux-live-iso-factory/blob/master/${pm["CVE Policy"].replace(/^\/?configs\//, "configs/")}`, target: "_blank", class: "mono tiny" }, pm["CVE Policy"])
+      : "—"),
+    h("dt", {}, "Policy SHA-256"), h("dd", {}, pm["CVE Policy SHA-256"] ? hashCell(pm["CVE Policy SHA-256"], { short: false }) : "—"),
+  ])));
+
+  if (pm["CVE DB age warning"]) {
+    root.appendChild(h("div", { class: "callout warn mt-16" }, [
+      h("div", { class: "glyph" }, "!"),
+      h("div", {}, [h("h4", {}, "Vulnerability DB may be stale"), h("p", {}, pm["CVE DB age warning"])]),
+    ]));
+  }
+
+  // ── Coverage — scanned vs matched vs clean vs UNSCANNED. An "UNSCANNED"
+  // component is never folded into "clean" or "PASS" anywhere in this UI.
+  const scanned = parseInt(pm["CVE Scanned"], 10) || 0;
+  const matched = parseInt(pm["CVE Matched"], 10) || 0;
+  const clean = parseInt(pm["CVE Clean"], 10) || 0;
+  const unscanned = parseInt(pm["CVE Unscanned"], 10) || 0;
+  const total = scanned + unscanned;
+  root.appendChild(card("SCAN COVERAGE", h("div", {}, [
+    barList([
+      { label: "Clean (scanned, 0 findings)", value: clean, color: "var(--pass)" },
+      { label: "Matched (>=1 finding)", value: matched, color: "var(--fail)" },
+      { label: "Unscanned (no CPE — never evaluated)", value: unscanned, color: "var(--warn)" },
+    ], { w: 420, max: total || 1 }),
+    h("div", { class: "mono tiny mutedm mt-8" }, `${total} total package(s) · ${scanned} scanned · ${unscanned} unscanned`),
+  ]), { meta: "Pillar 3" }));
+
+  if (cov && (cov.unscanned_components || []).length) {
+    root.appendChild(card("UNSCANNED COMPONENTS", h("div", { class: "table-wrap", style: { maxHeight: "300px" }}, [
+      h("table", { class: "t" }, [
+        h("thead", {}, h("tr", {}, [th("Package"), th("Version")])),
+        h("tbody", {}, cov.unscanned_components.map(c => h("tr", {}, [
+          h("td", { class: "mono" }, c.name),
+          h("td", { class: "mono mutedm" }, c.version || "—"),
+        ]))),
+      ]),
+    ]), { pad0: true, meta: `${cov.unscanned_components.length} — no CPE mapping, no CVE match ever attempted` }));
+  }
+
+  // ── Findings — always render the table structure, even when zero.
   const all = vulns.map(v => ({ ...v, _scope: "target" })).concat(builderVulns.map(v => ({ ...v, _scope: "builder" })));
+  // Enrich with gating/waived/fix-state from the coverage report when available.
+  const covFindingsByCve = new Map();
+  (cov?.findings || []).forEach(f => covFindingsByCve.set(f.cve, f));
+  (builderCov?.findings || []).forEach(f => { if (!covFindingsByCve.has(f.cve)) covFindingsByCve.set(f.cve, f); });
+
   if (!all.length) {
-    root.appendChild(h("div", { class: "callout pass" }, [
+    root.appendChild(h("div", { class: "callout pass mt-16" }, [
       h("div", { class: "glyph" }, "✓"),
       h("div", {}, [
-        h("h4", {}, "No CVE findings"),
-        h("p", {}, `Grype ${pm["Scanner"] ? "(" + pm["Scanner"] + ") " : ""}matched all mapped CPEs against the current NVD snapshot and returned zero vulnerabilities.`),
+        h("h4", {}, "Zero findings"),
+        h("p", {}, `${scannerLabel} returned zero matches across ${scanned} scanned package(s). `
+          + (unscanned ? `${unscanned} package(s) were not evaluated (no CPE) — this is not the same as "clean." ` : "")
+          + "See the fixture-based CVE gate canary (scripts/run-cve-canary.sh, runs in CI) for evidence the scanner is capable of finding a known CVE."),
       ]),
-    ]));
-    root.appendChild(h("div", { class: "codeblock mt-16" }, [
-      copyBtn(`grype sbom:bom.cdx.json --output cyclonedx-json > cve-report.cdx.json`),
-      `grype sbom:bom.cdx.json --output cyclonedx-json > cve-report.cdx.json`,
     ]));
     return;
   }
-  // If vulns exist, render table
+
   const head = h("div", { class: "row between mb-12" }, [
     h("div", { class: "row gap-8 wrap" }, Object.entries(groupBySeverity(all)).map(([k, n]) =>
       h("span", { class: `chip ${sevKind(k)}` }, `${k} · ${n}`))),
@@ -342,14 +428,27 @@ function renderCves(root, { vulns, builderVulns, pm }) {
 
   const tableCard = card("CVE FINDINGS", h("div", { class: "table-wrap", style: { maxHeight: "640px" }}, [
     h("table", { class: "t" }, [
-      h("thead", {}, h("tr", {}, [th("CVE"), th("Severity"), th("Component"), th("Scope"), th("Fix")])),
-      h("tbody", {}, all.map(v => h("tr", {}, [
-        h("td", { class: "mono" }, h("a", { href: v.source?.url || "#", target: "_blank" }, v.id || "—")),
-        h("td", {}, h("span", { class: `chip ${sevKind(v.ratings?.[0]?.severity || "info")}` }, (v.ratings?.[0]?.severity || "info").toUpperCase())),
-        h("td", { class: "mono tiny" }, (v.affects?.[0]?.ref || "—").replace(/^pkg:[^\/]+\//, "")),
-        h("td", {}, h("span", { class: "chip neutral" }, v._scope.toUpperCase())),
-        h("td", { class: "mono tiny mutedm" }, v.analysis?.response?.[0] || "—"),
-      ])))
+      h("thead", {}, h("tr", {}, [th("CVE"), th("Severity"), th("Component"), th("Scope"), th("Fix"), th("Gate")])),
+      h("tbody", {}, all.map(v => {
+        const cveId = v.id || "—";
+        const covF = covFindingsByCve.get(cveId);
+        const gateChip = covF
+          ? (covF.waived
+              ? h("span", { class: "chip warn", title: covF.waiver_justification || "" }, "WAIVED")
+              : (covF.gating ? h("span", { class: "chip fail" }, "GATING") : h("span", { class: "chip neutral" }, "informational")))
+          : h("span", { class: "chip neutral" }, "—");
+        const fixLabel = covF
+          ? `${covF.fix_state || "unknown"}${(covF.fix_versions || []).length ? " → " + covF.fix_versions.join(", ") : ""}`
+          : (v.analysis?.response?.[0] || "—");
+        return h("tr", {}, [
+          h("td", { class: "mono" }, h("a", { href: v.source?.url || covF?.url || "#", target: "_blank" }, cveId)),
+          h("td", {}, h("span", { class: `chip ${sevKind(v.ratings?.[0]?.severity || covF?.severity || "info")}` }, (v.ratings?.[0]?.severity || covF?.severity || "info").toUpperCase())),
+          h("td", { class: "mono tiny" }, (v.affects?.[0]?.ref || "—").replace(/^pkg:[^\/]+\//, "")),
+          h("td", {}, h("span", { class: "chip neutral" }, v._scope.toUpperCase())),
+          h("td", { class: "mono tiny mutedm" }, fixLabel),
+          h("td", {}, gateChip),
+        ]);
+      }))
     ])
   ]), { pad0: true });
   root.appendChild(tableCard);

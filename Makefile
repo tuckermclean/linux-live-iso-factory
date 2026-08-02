@@ -398,6 +398,7 @@ attestation: ensure-volume ensure-dirs
 		--build-tag $(BUILD_VERSION) \
 		--overrides /configs/attestation/cpe-overrides.yaml \
 		--policy /configs/attestation/license-policy.yaml \
+		--cve-policy /configs/attestation/cve-policy.yaml \
 		--output-dir /output/attestation
 
 # Attest to the build environment (Pillar 5): builder image SBOM, provenance, and CVE scan.
@@ -411,6 +412,7 @@ attest-builder: ensure-volume ensure-dirs
 		--build-tag $(BUILD_VERSION) \
 		--overrides /configs/attestation/cpe-overrides.yaml \
 		--policy /configs/attestation/license-policy.yaml \
+		--cve-policy /configs/attestation/cve-policy.yaml \
 		--output-dir /output/attestation \
 		--include-builder \
 		--builder-digest $$(docker inspect --format='{{.Id}}' $(IMAGE_NAME) 2>/dev/null || echo unknown)
