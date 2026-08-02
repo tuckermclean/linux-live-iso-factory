@@ -122,7 +122,7 @@ GITHUB_ENV := \
         extract build-rootfs \
         menuconfig-kernel menuconfig-busybox \
         iso all test test-uefi shell \
-        check-updates update-versions update-build-pins update-all \
+        check-updates update-versions update-build-pins update-all bump-pins \
         list-packages show-failed regen-manifest \
         attestation attest-builder dashboard grype-db-update \
         clean clean-build clean-all ensure-dirs ensure-volume
@@ -168,6 +168,7 @@ help:
 	@echo "  update-versions      - Update versions.lock with latest versions"
 	@echo "  update-build-pins    - Update stage3 date + epoch in Dockerfile"
 	@echo "  update-all           - Update everything (build pins + package versions)"
+	@echo "  bump-pins            - Correctly bump BUILD_EPOCH: pins -> rebuild image -> versions.lock"
 	@echo "  list-packages        - Show packages in world file"
 	@echo "  show-failed          - Show failed packages from last build"
 	@echo ""
@@ -491,6 +492,20 @@ update-build-pins:
 # Update everything: Dockerfile pins + portage package versions
 update-all: update-build-pins update-versions
 	@echo "==> All pins updated. Run 'make build-image' to rebuild the factory."
+
+# Correctly bump BUILD_EPOCH end to end: unlike `update-all` (which updates
+# versions.lock against whatever image is already local, i.e. the PREVIOUS
+# epoch if the Dockerfile just changed), this rebuilds the image at the NEW
+# epoch *between* the pin bump and the versions.lock regeneration, so
+# versions.lock actually reflects the new epoch's portage tree. This is the
+# same sequence .github/workflows/pin-bump.yml automates in CI — see
+# docs/version-pinning.md. crossdev.lock still intentionally lags by one
+# cycle (queried from the pre-bump image inside update-build-pins.sh); that
+# is documented, existing behavior, not a bug in this target.
+bump-pins: update-build-pins build-image update-versions
+	@echo "==> BUILD_EPOCH bumped and both locks regenerated against the new epoch."
+	@echo "    Review the diff, then validate with a full 'make all' + 'make attestation'"
+	@echo "    (or push a branch and let .github/workflows/pin-bump.yml / build.yml do it)."
 
 # List packages in world file
 list-packages:
