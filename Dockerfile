@@ -57,6 +57,24 @@ RUN emerge-webrsync --revert=${BUILD_EPOCH}
 # cmake:   prevents BDEPEND from pulling in cmake-9999 (live ebuild)
 # mandoc:  host makewhatis called by bashrc hook to build whatis DB in sysroot
 # ncurses: host tic needed to install terminfo DB into sysroot during cross-compile
+#
+# Version pinning: none of these packages carry an explicit version atom.
+# They are host build tools (not shipped in the ISO) and are pinned
+# *indirectly* via BUILD_EPOCH: emerge-webrsync --revert=${BUILD_EPOCH} above
+# fixes the portage snapshot date, which in turn fixes which version of each
+# package is "best visible" here. This is intentional and matches the
+# crossdev toolchain's own pinning story (crossdev.lock + versions.lock
+# still pin exact versions for the *target* toolchain and world packages —
+# see configs/portage/versions.lock, managed by `make update-versions`).
+# There is deliberately no per-atom pin (e.g. "=sys-boot/syslinux-6.03") for
+# these host tools: that would fight the epoch model by letting a single
+# tool drift ahead of/behind the snapshot it was validated against. If a
+# specific host tool version ever needs to be held back independent of the
+# epoch, add it to a package.mask file under configs/portage/ rather than
+# an uninspected Dockerfile ENV var: a stale "ENV SYSLINUX_VERSION=6.03"
+# previously lived here as pure documentation. It was never read by emerge
+# and could silently drift from what actually got installed, so it has
+# been replaced by this comment rather than reintroduced as a misleading pin.
 RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace \
         sys-devel/crossdev \
         app-portage/gentoolkit \
