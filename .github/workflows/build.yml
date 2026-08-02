@@ -354,6 +354,22 @@ jobs:
           # "distribution" externalReference URL for the ISO artifact.
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
 
+      - name: Read attestation gate verdict
+        id: verdict
+        if: always()
+        # Surface the pass/fail verdict BEFORE the signing step so we never
+        # issue a public Sigstore attestation for a build that failed the
+        # CVE/license/unowned gate.
+        run: |
+          SUMMARY=output/attestation/attestation-summary.json
+          if [ -f "$SUMMARY" ]; then
+            OVERALL=$(python3 -c "import json; print(json.load(open('$SUMMARY')).get('overall','fail'))")
+          else
+            OVERALL="fail"
+          fi
+          echo "overall=$OVERALL" >> "$GITHUB_OUTPUT"
+          echo "==> Attestation gate verdict: $OVERALL"
+
       - name: Validate CycloneDX SBOM schema
         if: always()
         run: |
@@ -402,8 +418,11 @@ jobs:
           echo "predicate=$PREDICATE" >> "$GITHUB_OUTPUT"
 
       - name: Sign SLSA provenance (Sigstore via GitHub OIDC)
+        # Only sign when the gate verdict is PASS. Otherwise a build that failed
+        # the CVE/license/unowned gate would still get a public Sigstore
+        # attestation, and `gh attestation verify` on its ISO would read green.
         uses: actions/attest@v2
-        if: always() && steps.read-predicate.outcome == 'success'
+        if: always() && steps.read-predicate.outcome == 'success' && steps.verdict.outputs.overall == 'pass'
         with:
           subject-path: output/themonolith-${{ env.BUILD_VERSION }}.iso
           predicate-type: https://slsa.dev/provenance/v1

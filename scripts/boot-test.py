@@ -55,6 +55,7 @@ proven out by CI logs, not by a local run.
 """
 
 import argparse
+import os
 import re
 import shutil
 import sys
@@ -117,7 +118,7 @@ def find_ovmf_code(explicit):
     if explicit:
         return explicit
     for candidate in OVMF_CODE_CANDIDATES:
-        if shutil.which("test") and __import__("os").path.isfile(candidate):
+        if os.path.isfile(candidate):
             return candidate
     return None
 
@@ -553,7 +554,7 @@ MODE_RUNNERS = {
 MODE_DEFAULT_RAM = {
     "bios": 64,
     "uefi": 512,
-    "toram": 128,
+    "toram": 512,  # copies the full squashfs into RAM + a 50% tmpfs overlay; 128M OOMs
 }
 
 

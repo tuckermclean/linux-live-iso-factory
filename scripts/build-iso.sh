@@ -246,10 +246,14 @@ set default=1
 # the ISO9660 partition before any linux/initrd commands run.
 search --no-floppy --set=root --label MONOLITH
 
-# Graphical terminal with background image
+# Graphical terminal with background image, mirrored to serial so the menu is
+# visible AND selectable over ttyS0 — headless/CI UEFI boots never see gfxterm.
 insmod gfxterm
 insmod png
-terminal_output gfxterm
+insmod serial
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+terminal_input console serial
+terminal_output gfxterm serial
 background_image /boot/grub/bootbg.png
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION}" {
