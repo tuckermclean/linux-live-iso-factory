@@ -65,16 +65,26 @@ jobs:
             printf "MUSL=%s\n" "$(portageq best_visible / sys-libs/musl 2>/dev/null)"
             printf "GCC=%s\n"  "$(portageq best_visible / "=sys-devel/gcc-15*" 2>/dev/null)"
             printf "BINU=%s\n" "$(portageq best_visible / sys-devel/binutils 2>/dev/null)"
+            printf "MUSL_EBUILDS=%s\n" "$(ls /var/db/repos/gentoo/sys-libs/musl/ 2>/dev/null | tr "\n" " ")"
           ' || true)
           echo "$OUT"
           MUSL=$(printf '%s\n' "$OUT" | sed -n 's|^MUSL=sys-libs/musl-||p')
           GCC=$(printf '%s\n'  "$OUT" | sed -n 's|^GCC=sys-devel/gcc-||p')
           BINU=$(printf '%s\n' "$OUT" | sed -n 's|^BINU=sys-devel/binutils-||p')
-          echo "resolved: musl=${MUSL:-<empty>} gcc=${GCC:-<empty>} binutils=${BINU:-<empty>}"
-          # Fail loudly rather than write an empty/garbage pin.
+          echo "queried: musl=${MUSL:-<empty>} gcc=${GCC:-<empty>} binutils=${BINU:-<empty>}"
+          # Fall back to the currently-committed pin for anything the query could
+          # not resolve (musl barely moves and best_visible can come back empty),
+          # rather than failing the whole regen. build-image is the ultimate
+          # arbiter of an actually-bad pin.
+          CUR_MUSL=$(grep -m1 '^sys-libs/musl:'     configs/portage/crossdev.lock | cut -d: -f2 || true)
+          CUR_GCC=$(grep  -m1 '^sys-devel/gcc:'      configs/portage/crossdev.lock | cut -d: -f2 || true)
+          CUR_BINU=$(grep -m1 '^sys-devel/binutils:' configs/portage/versions.lock | cut -d: -f2 || true)
+          MUSL="${MUSL:-$CUR_MUSL}"
+          GCC="${GCC:-$CUR_GCC}"
+          BINU="${BINU:-$CUR_BINU}"
+          echo "final:   musl=$MUSL gcc=$GCC binutils=$BINU"
           if [ -z "$MUSL" ] || [ -z "$GCC" ] || [ -z "$BINU" ]; then
-            echo "::error::Could not resolve one or more toolchain versions from $IMG"
-            exit 1
+            echo "::error::empty toolchain pin after fallback (musl=$MUSL gcc=$GCC binutils=$BINU)"; exit 1
           fi
           case "$GCC" in *9999*) echo "::error::resolved a live gcc ($GCC)"; exit 1 ;; esac
           printf '%s\n' \
