@@ -160,8 +160,19 @@ EOF
     head -c -128 /configs/themonolith.ans > "$ROOTFS_DIR/etc/motd"
     printf 'tHE m0n0LiTH %s\n\n' "${BUILD_VERSION:-unknown}" >> "$ROOTFS_DIR/etc/motd"
 
-    # /etc/issue - shown before login prompt on the TTY
-    printf 'The Monolith %s - \\l\n' "${BUILD_VERSION:-unknown}" > "$ROOTFS_DIR/etc/issue"
+    # /etc/issue - shown before login prompt on the TTY.
+    # Root has no password (see /etc/shadow above) — intentional for a live
+    # ISO, but called out explicitly here rather than left as a silent
+    # default, so nobody boots this on a network they don't control assuming
+    # it's protected.
+    cat > "$ROOTFS_DIR/etc/issue" << EOF
+The Monolith ${BUILD_VERSION:-unknown} - \\l
+
+Root login has NO PASSWORD. This is intentional for a live/rescue ISO.
+Set one with "passwd" before exposing this system, or its network
+services (e.g. dropbear SSH, if started), to an untrusted network.
+
+EOF
 
     # /etc/os-release - standard distro identification
     cat > "$ROOTFS_DIR/etc/os-release" << EOF
