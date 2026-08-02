@@ -24,6 +24,8 @@ on:
       - Dockerfile
       - configs/portage/crossdev.lock
       - configs/portage/versions.lock
+      - scripts/update-versions.sh
+      - scripts/update-build-pins.sh
   workflow_dispatch:
 
 permissions:
