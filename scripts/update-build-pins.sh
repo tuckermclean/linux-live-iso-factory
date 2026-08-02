@@ -20,6 +20,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKERFILE="${SCRIPT_DIR}/../Dockerfile"
 CROSSDEV_LOCK="${SCRIPT_DIR}/../configs/portage/crossdev.lock"
+CONFIGS_DIR="$(cd "${SCRIPT_DIR}/../configs" && pwd)"
 BUILDER_IMAGE="monolith-builder"
 
 # Docker Hub API endpoint for gentoo/stage3 tags
@@ -146,9 +147,16 @@ query_portage_version() {
     if ! docker image inspect "${BUILDER_IMAGE}" >/dev/null 2>&1; then
         return 0
     fi
-    docker run --rm "${BUILDER_IMAGE}" \
+    # The builder image's repos.conf points the 'monolith' overlay at
+    # /configs/overlay, so /configs MUST be mounted or portageq aborts with
+    # "nonexistent directory: '/configs/overlay'" (empty output, non-zero exit).
+    # Mirror the mount the rest of the build uses. The trailing '|| true' keeps
+    # a transient/partial query failure from aborting the whole bump under
+    # 'set -euo pipefail' — update_crossdev_lock() falls back to the current
+    # pins when this returns empty (see its empty-result guard).
+    docker run --rm -v "${CONFIGS_DIR}:/configs:ro" "${BUILDER_IMAGE}" \
         portageq best_visible / "${atom}" 2>/dev/null \
-        | sed "s|${strip_prefix}||"
+        | sed "s|${strip_prefix}||" || true
 }
 
 # Update crossdev.lock with best versions from the current builder image.
