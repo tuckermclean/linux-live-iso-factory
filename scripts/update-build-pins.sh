@@ -9,8 +9,11 @@
 # Runs on the HOST (no Docker required).
 #
 # Usage:
-#   update-build-pins.sh check    # Show current pins vs available latest
-#   update-build-pins.sh update   # Fetch latest and update Dockerfile
+#   update-build-pins.sh check              # Show current pins vs available latest
+#   update-build-pins.sh update              # Fetch latest and update Dockerfile
+#   update-build-pins.sh update YYYYMMDD     # Force a specific target epoch instead
+#                                             # of "latest" (still verified against
+#                                             # distfiles.gentoo.org before applying)
 
 set -euo pipefail
 
@@ -23,11 +26,11 @@ BUILDER_IMAGE="monolith-builder"
 DOCKERHUB_TAGS_URL="https://hub.docker.com/v2/repositories/gentoo/stage3/tags?page_size=100&ordering=last_updated&name=amd64-openrc-"
 
 usage() {
-    echo "Usage: $0 <command>"
+    echo "Usage: $0 <command> [YYYYMMDD]"
     echo ""
     echo "Commands:"
-    echo "  check     Show current pins vs available latest"
-    echo "  update    Fetch latest and update Dockerfile"
+    echo "  check                Show current pins vs available latest"
+    echo "  update [YYYYMMDD]    Fetch latest (or use the given date) and update Dockerfile"
     exit 1
 }
 
@@ -208,19 +211,34 @@ EOF
         echo "  sys-devel/gcc: ${current_gcc} → ${gcc_ver}"
 }
 
-# Command: update
+# Command: update [YYYYMMDD]
+# With no argument, fetches and uses the latest available stage3 date.
+# With an explicit YYYYMMDD argument, forces that date as the target epoch
+# instead (e.g. for a manually-triggered "force target epoch" bump). The
+# forced date is still subject to the same portage-snapshot verification
+# below — an unverified date is never applied.
 cmd_update() {
     echo "==> Updating Dockerfile build pins"
 
+    local forced_date="${1:-}"
     local current_epoch latest_date new_source_epoch
     current_epoch=$(get_current_epoch)
 
-    echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
-    latest_date=$(fetch_latest_stage3_date)
+    if [[ -n "${forced_date}" ]]; then
+        if ! [[ "${forced_date}" =~ ^[0-9]{8}$ ]]; then
+            echo "ERROR: forced target epoch must be YYYYMMDD, got: ${forced_date}" >&2
+            exit 1
+        fi
+        echo "  Using forced target epoch: ${forced_date}"
+        latest_date="${forced_date}"
+    else
+        echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
+        latest_date=$(fetch_latest_stage3_date)
 
-    if [[ -z "${latest_date}" ]]; then
-        echo "ERROR: Could not fetch latest stage3 date — network issue?" >&2
-        exit 1
+        if [[ -z "${latest_date}" ]]; then
+            echo "ERROR: Could not fetch latest stage3 date — network issue?" >&2
+            exit 1
+        fi
     fi
 
     # Verify the portage snapshot exists for this date before committing to it
@@ -258,6 +276,6 @@ cmd_update() {
 # Main
 case "${1:-}" in
     check)  cmd_check ;;
-    update) cmd_update ;;
+    update) cmd_update "${2:-}" ;;
     *)      usage ;;
 esac
