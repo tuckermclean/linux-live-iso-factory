@@ -212,6 +212,47 @@ mirrors what actually happened historically:
 4. Repeat until green, then merge the PR normally. Nothing in this pipeline
    merges on your behalf.
 
+## Caveat: `savedconfig` changes require a binpkg purge
+
+`build.yml` restores per-package binary packages (`.gpkg.tar`) from
+`s3://<bucket>/packages/<BUILD_EPOCH>/` and builds with `--usepkg`
+(`scripts/build-packages.sh`). Portage's binpkg reuse keys on **version + USE
+flags + CHOST** — it does **not** hash `savedconfig` contents. So editing a
+`savedconfig`-governed package's config **without bumping its version** yields a
+binpkg Portage treats as identical to the cached one, and the **stale binary
+(built with the old config) is silently reused** — the config change never takes
+effect in the built image.
+
+Packages this affects in this repo:
+
+| Package | Config file |
+| --- | --- |
+| `sys-apps/busybox` | `configs/portage/savedconfig/sys-apps/busybox` (applet set, e.g. `CONFIG_FINDFS`) |
+| `sys-kernel/monolith-kernel` | `configs/kernel.config` |
+
+**When you change one of these configs, purge its cached binpkg for the current
+epoch before the next build** (or the change is a no-op):
+
+```sh
+# Targeted purge (recommended) — busybox:
+aws s3 rm --recursive "s3://<bucket>/packages/<BUILD_EPOCH>/sys-apps/busybox/"
+# Kernel:
+aws s3 rm --recursive "s3://<bucket>/packages/<BUILD_EPOCH>/sys-kernel/monolith-kernel/"
+```
+
+Bumping the package version (or `BUILD_EPOCH`, which changes the whole cache
+path) also invalidates it naturally. A durable fix would be to opt
+`savedconfig` packages out of binpkg reuse (`emerge --usepkg-exclude`) or to key
+the cache on a config hash — tracked as a follow-up. (`busybox` is cheap to
+rebuild every time; the kernel is not, which is why this is a purge-on-change
+rule rather than an unconditional rebuild.)
+
+> Real example: the `CONFIG_FINDFS=y` change that makes the `persist` feature's
+> primary label lookup work will **not** take effect until the cached busybox
+> binpkg for the current epoch is purged. (The init script's superblock-scan
+> fallback keeps `persist` working regardless, but the `findfs` path stays
+> absent until the rebuild.)
+
 ## Files
 
 | File | Purpose |
