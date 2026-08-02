@@ -3,7 +3,9 @@
 # build-iso.sh - Create bootable ISO image (BIOS + UEFI)
 #
 # This script creates a hybrid ISO bootable via BIOS (ISOLINUX) and UEFI (GRUB).
-# The EFI System Partition contains bootia32.efi and bootx64.efi for 32/64-bit UEFI.
+# The EFI System Partition contains BOOTX64.EFI for 64-bit UEFI. (32-bit UEFI /
+# bootia32.efi is not currently built — GRUB has the efi-32 platform available
+# but no i386-efi image is emitted here yet.)
 #
 # The ISO can be tested with:
 #   qemu-system-i386 -cdrom boot.iso -m 64M

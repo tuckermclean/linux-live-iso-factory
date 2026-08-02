@@ -215,6 +215,24 @@ fi
 [ -f /etc/profile.local ] && . /etc/profile.local
 EOF
 
+    # /etc/profile.d/10-dropbear-hint.sh — dropbear SSH is installed but NOT
+    # started at boot (deliberate for a live ISO). Show the user, on interactive
+    # login, the one command to start it if they want remote access. The ECDSA
+    # host key is generated at boot by /etc/init.d/S20keygen.
+    mkdir -p "$ROOTFS_DIR/etc/profile.d"
+    cat > "$ROOTFS_DIR/etc/profile.d/10-dropbear-hint.sh" << 'EOF'
+# Interactive-shell hint: dropbear is available but not running by default.
+case "$-" in
+    *i*)
+        if command -v dropbear >/dev/null 2>&1 && \
+           ! pgrep -x dropbear >/dev/null 2>&1; then
+            printf '\nSSH server (dropbear) is installed but not running.\n'
+            printf 'Start it with:  dropbear        # listen on port 22 (root has no password)\n\n'
+        fi
+        ;;
+esac
+EOF
+
     # /etc/securetty - ttys on which root is allowed to log in
     cat > "$ROOTFS_DIR/etc/securetty" << 'EOF'
 console

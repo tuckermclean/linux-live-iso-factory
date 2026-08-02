@@ -182,11 +182,17 @@ of truth for that).
   notes `pppd` isn't installed; `toram` is documented in the README boot
   options table; `.claude/` is in `.gitignore`.
 
-### EFI boot support — RESOLVED (previously; re-verified 2026-08-02)
-- GRUB EFI (32-bit and 64-bit) via `grub-mkstandalone`, the El Torito
-  sector-count overflow fix, GPT ESP type-GUID patch, and FAT16-not-FAT32
-  ESP image are all present and unchanged in `scripts/build-iso.sh`.
+### EFI boot support — PARTIALLY RESOLVED (re-verified 2026-08-02)
+- 64-bit UEFI (`BOOTX64.EFI`) via `grub-mkstandalone --format=x86_64-efi`, the
+  El Torito sector-count overflow fix, GPT ESP type-GUID patch, and
+  FAT16-not-FAT32 ESP image are all present in `scripts/build-iso.sh`.
   `make test-uefi` exists in the Makefile for local QEMU+OVMF verification.
+- OPEN: 32-bit UEFI is **not built**. GRUB is emerged with the `efi-32`
+  platform (Dockerfile), so the toolchain is ready, but `build-iso.sh` only
+  emits `--format=x86_64-efi`; there is no `i386-efi` / `bootia32.efi` step.
+  (A stale `build-iso.sh` header comment claiming `bootia32.efi` is on the ESP
+  has been corrected to match reality.) Closing this needs an `i386-efi` GRUB
+  image plus an ESP entry for it.
 
 ### CI/CD pipeline — RESOLVED (previously; re-verified 2026-08-02)
 - `.github/workflows/build.yml` exists and runs the build. (The previous
@@ -322,6 +328,6 @@ build access this environment doesn't have.
 | Resolved | Version-pin honesty (SYSLINUX comment, kernel/BusyBox already covered) | 2026-08-02 |
 | Resolved | Package build system (GPKG depth, man pages) | 2026-03-04 |
 | Resolved | rescue label / README PPP / toram docs / .gitignore | 2026-03-05 |
-| Resolved | EFI boot support | previously, re-verified 2026-08-02 |
+| Partial | EFI boot support (64-bit built; 32-bit UEFI open — see Open items) | re-verified 2026-08-02 |
 | Resolved | CI/CD pipeline | previously, re-verified 2026-08-02 |
 | Resolved | LICENSE file, USB boot detection, SSH host keygen | original audit |
