@@ -460,7 +460,10 @@ jobs:
           # Generate builds-index.json + copy static SPA assets into output/web/
           make dashboard ATTEST_INPUT_DIR=output/all-attestation
 
-          # Deploy to S3 bucket root — index.html, styles.css, app/*.js, builds-index.json
+          # Deploy the SPA to the bucket root — the canonical (and only) dashboard
+          # location. web/app/data.js fetches builds-index.json + attestation
+          # records from absolute S3_ROOT URLs, so the SPA lives at root. The old
+          # /dashboard/ path is retired (see PR); nothing publishes there anymore.
           aws s3 sync output/web/ s3://${{ secrets.S3_BUCKET }}/ \
             --exclude "attestation/*" --exclude "packages/*" --exclude "builds/*"
 
