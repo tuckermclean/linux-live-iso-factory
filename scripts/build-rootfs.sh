@@ -343,6 +343,12 @@ EOF
 
 echo "System shutting down..."
 
+# Capture the target runlevel BEFORE unmounting — the `runlevel` command reads
+# /run/utmp, which the unmount below removes. sysvinit exports RUNLEVEL to the
+# l0/l6 wait actions; fall back to the runlevel command. 0 = halt/poweroff,
+# 6 = reboot.
+TARGET_RL="${RUNLEVEL:-$(runlevel 2>/dev/null | awk '{print $2}')}"
+
 # Stop init scripts
 for script in /etc/init.d/K*; do
     [ -x "$script" ] && "$script" stop
@@ -357,6 +363,14 @@ killall5 -9
 umount -a -r 2>/dev/null
 
 sync
+
+# Actually power off (ACPI S5) or reboot. Without this, sysvinit reaches the end
+# of runlevel 0 and only halts the CPU — the machine (and QEMU under ACPI) never
+# powers down, so shutdown hangs forever.
+case "$TARGET_RL" in
+    6) reboot -f ;;
+    *) poweroff -f ;;
+esac
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/rcK"
 
