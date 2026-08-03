@@ -398,13 +398,16 @@ jobs:
             spec_version=$(python3 -c "import json; print(json.load(open('${sbom_file}')).get('specVersion','1.6'))")
             local schema="bom-${spec_version}.schema.json"
             [[ -f "${SCHEMA_DIR}/${schema}" ]] || fetch_schema "${schema}"
-            echo "==> Validating ${sbom_file} against CycloneDX ${spec_version} schema (offline refs)"
+            echo "==> Validating ${sbom_file} against CycloneDX ${spec_version} schema (offline)"
             local rc=0
-            # timeout is a safety net so a stray network $ref can never hang the job.
-            timeout 120 python3 -m check_jsonschema --schemafile "${SCHEMA_DIR}/${schema}" "$sbom_file" || rc=$?
+            # --base-uri resolves $refs to the local schema files (no network).
+            # The SBOM is a package SBOM (enrich-sbom.py drops file components), so
+            # this validates in ~1s; a timeout here is a real failure, not skipped.
+            timeout 180 python3 -m check_jsonschema \
+              --base-uri "file://${SCHEMA_DIR}/" \
+              --schemafile "${SCHEMA_DIR}/${schema}" "$sbom_file" || rc=$?
             if [[ $rc -eq 124 ]]; then
-              echo "::warning::CycloneDX schema validation timed out — treating as non-fatal (infra)"
-              return 0
+              echo "::error::CycloneDX schema validation timed out (unexpected — the SBOM should be small)"
             fi
             return $rc
           }

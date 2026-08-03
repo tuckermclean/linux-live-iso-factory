@@ -208,28 +208,55 @@ def _to_spdx_expr_tokens(raw: str, gentoo_to_spdx: dict) -> str:
     return " ".join(parts)
 
 
-def normalize_license_entry(entry: dict, gentoo_to_spdx: dict) -> dict:
+def load_valid_spdx(license_policy_path: str) -> set:
+    """Load the set of valid SPDX license IDs (the CycloneDX license.id enum),
+    from configs/attestation/spdx-license-ids.txt. Returns an empty set if the
+    file is missing, in which case id sanitization is skipped (old behavior)."""
+    candidates = []
+    if license_policy_path:
+        candidates.append(Path(license_policy_path).parent / "spdx-license-ids.txt")
+    candidates.append(Path("/configs/attestation/spdx-license-ids.txt"))
+    for p in candidates:
+        try:
+            if p.exists():
+                return {ln.strip() for ln in p.read_text().splitlines() if ln.strip()}
+        except OSError:
+            pass
+    return set()
+
+
+def normalize_license_entry(entry: dict, gentoo_to_spdx: dict, valid_spdx: set) -> dict:
     """
-    Normalize a single CycloneDX license entry.
+    Normalize a single CycloneDX license entry so it stays schema-valid.
 
-    CycloneDX license entries look like:
-      {"license": {"id": "MIT"}}                  — already SPDX, leave alone
-      {"license": {"name": "GPL-2+"}}             — single Gentoo name → map to id
-      {"license": {"name": "MIT AND Apache-2.0"}} — compound → {"expression": "..."}
+    CycloneDX requires license.id to be a valid SPDX identifier (an enum); any
+    other license text belongs in license.name. Syft's portage cataloger
+    sometimes emits a Gentoo license name (e.g. "netcat") directly in "id",
+    which FAILS schema validation — move those to "name". When mapping a Gentoo
+    name, only use "id" if the mapped value is a real SPDX id; else keep a name.
 
-    Returns the (possibly updated) entry.
+    If valid_spdx is empty (id list unavailable), the id checks are skipped.
     """
     lic = entry.get("license", {})
+
+    if "id" in lic:
+        if not valid_spdx or lic["id"] in valid_spdx:
+            return entry  # valid SPDX id (or no list to validate against)
+        moved = {"name": lic["id"]}
+        if "text" in lic:
+            moved["text"] = lic["text"]
+        return {"license": moved}
+
     name = lic.get("name", "")
-    if "id" in lic or not name:
-        return entry  # already SPDX id, or no name to normalize
+    if not name:
+        return entry
 
     if " " not in name:
-        # Single token: direct SPDX mapping
+        # Single token: use SPDX id only if the mapping yields a real SPDX id.
         mapped = gentoo_to_spdx.get(name)
-        if mapped:
+        if mapped and (not valid_spdx or mapped in valid_spdx):
             return {"license": {"id": mapped}}
-        return entry  # non-SPDX single name (e.g. BZIP2, Toyoda) — keep as-is
+        return entry  # non-SPDX single name (e.g. BZIP2, Toyoda) — keep as name
 
     # Compound expression (contains spaces / boolean operators):
     # map each token and emit as a CycloneDX SPDX expression object.
@@ -541,6 +568,26 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
                 file=sys.stderr,
             )
 
+    # ── Load valid SPDX ids for license sanitization ─────────────────────────
+    valid_spdx = load_valid_spdx(args.license_policy)
+
+    # ── Drop file components ──────────────────────────────────────────────────
+    # Syft's file cataloger (SYFT_FILE_METADATA_SELECTION=all — needed to populate
+    # the NATIVE syft JSON's files[] for the unowned-files audit) also emits a
+    # CycloneDX component per file: tens of thousands of them, bloating the SBOM
+    # to megabytes and making it too slow to schema-validate. The published SBOM
+    # is a *package* SBOM; drop type=file components here (the unowned audit reads
+    # the native syft JSON, not this document, so it is unaffected).
+    _before_files = len(sbom.get("components", []))
+    sbom["components"] = [c for c in sbom.get("components", []) if c.get("type") != "file"]
+    _dropped_files = _before_files - len(sbom["components"])
+    if _dropped_files:
+        print(
+            f"[enrich-sbom] Dropped {_dropped_files} file components "
+            f"(kept {len(sbom['components'])} packages).",
+            file=sys.stderr,
+        )
+
     # ── Remove binary-cataloger duplicates of portage-cataloger entries ──────
     # Syft's binary-cataloger emits bare-name entries (no "/" in name) for ELF
     # binaries it finds on disk — e.g. "busybox 1.36.1" alongside the authoritative
@@ -672,7 +719,7 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
         # ── License normalization ─────────────────────────────────────────────
         if gentoo_to_spdx and component.get("licenses"):
             component["licenses"] = [
-                normalize_license_entry(le, gentoo_to_spdx)
+                normalize_license_entry(le, gentoo_to_spdx, valid_spdx)
                 for le in component["licenses"]
             ]
 
@@ -708,6 +755,15 @@ def enrich(sbom: dict, overrides: dict, args: argparse.Namespace) -> tuple:
                     )
 
         if deps:
+            # Dedup by ref — CycloneDX requires unique dependency refs. Union the
+            # dependsOn lists, preserving first-seen order.
+            _seen = {}
+            for _d in deps:
+                _lst = _seen.setdefault(_d.get("ref"), [])
+                for _x in _d.get("dependsOn", []):
+                    if _x not in _lst:
+                        _lst.append(_x)
+            deps = [{"ref": _r, "dependsOn": _v} for _r, _v in _seen.items()]
             sbom["dependencies"] = deps
             print(
                 f"[enrich-sbom] Dependency graph: {len(deps)} entries built.",
