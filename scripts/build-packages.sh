@@ -77,6 +77,22 @@ fi
 grep -q "^games:"    /etc/group || echo "games:x:35:"    >> /etc/group
 grep -q "^gamestat:" /etc/group || echo "gamestat:x:36:" >> /etc/group
 
+# Ensure the 'portage' user/group exist in the TARGET SYSROOT. Newer versions of
+# app-admin/eselect, app-editors/vim, dev-lang/lua (and others) call
+# `fowners root:portage` in their install phase, which resolves the group in the
+# sysroot's /etc/group (ROOT=/usr/${CROSS_TARGET}) — the crossdev sysroot doesn't
+# ship one, so the install phase dies with "invalid group ... root:portage".
+# GID/UID 250 is Gentoo's portage id.
+SYSROOT_GROUP="/usr/${CROSS_TARGET}/etc/group"
+SYSROOT_PASSWD="/usr/${CROSS_TARGET}/etc/passwd"
+if [ -f "${SYSROOT_GROUP}" ]; then
+    grep -q "^portage:" "${SYSROOT_GROUP}" || echo "portage:x:250:portage" >> "${SYSROOT_GROUP}"
+fi
+if [ -f "${SYSROOT_PASSWD}" ]; then
+    grep -q "^portage:" "${SYSROOT_PASSWD}" || \
+        echo "portage:x:250:250:portage:/var/tmp/portage:/sbin/nologin" >> "${SYSROOT_PASSWD}"
+fi
+
 # Regenerate binpkg index so it matches whatever .gpkg.tar files actually
 # exist on disk. Prevents "non-existent binary" errors after partial cleanup.
 echo "==> Regenerating binpkg index"
