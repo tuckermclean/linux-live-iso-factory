@@ -3,7 +3,9 @@
 # build-iso.sh - Create bootable ISO image (BIOS + UEFI)
 #
 # This script creates a hybrid ISO bootable via BIOS (ISOLINUX) and UEFI (GRUB).
-# The EFI System Partition contains bootia32.efi and bootx64.efi for 32/64-bit UEFI.
+# The EFI System Partition contains BOOTX64.EFI for 64-bit UEFI. (32-bit UEFI /
+# bootia32.efi is not currently built — GRUB has the efi-32 platform available
+# but no i386-efi image is emitted here yet.)
 #
 # The ISO can be tested with:
 #   qemu-system-i386 -cdrom boot.iso -m 64M
@@ -152,6 +154,7 @@ SAY   linux     - Normal boot (text console)
 SAY   fb        - Framebuffer 1024x768
 SAY   fb800     - Framebuffer 800x600
 SAY   serial    - Serial console
+SAY   persist   - Boot with persistent storage (needs MONOLITH_PERSIST partition)
 SAY   vga=ask   - Choose video mode
 SAY
 
@@ -196,6 +199,16 @@ LABEL debug
     KERNEL /boot/vmlinuz
     APPEND initrd=/boot/initrd.img debug
 
+# Persistent storage — init looks for a partition labeled MONOLITH_PERSIST
+# and, if found, uses it as the overlay upper/work dir instead of tmpfs, so
+# changes survive a reboot. Falls back to tmpfs (with a warning) if the
+# partition isn't found. Create the partition with:
+#   mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN
+LABEL persist
+    MENU LABEL Boot with Persistence (MONOLITH_PERSIST partition)
+    KERNEL /boot/vmlinuz
+    APPEND initrd=/boot/initrd.img persist
+
 # Rescue shell — passes 'rescue' to kernel so init drops to a shell
 LABEL rescue
     MENU LABEL Rescue Shell
@@ -233,10 +246,14 @@ set default=1
 # the ISO9660 partition before any linux/initrd commands run.
 search --no-floppy --set=root --label MONOLITH
 
-# Graphical terminal with background image
+# Graphical terminal with background image, mirrored to serial so the menu is
+# visible AND selectable over ttyS0 — headless/CI UEFI boots never see gfxterm.
 insmod gfxterm
 insmod png
-terminal_output gfxterm
+insmod serial
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+terminal_input console serial
+terminal_output gfxterm serial
 background_image /boot/grub/bootbg.png
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION}" {
@@ -264,6 +281,14 @@ menuentry "tHE m0n0LiTH ${BUILD_VERSION} (rescue shell)" {
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (toram)" {
     linux /boot/vmlinuz toram    initrd /boot/initrd.img
+}
+
+# Persistent storage — see the LABEL persist comment above (isolinux.cfg) for
+# how init finds and uses the MONOLITH_PERSIST partition. Create one with:
+#   mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN
+menuentry "tHE m0n0LiTH ${BUILD_VERSION} (persistent)" {
+    linux /boot/vmlinuz persist
+    initrd /boot/initrd.img
 }
 GRUBEOF
 

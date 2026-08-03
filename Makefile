@@ -95,8 +95,10 @@ DOCKER_RUN_ATTEST := docker run --rm \
 	$(GRYPE_MOUNT) \
 	$(PARALLEL_ENV)
 
-# GitHub Actions context vars — forwarded into Docker for SLSA provenance (Pillar 6).
-# When unset on the host (local dev), Docker omits them and the script uses placeholders.
+# GitHub Actions context vars — forwarded into Docker for SLSA provenance (Pillar 6)
+# and SBOM enrichment (Pillar 1b: build-system/distribution externalReferences,
+# formulation). When unset on the host (local dev), Docker omits them and the
+# scripts either use placeholders or omit the corresponding SBOM field (never fabricated).
 GITHUB_ENV := \
 	-e GITHUB_SERVER_URL \
 	-e GITHUB_REPOSITORY \
@@ -115,14 +117,15 @@ GITHUB_ENV := \
 	-e GITHUB_ACTOR_ID \
 	-e BUILD_EPOCH \
 	-e BUILD_STARTED_ON \
-	-e STAGE3_DIGEST
+	-e STAGE3_DIGEST \
+	-e S3_BUCKET
 
 .PHONY: help build-image push-image pull-image restore-cache \
         sync-portage build-packages build-packages-resume \
         extract build-rootfs \
         menuconfig-kernel menuconfig-busybox \
         iso all test test-uefi shell \
-        check-updates update-versions update-build-pins update-all \
+        check-updates update-versions update-build-pins update-all bump-pins \
         list-packages show-failed regen-manifest \
         attestation attest-builder dashboard grype-db-update \
         clean clean-build clean-all ensure-dirs ensure-volume
@@ -168,6 +171,7 @@ help:
 	@echo "  update-versions      - Update versions.lock with latest versions"
 	@echo "  update-build-pins    - Update stage3 date + epoch in Dockerfile"
 	@echo "  update-all           - Update everything (build pins + package versions)"
+	@echo "  bump-pins            - Correctly bump BUILD_EPOCH: pins -> rebuild image -> versions.lock"
 	@echo "  list-packages        - Show packages in world file"
 	@echo "  show-failed          - Show failed packages from last build"
 	@echo ""
@@ -395,6 +399,7 @@ attestation: ensure-volume ensure-dirs
 		--build-tag $(BUILD_VERSION) \
 		--overrides /configs/attestation/cpe-overrides.yaml \
 		--policy /configs/attestation/license-policy.yaml \
+		--cve-policy /configs/attestation/cve-policy.yaml \
 		--output-dir /output/attestation
 
 # Attest to the build environment (Pillar 5): builder image SBOM, provenance, and CVE scan.
@@ -408,6 +413,7 @@ attest-builder: ensure-volume ensure-dirs
 		--build-tag $(BUILD_VERSION) \
 		--overrides /configs/attestation/cpe-overrides.yaml \
 		--policy /configs/attestation/license-policy.yaml \
+		--cve-policy /configs/attestation/cve-policy.yaml \
 		--output-dir /output/attestation \
 		--include-builder \
 		--builder-digest $$(docker inspect --format='{{.Id}}' $(IMAGE_NAME) 2>/dev/null || echo unknown)
@@ -491,6 +497,20 @@ update-build-pins:
 # Update everything: Dockerfile pins + portage package versions
 update-all: update-build-pins update-versions
 	@echo "==> All pins updated. Run 'make build-image' to rebuild the factory."
+
+# Correctly bump BUILD_EPOCH end to end: unlike `update-all` (which updates
+# versions.lock against whatever image is already local, i.e. the PREVIOUS
+# epoch if the Dockerfile just changed), this rebuilds the image at the NEW
+# epoch *between* the pin bump and the versions.lock regeneration, so
+# versions.lock actually reflects the new epoch's portage tree. This is the
+# same sequence .github/workflows/pin-bump.yml automates in CI — see
+# docs/version-pinning.md. crossdev.lock still intentionally lags by one
+# cycle (queried from the pre-bump image inside update-build-pins.sh); that
+# is documented, existing behavior, not a bug in this target.
+bump-pins: update-build-pins build-image update-versions
+	@echo "==> BUILD_EPOCH bumped and both locks regenerated against the new epoch."
+	@echo "    Review the diff, then validate with a full 'make all' + 'make attestation'"
+	@echo "    (or push a branch and let .github/workflows/pin-bump.yml / build.yml do it)."
 
 # List packages in world file
 list-packages:

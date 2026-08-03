@@ -6,6 +6,16 @@
 #   check    - Show available updates vs pinned versions
 #   update   - Query portageq and write new versions.lock
 #   validate - Check versions.lock format
+#
+# Coverage note: this already tracks the kernel and BusyBox, not just
+# userland. Both are ordinary entries in configs/portage/world
+# (sys-kernel/monolith-kernel and sys-apps/busybox) and get a real
+# category/package:version:slot line in versions.lock like every other
+# world package — there is no separate "kernel/BusyBox version" mechanism
+# to build. Host-only build tools (syslinux, grub, mtools, ...) are
+# intentionally NOT covered here: they never enter the target sysroot, so
+# they are pinned indirectly via the Dockerfile's BUILD_EPOCH instead (see
+# the comment above the host-tools `emerge` block in the Dockerfile).
 
 set -e
 
@@ -13,6 +23,16 @@ CONFIGS_DIR="${CONFIGS_DIR:-/configs}"
 PORTAGE_DIR="${CONFIGS_DIR}/portage"
 WORLD_FILE="${PORTAGE_DIR}/world"
 VERSIONS_FILE="${PORTAGE_DIR}/versions.lock"
+
+# Resolve versions against the CROSS TARGET's portage config (PORTAGE_CONFIGROOT
+# = /usr/<target>), NOT the amd64 host. The target accepts ~x86 (see
+# configs/portage/package.accept_keywords/i486), so a package that is ~amd64 but
+# not yet keyworded ~x86 — e.g. binutils-2.46.1-r1 ("missing keyword") — is
+# correctly excluded, matching what the cross-emerge actually installs. It also
+# drops live 9999 ebuilds naturally (target uses ~x86, not **), except where the
+# target config explicitly allows ** (e.g. sys-kernel/monolith-kernel).
+CROSS_TARGET="${CROSS_TARGET:-i486-linux-musl}"
+TARGET_ROOT="/usr/${CROSS_TARGET}"
 
 usage() {
     echo "Usage: $0 <command>"
@@ -36,21 +56,25 @@ setup_keywords() {
     fi
 }
 
-# Get best available version for a package
+# Get best available version for a package (resolved against the target config,
+# falling back to the host root only if the target query yields nothing).
 get_best_version() {
     local pkg="$1"
     local cpv
-    cpv=$(portageq best_visible / "${pkg}" 2>/dev/null) || return
+    cpv=$(PORTAGE_CONFIGROOT="${TARGET_ROOT}" portageq best_visible "${TARGET_ROOT}" "${pkg}" 2>/dev/null) \
+        || cpv=$(portageq best_visible / "${pkg}" 2>/dev/null) || return
     # Strip category/name- prefix to get version
     echo "${cpv#"${pkg}-"}"
 }
 
-# Get slot for a package version
+# Get slot for a package version (target config, host fallback).
 get_slot() {
     local pkg="$1"
     local cpv slot
-    cpv=$(portageq best_visible / "${pkg}" 2>/dev/null) || return
-    slot=$(portageq metadata / ebuild "${cpv}" SLOT 2>/dev/null) || return
+    cpv=$(PORTAGE_CONFIGROOT="${TARGET_ROOT}" portageq best_visible "${TARGET_ROOT}" "${pkg}" 2>/dev/null) \
+        || cpv=$(portageq best_visible / "${pkg}" 2>/dev/null) || return
+    slot=$(portageq metadata "${TARGET_ROOT}" ebuild "${cpv}" SLOT 2>/dev/null) \
+        || slot=$(portageq metadata / ebuild "${cpv}" SLOT 2>/dev/null) || return
     # Strip subslot (e.g., 0/5.2 -> 0)
     echo "${slot%%/*}"
 }

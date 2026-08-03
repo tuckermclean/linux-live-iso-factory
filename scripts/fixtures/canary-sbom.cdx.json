@@ -1,0 +1,27 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2014-04-07T00:00:00Z",
+    "component": {
+      "type": "operating-system",
+      "bom-ref": "cve-gate-canary",
+      "name": "cve-gate-canary",
+      "version": "fixture",
+      "description": "Synthetic fixture SBOM for the CVE gate canary (see docs/cve-gate.md). Contains exactly one component pinned to a version with a permanent, unambiguous, decades-old CVE record so the canary job never depends on how recently a CVE was disclosed or whether NVD has gotten around to analyzing it. If Grype reports zero findings for this SBOM, the CVE gate is neutered — treat that as a pipeline-breaking failure, not a fluke."
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "bom-ref": "canary-openssl-1.0.1",
+      "name": "openssl",
+      "version": "1.0.1",
+      "cpe": "cpe:2.3:a:openssl:openssl:1.0.1:*:*:*:*:*:*:*",
+      "purl": "pkg:generic/openssl@1.0.1",
+      "description": "Deliberately vulnerable fixture version — OpenSSL 1.0.1 through 1.0.1f is affected by CVE-2014-0160 (Heartbleed). Do not update this version; the canary requires a known-bad, permanently-catalogued CVE.",
+      "supplier": { "name": "cve-gate-canary-fixture" }
+    }
+  ]
+}

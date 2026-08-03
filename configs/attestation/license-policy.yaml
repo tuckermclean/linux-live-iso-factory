@@ -19,6 +19,8 @@ allowed_spdx:
   - BSD-3-Clause
   - BSD-4-Clause
   - Apache-2.0
+  - GPL-1.0-or-later          # util-linux (some components), OSI copyleft
+  - EUPL-1.2                  # util-linux, EU Public License (OSI-approved, GPL-compatible)
   - GPL-2.0-only
   - GPL-2.0-or-later
   - GPL-3.0-only
@@ -69,6 +71,8 @@ allowed_spdx:
 # Gentoo uses non-SPDX names for many common licenses. This table maps
 # Gentoo names to SPDX identifiers for policy matching.
 gentoo_to_spdx:
+  "GPL-1+":         "GPL-1.0-or-later"
+  "EUPL-1.2":       "EUPL-1.2"
   "GPL-2":          "GPL-2.0-or-later"
   "GPL-2+":         "GPL-2.0-or-later"
   "GPL-3":          "GPL-3.0-or-later"

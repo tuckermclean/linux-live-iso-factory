@@ -77,6 +77,25 @@ fi
 grep -q "^games:"    /etc/group || echo "games:x:35:"    >> /etc/group
 grep -q "^gamestat:" /etc/group || echo "gamestat:x:36:" >> /etc/group
 
+# Seed baseline accounts/groups in the TARGET SYSROOT so package install phases
+# that call `fowners` can resolve the ids there (ROOT=/usr/${CROSS_TARGET}). The
+# crossdev sysroot is minimal and lacks even root in /etc/passwd until baselayout
+# / acct-* build, so early installs die with "invalid user/group ... root:portage".
+# Observed needs: root:portage (eselect/vim/lua), root:gamestat (bsd-games).
+# portage id is 250 (Gentoo standard); grep guards keep this idempotent and
+# non-destructive if baselayout later provides the real entries.
+SYSROOT_ETC="/usr/${CROSS_TARGET}/etc"
+mkdir -p "${SYSROOT_ETC}"
+touch "${SYSROOT_ETC}/group" "${SYSROOT_ETC}/passwd"
+sysroot_group() { grep -q "^$1:" "${SYSROOT_ETC}/group"  || echo "$2" >> "${SYSROOT_ETC}/group";  }
+sysroot_user()  { grep -q "^$1:" "${SYSROOT_ETC}/passwd" || echo "$2" >> "${SYSROOT_ETC}/passwd"; }
+sysroot_group root     "root:x:0:"
+sysroot_group portage  "portage:x:250:portage"
+sysroot_group games    "games:x:35:"
+sysroot_group gamestat "gamestat:x:36:"
+sysroot_user  root     "root:x:0:0:root:/root:/bin/sh"
+sysroot_user  portage  "portage:x:250:250:portage:/var/tmp/portage:/sbin/nologin"
+
 # Regenerate binpkg index so it matches whatever .gpkg.tar files actually
 # exist on disk. Prevents "non-existent binary" errors after partial cleanup.
 echo "==> Regenerating binpkg index"

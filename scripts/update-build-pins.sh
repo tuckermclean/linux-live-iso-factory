@@ -9,25 +9,29 @@
 # Runs on the HOST (no Docker required).
 #
 # Usage:
-#   update-build-pins.sh check    # Show current pins vs available latest
-#   update-build-pins.sh update   # Fetch latest and update Dockerfile
+#   update-build-pins.sh check              # Show current pins vs available latest
+#   update-build-pins.sh update              # Fetch latest and update Dockerfile
+#   update-build-pins.sh update YYYYMMDD     # Force a specific target epoch instead
+#                                             # of "latest" (still verified against
+#                                             # distfiles.gentoo.org before applying)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKERFILE="${SCRIPT_DIR}/../Dockerfile"
 CROSSDEV_LOCK="${SCRIPT_DIR}/../configs/portage/crossdev.lock"
+CONFIGS_DIR="$(cd "${SCRIPT_DIR}/../configs" && pwd)"
 BUILDER_IMAGE="monolith-builder"
 
 # Docker Hub API endpoint for gentoo/stage3 tags
 DOCKERHUB_TAGS_URL="https://hub.docker.com/v2/repositories/gentoo/stage3/tags?page_size=100&ordering=last_updated&name=amd64-openrc-"
 
 usage() {
-    echo "Usage: $0 <command>"
+    echo "Usage: $0 <command> [YYYYMMDD]"
     echo ""
     echo "Commands:"
-    echo "  check     Show current pins vs available latest"
-    echo "  update    Fetch latest and update Dockerfile"
+    echo "  check                Show current pins vs available latest"
+    echo "  update [YYYYMMDD]    Fetch latest (or use the given date) and update Dockerfile"
     exit 1
 }
 
@@ -143,9 +147,23 @@ query_portage_version() {
     if ! docker image inspect "${BUILDER_IMAGE}" >/dev/null 2>&1; then
         return 0
     fi
-    docker run --rm "${BUILDER_IMAGE}" \
-        portageq best_visible / "${atom}" 2>/dev/null \
-        | sed "s|${strip_prefix}||"
+    # Two things this docker run must get right:
+    #  1. Mount /configs — the builder image's repos.conf points the 'monolith'
+    #     overlay at /configs/overlay, so without it portageq aborts with
+    #     "nonexistent directory: '/configs/overlay'" (empty output, non-zero).
+    #  2. Constrain keywords to '*/* ~*' — the builder image ships '*/* **',
+    #     which accepts LIVE 9999 ebuilds, so an unconstrained best_visible pins
+    #     e.g. sys-devel/gcc-15.3.9999 (a non-reproducible live ebuild). '~*'
+    #     keeps testing across arches but drops live ebuilds (they need '**').
+    #     Mirrors update-versions.sh's setup_keywords().
+    # Trailing '|| true' keeps a transient/partial query failure from aborting
+    # the whole bump under 'set -euo pipefail' — update_crossdev_lock() falls
+    # back to the current pins when this returns empty (see its empty guard).
+    docker run --rm -v "${CONFIGS_DIR}:/configs" "${BUILDER_IMAGE}" sh -euc '
+        kw=/etc/portage/package.accept_keywords/crossdev-all
+        if [ -f "$kw" ] && grep -qF "**" "$kw"; then echo "*/* ~*" > "$kw"; fi
+        portageq best_visible / "$1"
+    ' _ "${atom}" 2>/dev/null | sed "s|${strip_prefix}||" || true
 }
 
 # Update crossdev.lock with best versions from the current builder image.
@@ -208,19 +226,34 @@ EOF
         echo "  sys-devel/gcc: ${current_gcc} → ${gcc_ver}"
 }
 
-# Command: update
+# Command: update [YYYYMMDD]
+# With no argument, fetches and uses the latest available stage3 date.
+# With an explicit YYYYMMDD argument, forces that date as the target epoch
+# instead (e.g. for a manually-triggered "force target epoch" bump). The
+# forced date is still subject to the same portage-snapshot verification
+# below — an unverified date is never applied.
 cmd_update() {
     echo "==> Updating Dockerfile build pins"
 
+    local forced_date="${1:-}"
     local current_epoch latest_date new_source_epoch
     current_epoch=$(get_current_epoch)
 
-    echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
-    latest_date=$(fetch_latest_stage3_date)
+    if [[ -n "${forced_date}" ]]; then
+        if ! [[ "${forced_date}" =~ ^[0-9]{8}$ ]]; then
+            echo "ERROR: forced target epoch must be YYYYMMDD, got: ${forced_date}" >&2
+            exit 1
+        fi
+        echo "  Using forced target epoch: ${forced_date}"
+        latest_date="${forced_date}"
+    else
+        echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
+        latest_date=$(fetch_latest_stage3_date)
 
-    if [[ -z "${latest_date}" ]]; then
-        echo "ERROR: Could not fetch latest stage3 date — network issue?" >&2
-        exit 1
+        if [[ -z "${latest_date}" ]]; then
+            echo "ERROR: Could not fetch latest stage3 date — network issue?" >&2
+            exit 1
+        fi
     fi
 
     # Verify the portage snapshot exists for this date before committing to it
@@ -258,6 +291,6 @@ cmd_update() {
 # Main
 case "${1:-}" in
     check)  cmd_check ;;
-    update) cmd_update ;;
+    update) cmd_update "${2:-}" ;;
     *)      usage ;;
 esac

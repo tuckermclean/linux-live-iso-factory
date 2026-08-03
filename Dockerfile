@@ -12,20 +12,40 @@
 # This is a policy choice for reproducibility and attestation: a single BUILD_EPOCH
 # unambiguously identifies all build inputs (toolchain + ebuilds).
 # Update with: make update-build-pins
-ARG BUILD_EPOCH=20260420
+ARG BUILD_EPOCH=20260727
 FROM gentoo/stage3:amd64-openrc-${BUILD_EPOCH} AS base-tools
 
 LABEL maintainer="monolith-builder"
 LABEL description="Gentoo crossdev environment for i486-linux-musl + ISO tools"
 
 # Reproducibility: clamp all build output timestamps to the stage3 date
-ENV SOURCE_DATE_EPOCH=1776643200
+ENV SOURCE_DATE_EPOCH=1785110400
 
 ENV CROSS_TARGET=i486-linux-musl
 ENV CROSS_COMPILE=i486-linux-musl-
 
 # Re-declare so the value is available inside this stage
 ARG BUILD_EPOCH
+
+# Verify host gcc has 32-bit multilib support (gcc -m32).
+#
+# make.conf sets CFLAGS_FOR_BUILD="-O2 -m32" and configs/portage/bashrc's
+# CC_FOR_BUILD hook uses it to compile nethack's build-host tools (makedefs,
+# lev_comp, dgn_comp, dlb) as 32-bit x86 binaries. Those tools generate the
+# DLB archive (nhdat) that is later read by the i486 target binary; the
+# DLB entry struct uses a bare `long` (4 bytes on i486, 8 bytes on x86_64),
+# so without -m32 support the archive index would be misread and nethack's
+# dungeon data would be corrupted at runtime. Fail the image build early and
+# loudly rather than letting that surface as a silent runtime bug days later.
+RUN if ! (echo 'int main(void){return 0;}' | gcc -m32 -xc -o /tmp/m32check -); then \
+        echo "ERROR: host gcc lacks -m32 multilib support." >&2; \
+        echo "  CFLAGS_FOR_BUILD=-m32 (make.conf) requires it to compile" >&2; \
+        echo "  nethack's DLB build tools with a 32-bit ABI. Install the" >&2; \
+        echo "  multilib profile / 32-bit glibc, or patch nethack's DLB" >&2; \
+        echo "  structs to use int32_t/int64_t instead of 'long' as a" >&2; \
+        echo "  fallback (see RELEASE-READINESS.md)." >&2; \
+        exit 1; \
+    fi && /tmp/m32check && rm -f /tmp/m32check && echo "gcc -m32 multilib: OK"
 
 # Fetch pinned portage snapshot using portage's own tooling.
 # --revert pins to a specific date for reproducibility; emerge-webrsync handles
@@ -37,6 +57,24 @@ RUN emerge-webrsync --revert=${BUILD_EPOCH}
 # cmake:   prevents BDEPEND from pulling in cmake-9999 (live ebuild)
 # mandoc:  host makewhatis called by bashrc hook to build whatis DB in sysroot
 # ncurses: host tic needed to install terminfo DB into sysroot during cross-compile
+#
+# Version pinning: none of these packages carry an explicit version atom.
+# They are host build tools (not shipped in the ISO) and are pinned
+# *indirectly* via BUILD_EPOCH: emerge-webrsync --revert=${BUILD_EPOCH} above
+# fixes the portage snapshot date, which in turn fixes which version of each
+# package is "best visible" here. This is intentional and matches the
+# crossdev toolchain's own pinning story (crossdev.lock + versions.lock
+# still pin exact versions for the *target* toolchain and world packages —
+# see configs/portage/versions.lock, managed by `make update-versions`).
+# There is deliberately no per-atom pin (e.g. "=sys-boot/syslinux-6.03") for
+# these host tools: that would fight the epoch model by letting a single
+# tool drift ahead of/behind the snapshot it was validated against. If a
+# specific host tool version ever needs to be held back independent of the
+# epoch, add it to a package.mask file under configs/portage/ rather than
+# an uninspected Dockerfile ENV var: a stale "ENV SYSLINUX_VERSION=6.03"
+# previously lived here as pure documentation. It was never read by emerge
+# and could silently drift from what actually got installed, so it has
+# been replaced by this comment rather than reintroduced as a misleading pin.
 RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace \
         sys-devel/crossdev \
         app-portage/gentoolkit \

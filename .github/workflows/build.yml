@@ -1,10 +1,28 @@
 name: Build
 
+# NOTE on tag pushes: this workflow used to also trigger directly on `push:
+# tags: ['*']`. That's now handled by .github/workflows/release.yml instead,
+# which calls this workflow via `workflow_call` for tags matching `v*.*.*`.
+# Keeping a tag trigger here too would mean every release tag kicks off TWO
+# independent full builds (one direct, one via release.yml) racing to write
+# the same S3 keys and each producing its own attestation/SLSA signature for
+# what should be a single, unambiguous release artifact. `workflow_call`
+# makes this workflow reusable as a library — release.yml is the ONLY tag
+# entry point now; this file is the ONLY definition of how a build+attest
+# happens.
 on:
   push:
     branches: [master]
-    tags: ['*']
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      build-version:
+        description: >-
+          Resolved BUILD_VERSION for this run — the tag with its leading 'v'
+          stripped (tag builds) or '<epoch>-<short-sha>' (all other triggers).
+          Same value used for S3 object keys, the ISO filename, and
+          attestation-summary.json's build_tag.
+        value: ${{ jobs.build.outputs.build-version }}
   schedule:
     - cron: '0 3 * * 1'
 
@@ -114,6 +132,7 @@ jobs:
       startsWith(github.ref, 'refs/tags/')
     outputs:
       build-started-on: ${{ steps.set-version.outputs.build-started-on }}
+      build-version: ${{ steps.set-version.outputs.build-version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -126,10 +145,12 @@ jobs:
           echo "BUILD_STARTED_ON=$BUILD_STARTED_ON" >> "$GITHUB_ENV"
           echo "build-started-on=$BUILD_STARTED_ON" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "BUILD_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+            BUILD_VERSION="${GITHUB_REF#refs/tags/v}"
           else
-            echo "BUILD_VERSION=$BUILD_EPOCH-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+            BUILD_VERSION="$BUILD_EPOCH-$(git rev-parse --short HEAD)"
           fi
+          echo "BUILD_VERSION=$BUILD_VERSION" >> "$GITHUB_ENV"
+          echo "build-version=$BUILD_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -171,13 +192,29 @@ jobs:
         if: always()
         run: aws s3 sync output/logs/ s3://${{ secrets.S3_BUCKET }}/builds/$BUILD_VERSION/logs/
 
+      - name: Determine whether to publish 'latest' pointers
+        # Only master and tag builds overwrite the public themonolith.iso/.squashfs/
+        # .vmlinuz/.initrd "latest" pointers. Branch and workflow_dispatch validation
+        # builds still upload their versioned artifacts, but must NOT clobber the live
+        # public download while a change is still being validated.
+        run: |
+          if [ "$GITHUB_REF" = "refs/heads/master" ] || [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+            echo "PUBLISH_LATEST=true" >> "$GITHUB_ENV"
+            echo "==> Publishing 'latest' pointers (ref: $GITHUB_REF)"
+          else
+            echo "PUBLISH_LATEST=false" >> "$GITHUB_ENV"
+            echo "==> Validation build (ref: $GITHUB_REF): versioned artifacts only, 'latest' preserved."
+          fi
+
       - name: Save kernel image to S3
         if: always()
         run: |
           if [ -f output/vmlinuz ]; then
             cp output/vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
             aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz
-            aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
+            if [ "$PUBLISH_LATEST" = "true" ]; then
+              aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
+            fi
           fi
 
       - name: Build rootfs
@@ -188,7 +225,9 @@ jobs:
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.squashfs ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs
-            aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
+            if [ "$PUBLISH_LATEST" = "true" ]; then
+              aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
+            fi
           fi
 
       - name: Save initrd to S3
@@ -196,7 +235,9 @@ jobs:
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.initrd ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd
-            aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
+            if [ "$PUBLISH_LATEST" = "true" ]; then
+              aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
+            fi
           fi
 
       - name: Build ISO
@@ -205,12 +246,34 @@ jobs:
       - name: Upload ISO to S3
         run: |
           aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.iso
-          aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
-          echo "==> Uploaded themonolith-$BUILD_VERSION.iso and themonolith.iso (latest)"
+          if [ "$PUBLISH_LATEST" = "true" ]; then
+            aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
+            echo "==> Uploaded themonolith-$BUILD_VERSION.iso and themonolith.iso (latest)"
+          else
+            echo "==> Uploaded themonolith-$BUILD_VERSION.iso (versioned only; 'latest' preserved)"
+          fi
+
+  # Actually boots the ISO in QEMU (BIOS, UEFI, and toram+eject) and proves it
+  # reaches a working shell before anything downstream treats this build as
+  # releasable. See .github/workflows/boot-test.yml and scripts/boot-test.py.
+  #
+  # release.yml (tag-triggered publish) calls this ENTIRE workflow via
+  # `workflow_call` rather than depending on this job directly — GitHub
+  # Actions `needs:` cannot cross workflow files, and reusing the whole file
+  # (rather than just this job) means release.yml's gate on
+  # `needs.<this-call>.result == 'success'` already covers boot-test AND
+  # attestation AND the build itself failing, with zero duplicated logic.
+  boot-test:
+    needs: build
+    if: needs.build.result == 'success'
+    uses: ./.github/workflows/boot-test.yml
+    with:
+      build-version: ${{ needs.build.outputs.build-version }}
+    secrets: inherit
 
   attestation:
     runs-on: ubuntu-latest
-    needs: [build-image, build]
+    needs: [build-image, build, boot-test]
     permissions:
       contents: read
       packages: read
@@ -219,7 +282,8 @@ jobs:
     if: >
       always() &&
       needs.build-image.result == 'success' &&
-      needs.build.result == 'success'
+      needs.build.result == 'success' &&
+      needs.boot-test.result == 'success'
     steps:
       - uses: actions/checkout@v4
 
@@ -285,6 +349,73 @@ jobs:
       - name: Run attestation pipeline
         run: make attestation BUILD_VERSION=$BUILD_VERSION
         continue-on-error: true
+        env:
+          # Bucket name only (no credentials) — used to build the SBOM's
+          # "distribution" externalReference URL for the ISO artifact.
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+
+      - name: Read attestation gate verdict
+        id: verdict
+        if: always()
+        # Surface the pass/fail verdict BEFORE the signing step so we never
+        # issue a public Sigstore attestation for a build that failed the
+        # CVE/license/unowned gate.
+        run: |
+          SUMMARY=output/attestation/attestation-summary.json
+          if [ -f "$SUMMARY" ]; then
+            OVERALL=$(python3 -c "import json; print(json.load(open('$SUMMARY')).get('overall','fail'))")
+          else
+            OVERALL="fail"
+          fi
+          echo "overall=$OVERALL" >> "$GITHUB_OUTPUT"
+          echo "==> Attestation gate verdict: $OVERALL"
+
+      - name: Validate CycloneDX SBOM schema
+        if: always()
+        run: |
+          set -uo pipefail
+          python3 -m pip install --user --quiet check-jsonschema \
+            || python3 -m pip install --user --break-system-packages --quiet check-jsonschema
+
+          SCHEMA_DIR="$(mktemp -d)"
+          # Download a CycloneDX schema and STRIP its "$id". The published schemas
+          # set "$id" to a cyclonedx.org URL, so check-jsonschema would resolve the
+          # relative $refs (spdx/jsf) against that URL and fetch them over the
+          # network at validation time — which hung the job for hours. With "$id"
+          # removed, the refs resolve to the local files we downloaded here.
+          fetch_schema() {
+            curl -fsSL --connect-timeout 20 --max-time 60 -o "${SCHEMA_DIR}/$1" \
+              "https://raw.githubusercontent.com/CycloneDX/specification/master/schema/$1"
+            python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.pop("$id",None); json.dump(d,open(p,"w"))' "${SCHEMA_DIR}/$1"
+          }
+          fetch_schema spdx.schema.json
+          fetch_schema jsf-0.82.schema.json
+
+          validate_sbom() {
+            local sbom_file="$1"
+            [[ -f "$sbom_file" ]] || { echo "==> $sbom_file not found, skipping"; return 0; }
+            local spec_version
+            spec_version=$(python3 -c "import json; print(json.load(open('${sbom_file}')).get('specVersion','1.6'))")
+            local schema="bom-${spec_version}.schema.json"
+            [[ -f "${SCHEMA_DIR}/${schema}" ]] || fetch_schema "${schema}"
+            echo "==> Validating ${sbom_file} against CycloneDX ${spec_version} schema (offline)"
+            local rc=0
+            # --base-uri resolves $refs to the local schema files (no network).
+            # The SBOM is a package SBOM (enrich-sbom.py drops file components), so
+            # this validates in ~1s; a timeout here is a real failure, not skipped.
+            timeout 180 python3 -m check_jsonschema \
+              --base-uri "file://${SCHEMA_DIR}/" \
+              --schemafile "${SCHEMA_DIR}/${schema}" "$sbom_file" || rc=$?
+            if [[ $rc -eq 124 ]]; then
+              echo "::error::CycloneDX schema validation timed out (unexpected — the SBOM should be small)"
+            fi
+            return $rc
+          }
+
+          FAIL=0
+          validate_sbom output/attestation/bom.cdx.json || FAIL=1
+          validate_sbom output/attestation/builder-bom.cdx.json || FAIL=1
+          exit $FAIL
 
       - name: Read SLSA predicate
         id: read-predicate
@@ -302,8 +433,11 @@ jobs:
           echo "predicate=$PREDICATE" >> "$GITHUB_OUTPUT"
 
       - name: Sign SLSA provenance (Sigstore via GitHub OIDC)
+        # Only sign when the gate verdict is PASS. Otherwise a build that failed
+        # the CVE/license/unowned gate would still get a public Sigstore
+        # attestation, and `gh attestation verify` on its ISO would read green.
         uses: actions/attest@v2
-        if: always() && steps.read-predicate.outcome == 'success'
+        if: always() && steps.read-predicate.outcome == 'success' && steps.verdict.outputs.overall == 'pass'
         with:
           subject-path: output/themonolith-${{ env.BUILD_VERSION }}.iso
           predicate-type: https://slsa.dev/provenance/v1

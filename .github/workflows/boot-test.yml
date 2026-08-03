@@ -1,0 +1,204 @@
+name: Boot Test
+
+# Reusable workflow: actually boots the ISO in QEMU and proves it reaches a
+# working shell, over BIOS (ISOLINUX), UEFI (GRUB + OVMF), and the `toram`
+# path (+ CD-eject survival). This is the gate that "no release without a
+# proven boot" hangs off of.
+#
+# `workflow_call` (rather than a plain job block in build.yml) is deliberate:
+# GitHub Actions `needs:` can only reference jobs in the SAME workflow file,
+# so a future release workflow (Task 3 — see note in build.yml) cannot
+# depend on a job defined inside build.yml directly. By making this a
+# reusable workflow, both build.yml and a future release.yml can each add:
+#
+#   boot-test:
+#     needs: [...]
+#     uses: ./.github/workflows/boot-test.yml
+#     with:
+#       build-version: ${{ ... }}
+#     secrets: inherit
+#
+# and gate their own next step on `needs.boot-test.result == 'success'`,
+# with zero duplication of the actual QEMU logic.
+
+on:
+  workflow_call:
+    inputs:
+      build-version:
+        description: "BUILD_VERSION whose ISO should be pulled from S3 and boot-tested"
+        required: true
+        type: string
+
+jobs:
+  # Shared setup: compute the expected `uname -r` string from the same
+  # ground truth the kernel build itself uses, so it's never hardcoded here.
+  #   KERNEL_VERSION comes from configs/portage/versions.lock
+  #   (sys-kernel/monolith-kernel:<version>:<slot>) — same source Makefile
+  #   uses for KERNEL_VERSION.
+  #   CONFIG_LOCALVERSION is baked into the kernel via configs/kernel.config
+  #   and is appended verbatim to `uname -r` (CONFIG_LOCALVERSION_AUTO is
+  #   off, so there's no extra git-suffix to account for).
+  expected-kernel:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: compute
+        run: |
+          KVER=$(grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2)
+          LOCALVERSION=$(grep '^CONFIG_LOCALVERSION=' configs/kernel.config | sed -E 's/^CONFIG_LOCALVERSION="(.*)"$/\1/')
+          echo "version=${KVER}${LOCALVERSION}" >> "$GITHUB_OUTPUT"
+          echo "==> Expected uname -r: ${KVER}${LOCALVERSION}"
+
+  bios:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ram_mb: [64, 256]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      - name: Boot test — BIOS (ISOLINUX), ${{ matrix.ram_mb }}M RAM
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode bios \
+            --ram-mb ${{ matrix.ram_mb }} \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-bios-${{ matrix.ram_mb }}m.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-bios-${{ matrix.ram_mb }}m-${{ github.run_id }}
+          path: output/boot-test-bios-${{ matrix.ram_mb }}m.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  uefi:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU + OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      - name: Boot test — UEFI (GRUB + OVMF)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode uefi \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-uefi.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-uefi-${{ github.run_id }}
+          path: output/boot-test-uefi.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  toram-eject:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      # toram is exercised via BIOS/ISOLINUX only — GRUB's (toram) menuentry
+      # has no console=ttyS0, so it isn't reachable over serial. See the
+      # module docstring in scripts/boot-test.py for the full reasoning.
+      - name: Boot test — toram + CD eject survival
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode toram \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-toram.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-toram-${{ github.run_id }}
+          path: output/boot-test-toram.log
+          retention-days: 14
+          if-no-files-found: warn
