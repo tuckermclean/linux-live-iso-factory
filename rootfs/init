@@ -431,7 +431,13 @@ cd /newroot
 mkdir -p mnt/initramfs
 
 if ! pivot_root . mnt/initramfs; then
-    err "pivot_root failed, trying switch_root"
+    # pivot_root returns EINVAL on an overlayfs new-root (a known limitation);
+    # switch_root is the correct path for overlay roots. Announce the exec here
+    # too so the boot proceeds identically to the pivot_root path (and so log
+    # watchers see the same "Executing ..." milestone regardless of which path
+    # is taken).
+    dbg "pivot_root not supported here (overlayfs); using switch_root"
+    msg "Executing $INIT_PROG..."
     exec switch_root /newroot "$INIT_PROG"
 fi
 

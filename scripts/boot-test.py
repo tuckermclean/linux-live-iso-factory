@@ -200,33 +200,29 @@ def select_isolinux_label(child, label_line, prompt_timeout=90):
 
 def select_grub_serial_entry(child):
     """
-    GRUB's menu renders via gfxterm (graphics framebuffer), which is not
-    mirrored to serial by OVMF the way SeaBIOS mirrors real-mode VGA text —
-    so we cannot see the menu to confirm placement. Instead we rely on two
-    facts: (1) any keypress cancels GRUB's `set timeout=5` countdown, and
-    (2) bytes written to the pty before GRUB starts reading queue in the
-    kernel tty buffer and are read in order once GRUB opens the console —
-    so exact timing relative to OVMF POST doesn't matter, only that the
-    keys are sent (and stay queued) before GRUB's menu loop starts.
+    grub.cfg now mirrors the menu to serial (`terminal_output gfxterm serial`
+    + `terminal_input console serial`), so instead of firing keystrokes blind
+    we WAIT for the menu to render, then navigate interactively — which is
+    reliable, unlike queuing bytes before GRUB opens the console.
 
-    We send Down + Enter three times, spaced out, as a low-risk safety net
-    against a dropped keystroke — GRUB ignores Down at the last entry
-    (rescue/toram wrap behavior varies by version) and ignores Enter once
-    already booting, so redundant presses are harmless once the OS is
-    loading, but the design is inherently best-effort: this is the one part
-    of this script that cannot be validated without a live CI run. If UEFI
-    boot-test jobs consistently land on the wrong entry, the fix is to
-    switch grub.cfg's `terminal_output` to `serial` (or dual gfxterm+serial)
-    so the menu becomes observable, and this function can watch for it.
+    Menu order (grub.cfg, 0-indexed): 0 plain, 1 framebuffer (default,
+    `set default=1`), 2 serial, 3 debug, 4 rescue, 5 toram, 6 persistent.
+    From the default we step down GRUB_SERIAL_ENTRY_DOWN_PRESSES times to the
+    '(serial)' entry (which sets console=ttyS0) and boot it. The first key
+    also cancels GRUB's `set timeout=5` countdown.
     """
     down = "\x1b[B"
     enter = "\r"
-    for attempt in range(3):
-        log(f"Sending GRUB menu navigation attempt {attempt + 1}/3 (Down x{GRUB_SERIAL_ENTRY_DOWN_PRESSES} + Enter)")
-        child.send(down * GRUB_SERIAL_ENTRY_DOWN_PRESSES)
-        time.sleep(0.3)
-        child.send(enter)
-        time.sleep(2.0)
+    # Wait for the menu to be on-screen over serial before sending anything.
+    try:
+        child.expect_exact("(serial)", timeout=180)
+        log("  -> GRUB menu visible on serial; selecting the (serial) entry")
+    except (pexpect.TIMEOUT, pexpect.EOF):
+        log("  !! GRUB menu not observed on serial within 180s; navigating blind as fallback")
+    time.sleep(0.5)
+    child.send(down * GRUB_SERIAL_ENTRY_DOWN_PRESSES)
+    time.sleep(0.5)
+    child.send(enter)
 
 
 # ---------------------------------------------------------------------------
