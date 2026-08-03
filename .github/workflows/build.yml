@@ -176,6 +176,13 @@ jobs:
       - name: Sync portage
         run: make sync-portage
 
+      - name: Purge stale savedconfig binpkgs
+        # Delete any savedconfig-governed binpkg (e.g. busybox) whose config has
+        # changed since it was cached, so the build recompiles it from source.
+        # Portage's binpkg reuse ignores savedconfig contents, so without this a
+        # config edit is silently a no-op. See scripts/savedconfig-cache.sh.
+        run: bash scripts/savedconfig-cache.sh check "${{ secrets.S3_BUCKET }}" "$BUILD_EPOCH"
+
       - name: Restore binary package cache from S3
         run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/ output/packages/ || true
 
@@ -187,6 +194,12 @@ jobs:
       - name: Save binary packages to S3
         if: always()
         run: aws s3 sync output/packages/ s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/
+
+      - name: Record savedconfig hashes
+        if: always()
+        # Record each tracked savedconfig's hash next to its (now-current) binpkg
+        # so the next build's purge step sees a match and reuses it.
+        run: bash scripts/savedconfig-cache.sh mark "${{ secrets.S3_BUCKET }}" "$BUILD_EPOCH"
 
       - name: Save build logs to S3
         if: always()
