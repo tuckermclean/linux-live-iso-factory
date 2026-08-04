@@ -72,7 +72,19 @@ src_compile() {
 	# just rl144's own crate) rather than a -Z build-std-features flag.
 	# rl144's Cargo.toml already sets profile.release panic="abort"; this
 	# overrides it to immediate-abort, which is intended.
-	export RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort ${RUSTFLAGS}"
+	#
+	# link-self-contained=no: by default rustc links "self-contained" —
+	# passes -nostartfiles -nodefaultlibs, supplies its own bare
+	# crt1.o/crti.o/crtbegin.o/crtend.o/crtn.o, and only -L's its own
+	# rustlib self-contained dir (empty for this custom target; those
+	# objects live in the crossdev toolchain, not rustc's sysroot). This
+	# was the real source of "cannot find crtend.o/crtn.o" (the -lunwind
+	# error was collateral from the same failing link). Disabling
+	# self-contained linking lets the i486-linux-musl-gcc driver supply
+	# its own crt objects/libs from paths it already knows (confirmed via
+	# -print-file-name above: crtn.o under /usr/i486-linux-musl/usr/lib/,
+	# crtend.o under /usr/lib/gcc/i486-linux-musl/15/).
+	export RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort -Clink-self-contained=no ${RUSTFLAGS}"
 
 	einfo "Cross-compiling rl144 for ${RUST_TARGET} (nightly build-std, backend-term)"
 	cargo "+${RUST_NIGHTLY}" \
