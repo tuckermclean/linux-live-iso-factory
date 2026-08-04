@@ -46,7 +46,11 @@ jobs:
       - uses: actions/checkout@v4
       - id: compute
         run: |
-          KVER=$(grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2)
+          # Strip the Portage revision (-rN): it's a packaging bump, not part
+          # of the kernel's own release string. `uname -r` reports the source
+          # version + CONFIG_LOCALVERSION (e.g. 6.12.80-i486-monolith), so the
+          # -r1 in versions.lock's monolith-kernel:6.12.80-r1 must be removed.
+          KVER=$(grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2 | sed -E 's/-r[0-9]+$//')
           LOCALVERSION=$(grep '^CONFIG_LOCALVERSION=' configs/kernel.config | sed -E 's/^CONFIG_LOCALVERSION="(.*)"$/\1/')
           echo "version=${KVER}${LOCALVERSION}" >> "$GITHUB_OUTPUT"
           echo "==> Expected uname -r: ${KVER}${LOCALVERSION}"

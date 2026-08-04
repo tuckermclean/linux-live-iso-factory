@@ -297,6 +297,10 @@ KERNEL_STAGED="/usr/${CROSS_TARGET}/boot/vmlinuz"
 if [ -f "${KERNEL_STAGED}" ] || [ -L "${KERNEL_STAGED}" ]; then
     echo "==> Copying kernel image to ${OUTPUT_DIR}/vmlinuz"
     cp -L "${KERNEL_STAGED}" "${OUTPUT_DIR}/vmlinuz"
+    # Log the bzImage size. The kernel-module regime's "refund" is a smaller
+    # monolith as drivers move to loadable .ko; this makes the delta visible in
+    # every build log (compare across builds) instead of only via S3.
+    echo "==> bzImage size: $(du -h "${OUTPUT_DIR}/vmlinuz" | cut -f1) ($(stat -c%s "${OUTPUT_DIR}/vmlinuz") bytes)"
 else
     echo "WARNING: Kernel image not found at ${KERNEL_STAGED} — vmlinuz will not be saved"
 fi
