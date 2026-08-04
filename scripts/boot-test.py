@@ -693,6 +693,18 @@ def run_reduced_smoke_suite(child, expected_kernel):
     return results
 
 
+def run_storage_smoke_suite(child, expected_kernel):
+    # Post-boot checks for the Tier-1 storage variants: prove the boot completed
+    # onto the right kernel and the overlay root is live. Deliberately NO
+    # networking checks — that is covered by the bios/uefi/toram variants, and
+    # the ahci variant in particular runs on q35, whose default NIC is e1000e (a
+    # driver this kernel doesn't carry), so there is no eth0 to bring up here.
+    results = []
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, expected_kernel)))
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+    return results
+
+
 def report_results(results):
     ok = True
     for name, passed, detail in results:
@@ -830,7 +842,7 @@ def run_uefi_driver_variant(child, args, driver_checks):
     results = []
     for name, check_fn in driver_checks:
         results.append((name, *check_fn(child)))
-    results.extend(run_reduced_smoke_suite(child, args.kernel_version))
+    results.extend(run_storage_smoke_suite(child, args.kernel_version))
 
     ok = report_results(results)
     poweroff_and_wait(child)
