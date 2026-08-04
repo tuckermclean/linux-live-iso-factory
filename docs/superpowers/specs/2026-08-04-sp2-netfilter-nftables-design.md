@@ -70,15 +70,22 @@ Follows SP1's `configs/rootfs-overlay/` + unit-test pattern. Installed to
 Add `usr/sbin/monolith-router` to `configs/attestation/unowned-allowlist.yaml`
 (the SP1 lesson — every hand-authored rootfs file needs an entry).
 
-**Interface model:** `monolith-router [<wan> <lan>]`. With args, explicit. Zero-arg
-auto: WAN = interface of the default route; LAN = the other non-`lo` interface
-(error clearly if ambiguous — 0 or >1 candidates).
+**Interface model:** `monolith-router [<wan> <lan> [<lan-cidr>]]`. With args,
+explicit. Zero-arg auto: WAN = interface of the default route; LAN = the other
+non-`lo` interface (error clearly if ambiguous — 0 or >1 candidates). The
+optional third argument `<lan-cidr>` is the router's own LAN address+prefix
+(e.g. `10.10.0.1/24`) — it MUST be a positional argument, not only an env var,
+because `192.168.99.0/24` may collide with an existing network. Default
+`192.168.99.1/24`; also honoured via `MONOLITH_LAN_CIDR` when the arg is omitted.
+Validate the CIDR (an address with `/prefix`) and fail clearly if malformed.
 
 **Subcommands:**
-- `monolith-router [<wan> <lan>]` (up) —
+- `monolith-router [<wan> <lan> [<lan-cidr>]]` (up) —
   1. `net.ipv4.ip_forward=1` (via `/proc/sys/...`).
-  2. Bring up LAN with a default gateway IP `192.168.99.1/24` if it has no address
-     (override via `MONOLITH_LAN_CIDR`); WAN keeps its DHCP/existing address.
+  2. Bring up LAN with the chosen gateway IP (arg `<lan-cidr>` → `MONOLITH_LAN_CIDR`
+     → default `192.168.99.1/24`) if it has no address; WAN keeps its DHCP/existing
+     address. The router's LAN IP is the `.1` (or whatever the CIDR host part is);
+     clients set their gateway to it.
   3. Install one nftables table (idempotent — delete-then-add):
      ```
      table inet monolith_router {
@@ -95,7 +102,8 @@ auto: WAN = interface of the default route; LAN = the other non-`lo` interface
 **Unit tests** (stub `nft`/`ip`/`sysctl` on PATH, fixture `/sys/class/net` +
 `/proc/.../ip_forward`): verify up installs masquerade+forward for the resolved
 ifaces and sets ip_forward; auto-detection picks the default-route iface; ambiguous
-auto errors non-zero; down tears it all down; status reflects state.
+auto errors non-zero; a custom `<lan-cidr>` arg is applied to the LAN (and a
+malformed CIDR errors non-zero); down tears it all down; status reflects state.
 
 ## 6. The two-node NAT CI test — the star
 
