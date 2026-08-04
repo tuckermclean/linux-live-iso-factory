@@ -30,7 +30,7 @@ No network card detected automatically.
 ISA cards from before Plug-and-Play can't announce themselves — you tell the
 kernel where the card lives:
 
-    modprobe ne io=0x300        # NE2000 clone (try 0x280, 0x320, 0x340...)
+    modprobe ne io=0x300 irq=9  # NE2000 clone (io 0x280/0x320..., irq 3/5/10/11)
     modprobe wd io=0x240        # SMC/WD 80x3
     modprobe lance io=0x300     # AMD LANCE
 
@@ -75,11 +75,26 @@ cmd_probe() {
         cmd_status
         return 0
     fi
-    for spec in \
-        ne:0x300 ne:0x280 ne:0x320 ne:0x340 ne:0x360 \
-        wd:0x240 wd:0x300 wd:0x280 wd:0x2e0 wd:0x350 \
-        lance:0x300 lance:0x320 lance:0x360 lance:0x3a0
-    do
+    # NE2000 needs an explicit IRQ — its autodetect is unreliable and fails
+    # outright under emulation (QEMU's ne2k_isa is io=0x300 irq=9), so sweep
+    # io x irq. A wrong irq fails the driver's own irq test cleanly, so bad
+    # combinations just move on. 0x300 / irq 9 first (PnP + emulator default),
+    # then the classic jumpered io/irq values.
+    for addr in 0x300 0x280 0x320 0x340 0x360; do
+        for irq in 9 3 5 10 11; do
+            echo "  trying ne io=$addr irq=$irq ..."
+            if modprobe ne io="$addr" irq="$irq" 2>/dev/null && have_nic; then
+                iface=$(list_ifaces | head -n1)
+                echo "  found $iface via ne io=$addr irq=$irq"
+                bring_up "$iface"
+                return 0
+            fi
+            modprobe -r ne 2>/dev/null || true   # bad guess leaves nothing resident
+        done
+    done
+    # WD80x3 and LANCE read their IRQ from the card, so io alone suffices.
+    for spec in wd:0x240 wd:0x300 wd:0x280 wd:0x2e0 wd:0x350 \
+                lance:0x300 lance:0x320 lance:0x360 lance:0x3a0; do
         drv=${spec%%:*}; addr=${spec##*:}
         echo "  trying $drv io=$addr ..."
         if modprobe "$drv" io="$addr" 2>/dev/null && have_nic; then

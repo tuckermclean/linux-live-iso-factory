@@ -18,9 +18,9 @@ setup() {
     cat > "$BIN/modprobe" <<'STUB'
 #!/bin/sh
 [ "$1" = "-r" ] && exit 0
-drv=$1; shift; addr=""
-for a in "$@"; do case "$a" in io=*) addr=${a#io=};; esac; done
-spec="$drv"; [ -n "$addr" ] && spec="$drv:$addr"
+drv=$1; shift; addr=""; irq=""
+for a in "$@"; do case "$a" in io=*) addr=${a#io=};; irq=*) irq=${a#irq=};; esac; done
+spec="$drv"; [ -n "$addr" ] && spec="$spec:$addr"; [ -n "$irq" ] && spec="$spec:$irq"
 if [ "$spec" = "${WIN:-}" ]; then mkdir -p "$SYS/eth0"; echo up > "$SYS/eth0/operstate"; exit 0; fi
 exit 1
 STUB
@@ -44,7 +44,7 @@ teardown
 # 4. autoprobe with nothing -> prints incantation
 setup; out=$(WIN= sh "$SCRIPT" autoprobe 2>&1); check "autoprobe/none shows incantation" "monolith-net probe" "$out"; teardown
 # 5. probe finds ne at a non-default address
-setup; out=$(WIN=ne:0x320 sh "$SCRIPT" probe 2>&1); check "probe finds ne io=0x320" "ne io=0x320" "$out"; teardown
+setup; out=$(WIN=ne:0x320:5 sh "$SCRIPT" probe 2>&1); check "probe finds ne io=0x320 irq=5" "ne io=0x320 irq=5" "$out"; teardown
 # 6. probe finds nothing -> reports failure + incantation, exit 1
 setup; out=$(WIN= sh "$SCRIPT" probe 2>&1); rc=$?
 check "probe/none reports failure" "No ISA card answered" "$out"
