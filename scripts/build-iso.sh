@@ -239,7 +239,11 @@ fi
 GRUB_CFG=$(mktemp)
 cat > "$GRUB_CFG" << GRUBEOF
 set timeout=5
-set default=1
+# Default to entry 0 (plain) — the kernel auto-selects the framebuffer
+# (simplefb -> hyperv_fb on Hyper-V Gen2), which is the console that actually
+# works. Entry 1 forces video=efifb, which freezes on Gen2; it stays as an
+# explicit option for hardware that needs it, but is no longer the default.
+set default=0
 
 # Locate the ISO9660 volume by label. On UEFI boot, GRUB's root defaults to the
 # ESP (FAT image), so /boot/vmlinuz would not be found. search switches root to
@@ -257,11 +261,13 @@ terminal_output gfxterm serial
 background_image /boot/grub/bootbg.png
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION}" {
-    linux /boot/vmlinuz    initrd /boot/initrd.img
+    linux /boot/vmlinuz
+    initrd /boot/initrd.img
 }
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (framebuffer)" {
-    linux /boot/vmlinuz video=efifb    initrd /boot/initrd.img
+    linux /boot/vmlinuz video=efifb
+    initrd /boot/initrd.img
 }
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (serial)" {
@@ -280,7 +286,8 @@ menuentry "tHE m0n0LiTH ${BUILD_VERSION} (rescue shell)" {
 }
 
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (toram)" {
-    linux /boot/vmlinuz toram    initrd /boot/initrd.img
+    linux /boot/vmlinuz toram
+    initrd /boot/initrd.img
 }
 
 # Persistent storage — see the LABEL persist comment above (isolinux.cfg) for
