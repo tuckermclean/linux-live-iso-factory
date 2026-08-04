@@ -1,0 +1,61 @@
+# Tier-1 boot-media drivers — the modules that let the initramfs REACH the boot
+# device on hardware whose controller isn't Tier-0 built-in. build-initrd.sh
+# copies each of these (plus its dependency closure, resolved from modules.dep)
+# into the initramfs; rootfs/init coldplugs them by modalias before searching
+# for rootfs.squashfs. See docs/kernel-tiers.md.
+#
+# One module name per line ('#' comments and blanks ignored; '-' and '_' are
+# interchangeable). Host controllers / libata / scsi_mod are Tier-0 built-in and
+# deliberately NOT listed here. Anything a machine doesn't have simply never
+# loads — it costs only the modprobe attempt, and the initramfs RAM is reclaimed
+# after switch_root. That is why this list can be broad without taxing the 486.
+
+# ── AHCI + pre-AHCI SATA (2003–2006 SATA-before-AHCI is thrift-store core) ──
+ahci
+sata_sil
+sata_via
+sata_nv
+sata_promise
+
+# ── NVMe ────────────────────────────────────────────────────────────────────
+nvme
+
+# ── USB: the full host-controller chain (1996 UHCI → 2010 xHCI) + storage ───
+# usbcore is Tier-0 built-in; these per-controller drivers are Tier 1 so a 486
+# with no USB reclaims their RAM. The PCI-glue drivers carry the modalias that
+# coldplug matches; depmod pulls in xhci-hcd/ehci-hcd/ohci-hcd as dependencies.
+xhci-pci
+ehci-pci
+ohci-pci
+uhci-hcd
+usb-storage
+uas
+
+# ── virtio (VMs / cloud) ────────────────────────────────────────────────────
+virtio_blk
+virtio_scsi
+
+# ── MMC / SD / eMMC (SBCs, tablets) ─────────────────────────────────────────
+sdhci
+sdhci-pci
+mmc_block
+
+# ── SAS / RAID HBAs across the eras (no loadable firmware) ───────────────────
+mptspi
+mptsas
+mpt3sas
+megaraid_sas
+
+# ── Add-in PATA IDE controller cards (onboard southbridge IDE is Tier-0 =y) ──
+pata_cmd64x
+pata_hpt366
+pata_hpt37x
+pata_artop
+pata_serverworks
+pata_sil680
+pata_it821x
+pata_jmicron
+
+# ── FireWire storage (hardware that followed someone) ───────────────────────
+firewire-ohci
+firewire-sbp2

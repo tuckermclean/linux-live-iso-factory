@@ -206,3 +206,260 @@ jobs:
           path: output/boot-test-toram.log
           retention-days: 14
           if-no-files-found: warn
+
+  # --------------------------------------------------------------------
+  # Phase-2 Tier-1 module-regime variants: each boots the isohybrid ISO
+  # (a valid raw disk image, not just a CD image) from a different
+  # emulated storage controller and asserts the matching kernel module
+  # was coldplug-loaded from the initrd before the squashfs was mounted.
+  # See the module docstring in scripts/boot-test.py for the full
+  # reasoning and exact QEMU device sets.
+  # --------------------------------------------------------------------
+
+  ahci:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU + OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      - name: Boot test — AHCI/SATA (q35 + ich9-ahci, UEFI)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode ahci \
+            --ram-mb 512 \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-ahci.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-ahci-${{ github.run_id }}
+          path: output/boot-test-ahci.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  nvme:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU + OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      - name: Boot test — NVMe (UEFI)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode nvme \
+            --ram-mb 512 \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-nvme.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-nvme-${{ github.run_id }}
+          path: output/boot-test-nvme.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  usb:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU + OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      - name: Boot test — USB mass storage (xHCI, UEFI)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode usb \
+            --ram-mb 512 \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-usb.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-usb-${{ github.run_id }}
+          path: output/boot-test-usb.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  virtio:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU + OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      - name: Boot test — virtio-blk (UEFI)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode virtio \
+            --ram-mb 512 \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-virtio.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-virtio-${{ github.run_id }}
+          path: output/boot-test-virtio.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  nicless:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      # Negative control: no NIC hardware at all (-nic none), proving
+      # coldplug does NOT load e1000 when there's nothing to match. See the
+      # module docstring in scripts/boot-test.py for the full reasoning.
+      - name: Boot test — nicless (negative control, BIOS/ISOLINUX)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode nicless \
+            --ram-mb 64 \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-nicless.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-nicless-${{ github.run_id }}
+          path: output/boot-test-nicless.log
+          retention-days: 14
+          if-no-files-found: warn
