@@ -56,9 +56,9 @@ Neither ISOLINUX nor GRUB defaults to a serial-visible boot entry:
   - isolinux.cfg: `DEFAULT fb800` (framebuffer, invisible over -nographic).
     We explicitly type the `serial` label (optionally with extra kernel
     params, e.g. `serial toram`) at the `boot:` prompt within the 5s timeout.
-  - grub.cfg: `set default=1` (the framebuffer entry, gfxterm-only, also
-    invisible over -nographic/serial). We send a Down-arrow + Enter to select
-    the "(serial)" entry (index 2) instead. GRUB has no `toram`-over-serial
+  - grub.cfg: `set default=0` (the plain entry, gfxterm-only, also
+    invisible over -nographic/serial). We send two Down-arrows + Enter to
+    select the "(serial)" entry (index 2) instead. GRUB has no `toram`-over-serial
     entry at all (its `(toram)` menuentry doesn't set console=ttyS0), so
     `toram` is only exercised via the BIOS/ISOLINUX path in this script,
     where the boot prompt lets us combine `serial toram` in one line.
@@ -105,10 +105,11 @@ MILESTONE_RCS_COMPLETE = "System initialization complete."
 ISOLINUX_PROMPT = "boot:"
 
 # GRUB menu order in scripts/build-iso.sh's GRUB_CFG heredoc (0-indexed):
-#   0 plain  1 framebuffer(default)  2 serial  3 debug  4 rescue  5 toram
+#   0 plain(default)  1 framebuffer  2 serial  3 debug  4 rescue  5 toram
 # We only ever need entry 2 ("(serial)"); toram is tested via ISOLINUX instead
 # (see module docstring) because the GRUB toram entry has no console=ttyS0.
-GRUB_SERIAL_ENTRY_DOWN_PRESSES = 1
+# default is entry 0, so reaching "(serial)" (entry 2) is two Down-arrows.
+GRUB_SERIAL_ENTRY_DOWN_PRESSES = 2
 
 DEFAULT_BOOT_TIMEOUT = 300  # generous: emulated i486 path is slow
 
@@ -355,8 +356,8 @@ def select_grub_serial_entry(child):
     we WAIT for the menu to render, then navigate interactively — which is
     reliable, unlike queuing bytes before GRUB opens the console.
 
-    Menu order (grub.cfg, 0-indexed): 0 plain, 1 framebuffer (default,
-    `set default=1`), 2 serial, 3 debug, 4 rescue, 5 toram, 6 persistent.
+    Menu order (grub.cfg, 0-indexed): 0 plain (default, `set default=0`),
+    1 framebuffer, 2 serial, 3 debug, 4 rescue, 5 toram, 6 persistent.
     From the default we step down GRUB_SERIAL_ENTRY_DOWN_PRESSES times to the
     '(serial)' entry (which sets console=ttyS0) and boot it. The first key
     also cancels GRUB's `set timeout=5` countdown.
