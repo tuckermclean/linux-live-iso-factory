@@ -76,12 +76,21 @@ src_compile() {
 	# crtend.o under /usr/lib/gcc/i486-linux-musl/15/).
 	#
 	# The target spec itself now sets "panic-strategy": "abort" (see
-	# files/i486-unknown-linux-musl.json) — that's what actually removes
-	# the -lunwind dependency, since it applies to build-std's compile of
-	# std/core too, not just rl144's own crate. rl144's Cargo.toml already
-	# sets profile.release panic="abort"; the target spec makes that
-	# consistent all the way down.
-	export RUSTFLAGS="-Clink-self-contained=no ${RUSTFLAGS}"
+	# files/i486-unknown-linux-musl.json), matching rl144's Cargo.toml
+	# profile.release panic="abort" all the way down through build-std.
+	# That does NOT remove the -lunwind reference on its own — std's
+	# backtrace support still references _Unwind_* symbols regardless of
+	# panic strategy, so rustc still links -lunwind. The crossdev
+	# musl/gcc toolchain has no standalone libunwind at all; the unwinder
+	# lives in libgcc. Alias libgcc's unwinder archive as libunwind.a so
+	# the link resolves against the real _Unwind_* symbols it provides.
+	local _unwind
+	_unwind=$("${CHOST}-gcc" -print-file-name=libgcc_eh.a)
+	[[ -f "${_unwind}" ]] || _unwind=$("${CHOST}-gcc" -print-file-name=libgcc.a)
+	mkdir -p "${T}/unwindlib"
+	ln -sf "${_unwind}" "${T}/unwindlib/libunwind.a"
+	einfo "aliased libunwind -> ${_unwind}"
+	export RUSTFLAGS="-Clink-self-contained=no -Clink-arg=-L${T}/unwindlib ${RUSTFLAGS}"
 
 	einfo "Cross-compiling rl144 for ${RUST_TARGET} (nightly build-std, backend-term)"
 	cargo "+${RUST_NIGHTLY}" \
