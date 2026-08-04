@@ -8,6 +8,13 @@
 # BusyBox — static with savedconfig (savedconfig reads from configs/portage/savedconfig/sys-apps/busybox)
 sys-apps/busybox savedconfig static
 
+# kmod — modprobe/lsmod/depmod for the booted rootfs's Tier-2 coldplug. The
+# `tools` flag gates the actual command-line binaries; our global USE="-*"
+# strips it, which both leaves us with only libkmod (no modprobe) AND makes
+# kmod's meson abort ("test suite requires also building the tools"). Modules
+# are plain uncompressed .ko (no CONFIG_MODULE_COMPRESS), so no zlib/xz/zstd.
+sys-apps/kmod tools
+
 # app-alternatives packages need an explicit implementation choice since
 # our global USE="-*" strips their defaults.
 app-alternatives/* reference

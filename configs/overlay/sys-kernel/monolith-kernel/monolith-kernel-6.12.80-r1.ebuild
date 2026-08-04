@@ -37,13 +37,29 @@ src_configure() {
 
 src_compile() {
 	# -j1: cross-gcc is memory-heavy; higher parallelism OOMs CI runners
-	emake -j1 ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" bzImage
+	emake -j1 ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" bzImage modules
 }
 
 src_install() {
 	insinto /boot
 	newins arch/x86/boot/bzImage vmlinuz-${PV}
 	dosym vmlinuz-${PV} /boot/vmlinuz
+
+	# Install loadable kernel modules into the target sysroot. They ride into the
+	# rootfs squashfs via build-rootfs.sh's `rsync -a sysroot/ rootfs/`, so the
+	# booted system's coldplug can load exactly the drivers each machine has.
+	# INSTALL_MOD_STRIP=1 keeps them small (486 disk + gzip-decompress budget).
+	emake ARCH=i386 CROSS_COMPILE="${CROSS_COMPILE}" \
+		INSTALL_MOD_PATH="${D}" INSTALL_MOD_STRIP=1 modules_install
+
+	# modules_install leaves build/ and source/ symlinks pointing at the
+	# ephemeral build tree (dangling in the image). Drop them, then regenerate
+	# modules.dep rooted at the image so on-target modprobe resolves deps.
+	local krel
+	krel="$(make -s ARCH=i386 kernelrelease)"
+	rm -f "${D}/lib/modules/${krel}/build" "${D}/lib/modules/${krel}/source"
+	depmod -b "${D}" "${krel}"
+
 	# Save final config back to /configs
 	cp .config "${CONFIGS_DIR}/kernel.config" || true
 }

@@ -303,6 +303,17 @@ mount -t tmpfs -o nosuid,mode=755 tmpfs /run
 mkdir -p /run/lock
 touch /run/utmp
 
+# ── Load drivers for detected hardware (Tier 2 modules) ─────────────────────
+# One coldplug pass: read every device's modalias and modprobe the match. On an
+# ISA-era 486 this loads approximately nothing (few/no modalias-emitting devices);
+# on PCI/modern machines the device tree self-assembles — NIC, mouse, sound, ...
+# Modules live in the squashfs; zero RAM cost until a matching device exists.
+# No udev, no daemon. Runs before S40network so a modular NIC is up for DHCP.
+if command -v modprobe >/dev/null 2>&1 && [ -d "/lib/modules/$(uname -r)" ]; then
+    find /sys -name modalias -exec sort -u {} + 2>/dev/null \
+        | xargs -r modprobe -abq 2>/dev/null || true
+fi
+
 # Set hostname
 [ -f /etc/hostname ] && echo "$(cat /etc/hostname)" > /proc/sys/kernel/hostname
 

@@ -340,6 +340,23 @@ def smoke_kernel_version(child, expected_kernel):
     )
 
 
+def smoke_nic_is_module(child):
+    """
+    The kernel-module regime (Tier 1) makes the NIC driver loadable rather than
+    built-in: kernel.config carries CONFIG_E1000=m, and QEMU's default `pc` NIC
+    is an e1000. So a passing `lsmod | grep e1000` proves the whole refund chain
+    end to end — the driver was compiled as a .ko, rode into the squashfs via
+    modules_install, and rcS's modalias coldplug matched the PCI id and loaded
+    it. If this passes but eth0 is down, networking broke; if this fails, the
+    module pipeline itself is broken. Keeping the two checks distinct localizes
+    the fault.
+    """
+    return run_check(
+        child, "e1000 NIC driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^e1000\b", re.MULTILINE),
+    )
+
+
 def smoke_eth0_link(child):
     return run_check(
         child, "eth0 link is up", "ip link show eth0",
@@ -403,6 +420,7 @@ def smoke_man(child):
 def run_full_smoke_suite(child, expected_kernel):
     results = []
     results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, expected_kernel)))
+    results.append(("e1000 NIC driver loaded as a module (coldplug)", *smoke_nic_is_module(child)))
     results.append(("eth0 link is up", *smoke_eth0_link(child)))
     smoke_dhcp_lease(child, results)
     results.append(("curl --version executes", *smoke_curl(child)))
@@ -414,6 +432,7 @@ def run_full_smoke_suite(child, expected_kernel):
 def run_reduced_smoke_suite(child, expected_kernel):
     results = []
     results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, expected_kernel)))
+    results.append(("e1000 NIC driver loaded as a module (coldplug)", *smoke_nic_is_module(child)))
     results.append(("eth0 link is up", *smoke_eth0_link(child)))
     results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
     return results
