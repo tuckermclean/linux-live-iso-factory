@@ -111,6 +111,25 @@ RUN emerge dev-python/pyyaml && \
         | sh -s -- -b /usr/local/bin && \
     rm -rf /var/cache/distfiles/*
 
+# Rust toolchain for building games-roguelike/rl144 — a 486-class Rust roguelike.
+# rl144 needs nightly + -Zbuild-std to compile Rust's std for the custom
+# i486-unknown-linux-musl target (i486 has no prebuilt Rust std). Installed via
+# rustup with a PINNED nightly (reproducibility, matching the BUILD_EPOCH spirit)
+# and the rust-src component. System-wide under /opt so the portage build user
+# can read it; the ebuild links with the crossdev i486-linux-musl-gcc. Kept out
+# of portage on purpose — nightly + build-std for a custom JSON target is a
+# rustup workflow, not dev-lang/rust. Pin MUST match the rl144 ebuild's
+# RUST_NIGHTLY (configs/overlay/games-roguelike/rl144/*.ebuild).
+ENV RUSTUP_HOME=/opt/rustup \
+    PATH=/opt/cargo/bin:${PATH}
+RUN export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo && \
+    curl --proto '=https' --tlsv1.2 -sSfL https://sh.rustup.rs \
+        | sh -s -- -y --no-modify-path --profile minimal \
+              --default-toolchain nightly-2026-07-15 --component rust-src && \
+    chmod -R a+rX /opt/rustup /opt/cargo && \
+    /opt/cargo/bin/rustc --version && \
+    rm -rf /var/cache/distfiles/*
+
 # Configure portage overlays and policy
 RUN mkdir -p /var/db/repos/crossdev/{profiles,metadata} && \
     echo 'crossdev' > /var/db/repos/crossdev/profiles/repo_name && \
