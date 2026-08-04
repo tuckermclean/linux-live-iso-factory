@@ -322,18 +322,26 @@ echo "..."
 UNCOMPRESSED_SIZE=$(du -sk "${INITRD_DIR}" | cut -f1)
 log_info "Uncompressed initramfs size: ${UNCOMPRESSED_SIZE} KB"
 
-# Create the cpio archive and compress with XZ (kernel has CONFIG_RD_XZ=y).
+# Create the cpio archive and compress with GZIP, not XZ (kernel has
+# CONFIG_RD_GZIP=y). This is a deliberate RAM trade for low-memory machines:
+# `xz -6` needs an ~8 MB decompression dictionary that the kernel must allocate
+# during early boot — on a 16 MB Pentium that can be the difference between
+# booting and OOMing — whereas gzip's decompression window is 32 KB. The payload
+# is only ~3 MB, so xz's better ratio saves a few hundred KB of disc (irrelevant
+# on a CD/USB) at the cost of ~8 MB of peak boot RAM (decisive). Disc space is
+# cheap; a Pentium's RAM is not.
 # Reproducibility:
 #   1. Normalize all file timestamps to SOURCE_DATE_EPOCH before archiving so
 #      the cpio entries don't embed the live build time.
 #   2. Sort the find output so the archive member order is deterministic
 #      (find visits directories in filesystem order, which varies by run).
+#   3. `gzip -n` omits the mtime/filename from the gzip header (also for repro).
 # Symlinks are excluded from touch because touch -h support varies and the
 # kernel initramfs extracts them correctly regardless of their mtime.
 log_info "Creating compressed initramfs image..."
 cd "${INITRD_DIR}"
 find . -not -type l -exec touch -d "@${SOURCE_DATE_EPOCH:-0}" {} +
-find . -print0 | LC_ALL=C sort -z | cpio --null -o -H newc | xz --check=crc32 -6 > "${INITRD_IMAGE}"
+find . -print0 | LC_ALL=C sort -z | cpio --null -o -H newc | gzip -9 -n > "${INITRD_IMAGE}"
 
 # Show final size
 COMPRESSED_SIZE=$(stat -c%s "${INITRD_IMAGE}")

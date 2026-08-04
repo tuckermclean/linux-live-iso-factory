@@ -109,9 +109,13 @@ coldplug_once() {
 }
 
 # Load the Tier-1 boot-media drivers so AHCI/NVMe/USB/SAS/SATA/MMC/... devices
-# enumerate BEFORE we search for rootfs.squashfs. A 486 booting built-in IDE has
-# none of these and loads nothing. The RAM is reclaimed after switch_root, so a
-# broad manifest costs steady-state nothing — see docs/kernel-tiers.md.
+# enumerate BEFORE we search for rootfs.squashfs. This is COLDPLUG ONLY: kmod
+# matches each present device's modalias against modules.alias and loads just
+# the drivers this machine's controllers actually need — not the whole manifest.
+# A machine that boots from built-in IDE (or has none of these controllers)
+# loads nothing and keeps nothing resident after switch_root. The full manifest
+# is a last resort (load_manifest_fallback), reached only if the media search
+# cannot otherwise find the boot device. See docs/kernel-tiers.md.
 load_storage_modules() {
     # Detect the bundled module tree WITHOUT the `uname` applet (busybox here may
     # lack it; modprobe self-locates the tree via the uname(2) syscall anyway).
@@ -124,7 +128,8 @@ load_storage_modules() {
     # Resolve the module loader (kmod, installed by build-initrd.sh) by explicit
     # path — do NOT trust PATH or `command -v`, since a kernel-started init has a
     # minimal environment. kmod dispatches on argv[0], so /bin/kmod is invoked as
-    # "kmod modprobe".
+    # "kmod modprobe". MODPROBE is global so the media-search retries and the
+    # manifest fallback reuse it.
     MODPROBE=
     for _c in /sbin/modprobe /bin/modprobe /usr/bin/kmod /bin/kmod; do
         [ -x "$_c" ] && { MODPROBE="$_c"; break; }
@@ -136,27 +141,8 @@ load_storage_modules() {
     fi
     dbg "module loader: $MODPROBE"
 
-    msg "Loading boot-media drivers (Tier 1)..."
-
-    # Pass 1 (bonus): load controllers the present hardware advertises via
-    # modalias. The manifest below is the reliable path either way.
+    msg "Loading boot-media drivers (Tier 1, coldplug)..."
     coldplug_once
-
-    # Primary path: load each manifest module BY NAME (depmod resolved the
-    # dependency graph at build time; loading a driver whose hardware is absent
-    # just leaves it idle, and the initramfs RAM is reclaimed at switch_root).
-    # Surface any failure to the console — a broken modprobe here is the
-    # difference between finding the boot device and a rescue shell, so it must
-    # never be silent.
-    if [ -r /etc/initrd-modules ]; then
-        while read -r _mod; do
-            case "$_mod" in ''|\#*) continue ;; esac
-            if ! _err=$($MODPROBE "$_mod" 2>&1); then
-                [ -n "$_err" ] && msg "  note: modprobe $_mod: $_err"
-            fi
-        done < /etc/initrd-modules
-    fi
-
     # Settle: a disk behind a bus we just enabled (USB/SD/SATA) appears a beat
     # later — coldplug again for it, then refresh /dev nodes.
     sleep 1
@@ -164,6 +150,25 @@ load_storage_modules() {
     command -v mdev >/dev/null 2>&1 && mdev -s 2>/dev/null || true
 
     msg "Boot-media drivers loaded ($(lsmod 2>/dev/null | tail -n +2 | wc -l) module(s) resident)"
+}
+
+# Last resort: force-load EVERY module in the manifest by name, for the rare
+# controller whose modalias coldplug didn't match. This trades RAM (all ~40
+# storage drivers resident, kept even after switch_root) for reach, so the media
+# search calls it ONLY after coldplug + retries have failed — never on a machine
+# that already found its boot device. Failures are surfaced to the console.
+load_manifest_fallback() {
+    [ -n "$MODPROBE" ] && [ -r /etc/initrd-modules ] || return 0
+    msg "Boot media not found via coldplug — force-loading the full driver manifest..."
+    while read -r _mod; do
+        case "$_mod" in ''|\#*) continue ;; esac
+        if ! _err=$($MODPROBE "$_mod" 2>&1); then
+            [ -n "$_err" ] && msg "  note: modprobe $_mod: $_err"
+        fi
+    done < /etc/initrd-modules
+    sleep 1
+    coldplug_once
+    command -v mdev >/dev/null 2>&1 && mdev -s 2>/dev/null || true
 }
 
 # Drop to rescue shell
@@ -364,6 +369,14 @@ if [ "$OVERLAY_MODE" = "1" ]; then
         scan_for_boot_media || true
         _media_attempt=$((_media_attempt + 1))
     done
+
+    # Desperation: coldplug never surfaced the boot device. Force-load the whole
+    # driver manifest and sweep once more before giving up (covers a controller
+    # whose modalias didn't match). Only reached when nothing else worked.
+    if [ -z "$BOOT_MEDIA" ]; then
+        load_manifest_fallback
+        scan_for_boot_media || true
+    fi
 
     if [ -z "$BOOT_MEDIA" ]; then
         err "Could not find boot media with rootfs.squashfs"
