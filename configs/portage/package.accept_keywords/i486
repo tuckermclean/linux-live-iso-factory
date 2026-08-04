@@ -8,3 +8,4 @@
 
 # monolith overlay packages — accept all keywords (local overlay, no arch support matrix)
 sys-kernel/monolith-kernel **
+games-roguelike/rl144 **
