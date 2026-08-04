@@ -59,7 +59,9 @@ cmd_autoprobe() {
     if have_nic; then
         iface=$(list_ifaces | head -n1)
         echo "  found $iface via 3c509 auto-detect"
-        bring_up "$iface"
+        # No bring_up() here: S40network (which runs right after
+        # S35netprobe -> autoprobe) owns ip link up + dhcpcd for every
+        # interface it finds. Doing it here too would double-dhcpcd.
         return 0
     fi
     print_incantation
