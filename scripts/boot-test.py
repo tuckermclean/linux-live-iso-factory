@@ -324,6 +324,17 @@ def build_nicless_cmd(args):
     return cmd
 
 
+def build_nic_cmd(args):
+    # BIOS/ISOLINUX on the i440fx `pc` machine (has an ISA bus, needed for
+    # ne2k_isa). Legacy -net form replaces QEMU's default NIC with exactly one
+    # card of the requested model; works for pcnet/rtl8139/tulip/ne2k_pci/ne2k_isa.
+    if not args.nic_model:
+        raise BootTestError("--mode nic requires --nic-model")
+    cmd = build_bios_cmd(args)
+    cmd += ["-net", f"nic,model={args.nic_model}", "-net", "user"]
+    return cmd
+
+
 # ---------------------------------------------------------------------------
 # Boot-loader navigation
 # ---------------------------------------------------------------------------
@@ -673,6 +684,40 @@ def smoke_nic_not_loaded(child):
     )
 
 
+# NIC-model matrix: QEMU emulates much of the zoo. Coldplug models assert the
+# driver loads by modalias; the ISA model (ne2k_isa, no modalias) asserts the
+# monolith-net probe path instead.
+NIC_MODEL_MODULE = {
+    "pcnet": r"^pcnet32\b",
+    "rtl8139": r"^8139(too|cp)\b",
+    "tulip": r"^tulip\b",
+    "ne2k_pci": r"^ne2k_pci\b",
+}
+
+def smoke_nic_model_is_module(child, model):
+    pattern = NIC_MODEL_MODULE[model]
+    return run_check(
+        child, f"{model} NIC driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(pattern, re.MULTILINE),
+    )
+
+def smoke_isa_probe(child, results):
+    """
+    ne2k_isa has no modalias, so coldplug must NOT have loaded `ne`. Then
+    `monolith-net probe` sweeps the common io= addresses (QEMU's ne2k_isa sits
+    at the default 0x300), after which `ne` is resident and an interface exists.
+    """
+    results.append(("ne NOT auto-loaded for ISA card (no modalias)",
+                    *run_check(child, "ne not coldplugged", "lsmod",
+                               regex_absent(r"^ne\b", re.MULTILINE))))
+    results.append(("monolith-net probe finds the ISA NE2000",
+                    *run_check(child, "monolith-net probe", "monolith-net probe",
+                               contains("found"), timeout=60)))
+    results.append(("ne driver resident after probe",
+                    *run_check(child, "ne loaded post-probe", "lsmod",
+                               regex_matches(r"^ne\b", re.MULTILINE))))
+
+
 def run_full_smoke_suite(child, expected_kernel):
     results = []
     results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, expected_kernel)))
@@ -910,6 +955,31 @@ def run_nicless(child, args):
     return ok
 
 
+def run_nic(child, args):
+    select_isolinux_label(child, "serial")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    results = []
+    if args.nic_model == "ne2k_isa":
+        smoke_isa_probe(child, results)
+    else:
+        results.append((f"{args.nic_model} coldplug", *smoke_nic_model_is_module(child, args.nic_model)))
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, args.kernel_version)))
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
 MODE_BUILDERS = {
     "bios": build_bios_cmd,
     "uefi": build_uefi_cmd,
@@ -919,6 +989,7 @@ MODE_BUILDERS = {
     "usb": build_usb_cmd,
     "virtio": build_virtio_cmd,
     "nicless": build_nicless_cmd,
+    "nic": build_nic_cmd,
 }
 
 MODE_RUNNERS = {
@@ -930,6 +1001,7 @@ MODE_RUNNERS = {
     "usb": run_usb,
     "virtio": run_virtio,
     "nicless": run_nicless,
+    "nic": run_nic,
 }
 
 MODE_DEFAULT_RAM = {
@@ -941,6 +1013,7 @@ MODE_DEFAULT_RAM = {
     "usb": 512,
     "virtio": 512,
     "nicless": 64,  # mirrors bios: same machine type, no extra RAM pressure
+    "nic": 256,
 }
 
 
@@ -973,6 +1046,8 @@ def parse_args():
              "'ide1-cd0' is QEMU's default id for a plain -cdrom on the pc/i440fx machine type.",
     )
     p.add_argument("--log-file", default=None, help="Write the full serial session transcript here")
+    p.add_argument("--nic-model", default=None,
+                   help="QEMU NIC model for --mode nic (pcnet|rtl8139|tulip|ne2k_pci|ne2k_isa)")
     return p.parse_args()
 
 

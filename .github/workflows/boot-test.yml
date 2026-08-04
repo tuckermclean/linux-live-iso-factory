@@ -463,3 +463,59 @@ jobs:
           path: output/boot-test-nicless.log
           retention-days: 14
           if-no-files-found: warn
+
+  # NIC-model matrix: BIOS/ISOLINUX boot with each QEMU NIC model in turn.
+  # PCI models (pcnet/rtl8139/tulip/ne2k_pci) assert coldplug via modalias;
+  # ne2k_isa has no modalias, so it asserts the `monolith-net probe` path
+  # instead. See the NIC_MODEL_MODULE comment in scripts/boot-test.py.
+  nic-models:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        nic_model: [pcnet, rtl8139, tulip, ne2k_pci, ne2k_isa]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      - name: Boot test — NIC model ${{ matrix.nic_model }}
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode nic --nic-model ${{ matrix.nic_model }} \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-nic-${{ matrix.nic_model }}.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-nic-${{ matrix.nic_model }}-${{ github.run_id }}
+          path: output/boot-test-nic-${{ matrix.nic_model }}.log
+          retention-days: 14
+          if-no-files-found: warn
