@@ -94,6 +94,52 @@ else
     exit 1
 fi
 
+# Install the module loader: kmod, NOT busybox.
+#
+# Gentoo's busybox drops the modutils applets (modprobe/insmod/...) in favor of
+# sys-apps/kmod regardless of savedconfig, so the initramfs busybox has no
+# modprobe. kmod is the canonical loader anyway: it reads the exact
+# modules.dep/modules.alias that depmod (also kmod) writes, and resolves
+# modaliases + dependencies natively. It MUST be statically linked — the
+# initramfs has no shared libraries or dynamic loader — so verify that here
+# and fail the build loudly rather than dropping to a rescue shell at boot.
+# A static ELF has no PT_INTERP (program interpreter) segment. readelf reads the
+# ELF header arch-independently, so it checks the i486 kmod correctly on the
+# x86_64 build host; fall back to `file`, and if neither exists, proceed (a
+# dynamic kmod would then fail at boot, which the serial log would show).
+is_static_elf() {
+    if command -v readelf >/dev/null 2>&1; then
+        ! readelf -l "$1" 2>/dev/null | grep -q 'INTERP'
+    elif command -v file >/dev/null 2>&1; then
+        file "$1" | grep -q 'statically linked'
+    else
+        log_warn "no readelf/file to verify kmod is static; trusting the build"
+        return 0
+    fi
+}
+KMOD_BIN="${OUTPUT_DIR}/sysroot/bin/kmod"
+[ -x "$KMOD_BIN" ] || KMOD_BIN="${OUTPUT_DIR}/sysroot/usr/bin/kmod"
+if [ -x "$KMOD_BIN" ]; then
+    if is_static_elf "$KMOD_BIN"; then
+        log_info "Installing kmod module loader (static)..."
+        cp "$KMOD_BIN" "${INITRD_DIR}/bin/kmod"
+        chmod +x "${INITRD_DIR}/bin/kmod"
+        # kmod dispatches on argv[0]; symlink the tools init/rescue may use.
+        for tool in modprobe depmod insmod rmmod lsmod modinfo; do
+            ln -sf kmod "${INITRD_DIR}/bin/${tool}"
+        done
+    else
+        log_error "kmod at $KMOD_BIN is dynamically linked — it cannot run in the"
+        log_error "initramfs (no ld-musl / shared libs there). ELF details:"
+        readelf -l "$KMOD_BIN" 2>/dev/null | grep -A1 'INTERP' || file "$KMOD_BIN" || true
+        exit 1
+    fi
+else
+    log_error "kmod not found in sysroot (looked in bin/ and usr/bin/)."
+    log_error "The initramfs cannot load Tier-1 boot-media drivers without it."
+    exit 1
+fi
+
 # Create minimal /etc files
 log_info "Creating configuration files..."
 
