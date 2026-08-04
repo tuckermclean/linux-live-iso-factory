@@ -105,26 +105,48 @@ coldplug_once() {
 # none of these and loads nothing. The RAM is reclaimed after switch_root, so a
 # broad manifest costs steady-state nothing — see docs/kernel-tiers.md.
 load_storage_modules() {
-    [ -d "/lib/modules/$(uname -r)" ] || { dbg "no modules bundled in initramfs"; return 0; }
+    # Detect the bundled module tree WITHOUT the `uname` applet (busybox here may
+    # lack it; modprobe self-locates the tree via the uname(2) syscall anyway).
+    _have_mods=0
+    for _md in /lib/modules/*/modules.dep; do
+        [ -f "$_md" ] && _have_mods=1 && break
+    done
+    [ "$_have_mods" = 1 ] || { dbg "no modules bundled in initramfs"; return 0; }
+
+    if ! command -v modprobe >/dev/null 2>&1; then
+        err "modprobe not available in initramfs — cannot load boot-media drivers"
+        return 0
+    fi
+
     msg "Loading boot-media drivers (Tier 1)..."
 
-    # Pass 1: load controllers the present hardware advertises via modalias.
+    # Pass 1 (bonus): load controllers the present hardware advertises via
+    # modalias. This needs busybox alias resolution; the manifest below is the
+    # reliable path and does not.
     coldplug_once
 
-    # Explicit manifest fallback (order-independent; depmod resolved deps at
-    # build time). Harmless for anything already loaded by the coldplug above.
+    # Primary path: load each manifest module BY NAME (depmod resolved the
+    # dependency graph at build time; loading a driver whose hardware is absent
+    # just leaves it idle, and the initramfs RAM is reclaimed at switch_root).
+    # Surface any failure to the console — a broken modprobe here is the
+    # difference between finding the boot device and a rescue shell, so it must
+    # never be silent.
     if [ -r /etc/initrd-modules ]; then
         while read -r _mod; do
             case "$_mod" in ''|\#*) continue ;; esac
-            modprobe -q "$_mod" 2>/dev/null || true
+            if ! _err=$(modprobe "$_mod" 2>&1); then
+                [ -n "$_err" ] && msg "  note: modprobe $_mod: $_err"
+            fi
         done < /etc/initrd-modules
     fi
 
-    # Pass 2: a disk behind a bus we just enabled (USB/SD/SATA) appears a beat
-    # later — settle, coldplug again so its driver and /dev node come up.
+    # Settle: a disk behind a bus we just enabled (USB/SD/SATA) appears a beat
+    # later — coldplug again for it, then refresh /dev nodes.
     sleep 1
     coldplug_once
     command -v mdev >/dev/null 2>&1 && mdev -s 2>/dev/null || true
+
+    msg "Boot-media drivers loaded ($(lsmod 2>/dev/null | tail -n +2 | wc -l) module(s) resident)"
 }
 
 # Drop to rescue shell
@@ -298,7 +320,7 @@ if [ "$OVERLAY_MODE" = "1" ]; then
         # Tier-1 driver has loaded.
         dbg "Scanning all block devices..."
         for sysdev in /sys/block/*; do
-            devname=$(basename "$sysdev")
+            devname="${sysdev##*/}"
             case "$devname" in loop*|ram*) continue ;; esac
             for dev in "/dev/$devname" "/dev/${devname}"[0-9]*; do
                 [ -b "$dev" ] || continue
@@ -379,7 +401,7 @@ if [ "$OVERLAY_MODE" = "1" ]; then
         if [ -z "$PERSIST_DEV" ]; then
             for sysdev in /sys/block/*; do
                 [ -n "$PERSIST_DEV" ] && break
-                devname=$(basename "$sysdev")
+                devname="${sysdev##*/}"
                 case "$devname" in loop*|ram*|sr*) continue ;; esac
                 for dev in "/dev/$devname" "/dev/${devname}"[0-9]*; do
                     [ -b "$dev" ] || continue

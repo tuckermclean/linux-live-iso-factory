@@ -216,7 +216,7 @@ CONFIG_FEATURE_PRESERVE_HARDLINKS=y
 # Common options for df, du, ls
 #
 CONFIG_FEATURE_HUMAN_READABLE=y
-# CONFIG_BASENAME is not set
+CONFIG_BASENAME=y
 CONFIG_CAT=y
 # CONFIG_FEATURE_CATN is not set
 # CONFIG_FEATURE_CATV is not set
@@ -342,7 +342,7 @@ CONFIG_TR=y
 # CONFIG_TRUNCATE is not set
 CONFIG_TSORT=y
 # CONFIG_TTY is not set
-# CONFIG_UNAME is not set
+CONFIG_UNAME=y
 CONFIG_UNAME_OSNAME=""
 # CONFIG_BB_ARCH is not set
 # CONFIG_UNIQ is not set
@@ -352,7 +352,7 @@ CONFIG_UNAME_OSNAME=""
 # CONFIG_BASE32 is not set
 # CONFIG_BASE64 is not set
 # CONFIG_UUENCODE is not set
-# CONFIG_WC is not set
+CONFIG_WC=y
 # CONFIG_FEATURE_WC_LARGE is not set
 # CONFIG_WHO is not set
 # CONFIG_W is not set
