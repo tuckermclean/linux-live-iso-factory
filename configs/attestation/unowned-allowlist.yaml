@@ -156,6 +156,16 @@ allowlist:
   - var/games/nethack/record
   - var/games/nethack/xlogfile
 
+  # ── kmod OpenRC service — registered by kmod pkg_postinst, unused here ──────
+  # kmod's pkg_postinst runs `rc-update add kmod-static-nodes sysinit`, which
+  # creates this OpenRC runlevel tree. The symlink and its parent dirs are not
+  # tracked in any package's CONTENTS. We boot with sysvinit (see etc/inittab),
+  # so the service never runs — it's harmless, and kmod is here only for its
+  # modprobe/lsmod/depmod tools (the Tier-2 coldplug), not its init integration.
+  - etc/runlevels
+  - etc/runlevels/sysinit
+  - etc/runlevels/sysinit/kmod-static-nodes
+
   # ── Portage news — written by emerge during pkg installation ─────────────────
   # emerge writes news items to var/lib/gentoo/news/ during postinst;
   # the skip/unread tracking files are not owned by any package.
