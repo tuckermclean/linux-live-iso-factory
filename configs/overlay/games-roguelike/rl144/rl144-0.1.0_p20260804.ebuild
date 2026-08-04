@@ -85,7 +85,7 @@ src_compile() {
 
 	einfo "Cross-compiling rl144 for ${RUST_TARGET} (nightly build-std, backend-term)"
 	cargo "+${RUST_NIGHTLY}" \
-		-Z build-std=std \
+		-Z build-std=std,panic_abort \
 		-Z json-target-spec \
 		build --release \
 		--no-default-features --features backend-term \
