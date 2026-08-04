@@ -325,12 +325,21 @@ fi
 # (/output/sysroot/usr/share/man) is never the live path (/usr/share/man).
 # The db baked into the image is therefore always stale on first boot, and
 # `man` prints "outdated mandoc.db ... run makewhatis /usr/share/man" even
-# though pages display correctly. Rebuilding it once here (rootfs is a
-# tmpfs overlay in RAM, and there are only a few dozen man pages, so this
-# is sub-second) fixes the path and silences the warning for the rest of
-# the session.
+# though pages display correctly. Rebuilding it once here fixes the path
+# and silences the warning for the rest of the session.
+#
+# BUT indexing sys-apps/man-pages (hundreds of pages) peaks makewhatis near
+# ~24MB RSS. On the 64MB Gen1/BIOS config that is the whole machine, so the
+# kernel OOM-killer kills makewhatis mid-boot (ugly, and could reap a more
+# important task under tighter timing). Gate it on free RAM: a machine whose
+# total RAM is 64MB can never have 64MB *available*, so this reliably skips
+# the refresh on tiny machines (pages still display; apropos may warn — an
+# unhelpful warning beats an OOM event) while running it normally on 128MB+.
 if [ -d /usr/share/man ] && command -v makewhatis >/dev/null 2>&1; then
-    makewhatis /usr/share/man >/dev/null 2>&1
+    mem_avail_kb=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    if [ "${mem_avail_kb:-0}" -ge 65536 ]; then   # >= 64 MiB available
+        makewhatis /usr/share/man >/dev/null 2>&1 || true
+    fi
 fi
 
 # Run init scripts
