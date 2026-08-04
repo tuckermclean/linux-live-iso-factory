@@ -358,25 +358,29 @@ if [ "$OVERLAY_MODE" = "1" ]; then
         return 1
     }
 
+    # Search with retries. A modular storage bus presents its disk a beat after
+    # the driver loads — USB especially: load the HCD, enumerate the bus, THEN
+    # the mass-storage device appears (~1-2 s later). Re-coldplug + settle between
+    # attempts. If a couple of coldplug rounds surface nothing, force-load the
+    # ENTIRE manifest once (covers controllers whose modalias didn't match) and
+    # KEEP retrying, so slow enumeration is still caught before we give up. The
+    # extra attempts after the fallback are what a USB boot needs.
     _media_attempt=1
-    while [ -z "$BOOT_MEDIA" ] && [ "$_media_attempt" -le 4 ]; do
+    _fallback_done=0
+    while [ -z "$BOOT_MEDIA" ] && [ "$_media_attempt" -le 8 ]; do
         if [ "$_media_attempt" -gt 1 ]; then
-            dbg "boot media not found yet (attempt $_media_attempt) — settling and re-coldplugging"
+            dbg "boot media not found yet (attempt $_media_attempt) — settling"
             sleep 2
             coldplug_once
             command -v mdev >/dev/null 2>&1 && mdev -s 2>/dev/null || true
         fi
         scan_for_boot_media || true
+        if [ -z "$BOOT_MEDIA" ] && [ "$_media_attempt" -ge 2 ] && [ "$_fallback_done" = 0 ]; then
+            load_manifest_fallback
+            _fallback_done=1
+        fi
         _media_attempt=$((_media_attempt + 1))
     done
-
-    # Desperation: coldplug never surfaced the boot device. Force-load the whole
-    # driver manifest and sweep once more before giving up (covers a controller
-    # whose modalias didn't match). Only reached when nothing else worked.
-    if [ -z "$BOOT_MEDIA" ]; then
-        load_manifest_fallback
-        scan_for_boot_media || true
-    fi
 
     if [ -z "$BOOT_MEDIA" ]; then
         err "Could not find boot media with rootfs.squashfs"
