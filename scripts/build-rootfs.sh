@@ -317,30 +317,12 @@ fi
 # Set hostname
 [ -f /etc/hostname ] && echo "$(cat /etc/hostname)" > /proc/sys/kernel/hostname
 
-# Rebuild the man page whatis database (mandoc.db).
-#
-# mandoc's pkg_postinst builds mandoc.db during the build container's
-# postinst hook, and extract-packages.sh regenerates it again — but
-# makewhatis stores absolute paths, and the build path
-# (/output/sysroot/usr/share/man) is never the live path (/usr/share/man).
-# The db baked into the image is therefore always stale on first boot, and
-# `man` prints "outdated mandoc.db ... run makewhatis /usr/share/man" even
-# though pages display correctly. Rebuilding it once here fixes the path
-# and silences the warning for the rest of the session.
-#
-# BUT indexing sys-apps/man-pages (hundreds of pages) peaks makewhatis near
-# ~24MB RSS. On the 64MB Gen1/BIOS config that is the whole machine, so the
-# kernel OOM-killer kills makewhatis mid-boot (ugly, and could reap a more
-# important task under tighter timing). Gate it on free RAM: a machine whose
-# total RAM is 64MB can never have 64MB *available*, so this reliably skips
-# the refresh on tiny machines (pages still display; apropos may warn — an
-# unhelpful warning beats an OOM event) while running it normally on 128MB+.
-if [ -d /usr/share/man ] && command -v makewhatis >/dev/null 2>&1; then
-    mem_avail_kb=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
-    if [ "${mem_avail_kb:-0}" -ge 65536 ]; then   # >= 64 MiB available
-        makewhatis /usr/share/man >/dev/null 2>&1 || true
-    fi
-fi
+# The mandoc whatis database (mandoc.db) is baked into the squashfs at BUILD
+# time — see scripts/build-rootfs.sh, which runs makewhatis against the fully
+# assembled rootfs right before mksquashfs. So apropos/whatis already work with
+# zero boot cost and there is nothing to do here. This deliberately does NOT
+# rebuild the db at boot: doing so OOM-killed makewhatis (~24MB) on the 64MB
+# Gen1/BIOS config. `makewhatis` is still installed if the user adds pages.
 
 # Run init scripts
 echo ""
@@ -578,6 +560,26 @@ create_squashfs() {
     # Calculate uncompressed size
     local size_kb=$(du -sk "$ROOTFS_DIR" | cut -f1)
     log_info "Uncompressed rootfs size: ${size_kb} KB"
+
+    # Build the mandoc whatis database (mandoc.db) against the FINAL assembled
+    # rootfs — after every package (incl. sys-apps/man-pages) is staged — so
+    # apropos/whatis work out of the box with ZERO boot-time cost. makewhatis in
+    # directory mode stores page paths RELATIVE to the manpath, so a db built
+    # here at $ROOTFS_DIR/usr/share/man is valid at the live /usr/share/man. The
+    # host makewhatis is used (the target one is an i486 binary; the db format is
+    # arch-independent), and SOURCE_DATE_EPOCH later clamps the db and the pages
+    # to the same mtime, satisfying mandoc's freshness check. The mandoc
+    # pkg_postinst hook (configs/portage/bashrc) builds a db too, but that fires
+    # before sys-apps/man-pages installs, so it is incomplete — this final pass
+    # against the full tree supersedes it. Previously rcS rebuilt mandoc.db on
+    # every boot, which OOM-killed makewhatis on the 64MB Gen1/BIOS config.
+    if [ -d "$ROOTFS_DIR/usr/share/man" ] && [ -x /usr/sbin/makewhatis ]; then
+        log_info "Baking mandoc whatis database (build-time)..."
+        /usr/sbin/makewhatis "$ROOTFS_DIR/usr/share/man" \
+            || log_warn "build-time makewhatis failed; apropos db may be incomplete"
+    else
+        log_warn "host makewhatis or man dir missing; whatis database not baked"
+    fi
 
     # Create SquashFS with gzip compression (low memory for i486).
     # mksquashfs 4.5+ reads SOURCE_DATE_EPOCH from the environment automatically;
