@@ -117,7 +117,10 @@ src_install() {
 			|| ewarn "rl144 ELF machine is not Intel 80386 — check the target spec"
 	fi
 
-	exeinto /usr/games/bin
+	# Install to /usr/bin (on the default PATH) rather than /usr/games/bin,
+	# which the rootfs does not add to PATH — mirrors where games-misc/bsd-games
+	# land so `rl144` is runnable straight from the shell like the other games.
+	exeinto /usr/bin
 	doexe "${bin}"
 
 	dodoc "${S}/docs/design/486/2026-08-04-boot-on-a-486-scope.md" 2>/dev/null || true
