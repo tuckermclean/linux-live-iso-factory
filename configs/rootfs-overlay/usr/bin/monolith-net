@@ -1,0 +1,102 @@
+#!/bin/sh
+# monolith-net — bring up network cards that can't announce themselves.
+#
+# PCI/virtual NICs coldplug automatically via their modalias. This handles the
+# pre-Plug-and-Play ISA cards: 3c509 self-identifies (safe to load blindly),
+# while ne/wd/lance need an explicit io= address. When auto-detection can't, it
+# prints the incantation rather than hiding it.
+set -u
+
+SYSCLASS="${MONOLITH_NET_SYSCLASS:-/sys/class/net}"
+
+list_ifaces() {
+    for d in "$SYSCLASS"/*; do
+        [ -e "$d" ] || continue
+        n=${d##*/}
+        [ "$n" = lo ] && continue
+        echo "$n"
+    done
+}
+have_nic() { [ -n "$(list_ifaces)" ]; }
+
+bring_up() {
+    ip link set "$1" up 2>/dev/null || true
+    dhcpcd -b "$1" 2>/dev/null || true
+}
+
+print_incantation() {
+    cat <<'BANNER'
+No network card detected automatically.
+ISA cards from before Plug-and-Play can't announce themselves — you tell the
+kernel where the card lives:
+
+    modprobe ne io=0x300        # NE2000 clone (try 0x280, 0x320, 0x340...)
+    modprobe wd io=0x240        # SMC/WD 80x3
+    modprobe lance io=0x300     # AMD LANCE
+
+Or let the box try the common addresses for you:
+
+    monolith-net probe
+BANNER
+}
+
+cmd_status() {
+    if have_nic; then
+        echo "Network interfaces:"
+        for i in $(list_ifaces); do
+            s=$(cat "$SYSCLASS/$i/operstate" 2>/dev/null || echo unknown)
+            echo "  $i ($s)"
+        done
+    else
+        print_incantation
+    fi
+}
+
+# Safe auto-probe: load only self-identifying ISA drivers. Called by S35netprobe.
+cmd_autoprobe() {
+    have_nic && return 0
+    modprobe 3c509 2>/dev/null || true    # 3Com ID-port self-detect — safe
+    if have_nic; then
+        iface=$(list_ifaces | head -n1)
+        echo "  found $iface via 3c509 auto-detect"
+        bring_up "$iface"
+        return 0
+    fi
+    print_incantation
+    return 0
+}
+
+# Opt-in bounded blind sweep of the classic io= addresses.
+cmd_probe() {
+    if have_nic; then
+        echo "A network interface already exists; nothing to probe."
+        cmd_status
+        return 0
+    fi
+    for spec in \
+        ne:0x300 ne:0x280 ne:0x320 ne:0x340 ne:0x360 \
+        wd:0x240 wd:0x300 wd:0x280 wd:0x2e0 wd:0x350 \
+        lance:0x300 lance:0x320 lance:0x360 lance:0x3a0
+    do
+        drv=${spec%%:*}; addr=${spec##*:}
+        echo "  trying $drv io=$addr ..."
+        if modprobe "$drv" io="$addr" 2>/dev/null && have_nic; then
+            iface=$(list_ifaces | head -n1)
+            echo "  found $iface via $drv io=$addr"
+            bring_up "$iface"
+            return 0
+        fi
+        modprobe -r "$drv" 2>/dev/null || true   # bad guess leaves nothing resident
+    done
+    echo "No ISA card answered at the common addresses."
+    print_incantation
+    return 1
+}
+
+case "${1:-status}" in
+    status|"")   cmd_status ;;
+    autoprobe)   cmd_autoprobe ;;
+    probe)       cmd_probe ;;
+    incantation) print_incantation ;;
+    *) echo "usage: monolith-net [status|probe|autoprobe|incantation]" >&2; exit 2 ;;
+esac
