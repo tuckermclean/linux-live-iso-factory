@@ -130,6 +130,12 @@ games-misc/bsd-games
 app-misc/figlet
 app-misc/cmatrix
 app-misc/sl
+
+# rl144 — a deterministic, integer-only roguelike written in Rust, built for the
+# 486DX (terminal backend, static musl). Cross-built via the overlay ebuild using
+# rustup nightly + -Zbuild-std (see Dockerfile + configs/overlay/games-roguelike/rl144).
+games-roguelike/rl144
+
 # games-roguelike/nethack  # dropped 2026-08-02: epoch bump pulled nethack-5.0.0
 #   (major jump from 3.6.7), which needs a Lua USE flag and risks a build failure
 #   on i486-musl. Re-add later by pinning 3.6.7 or configuring 5.0.0 + lua.
