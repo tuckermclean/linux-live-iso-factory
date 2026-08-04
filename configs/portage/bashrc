@@ -28,6 +28,25 @@ if [[ ${EBUILD_PHASE} == "configure" ]]; then
 	# emesonargs array declared inside the ebuild's src_configure(), which
 	# meson_src_configure() then passes to 'meson setup'.
 	pre_src_configure() {
+		# kmod: its meson.build hardcodes `libkmod = shared_library('kmod', …)`,
+		# which ignores the -Ddefault_library=static we inject below — so the .so
+		# link step still runs and collides with -static in LDFLAGS ("ld returned
+		# 1": gcc pulls crt1.o into a -shared link). Rewrite it to library() so
+		# default_library=static takes effect and only libkmod.a is built. The
+		# kmod tools link libkmod_internal (a static_library of the same objects),
+		# so modprobe/lsmod/depmod come out fully static; we don't ship libkmod.so
+		# anyway (the postinst so-cleanup strips .so files). Patched here in
+		# pre_src_configure so it lands before `meson setup` reads meson.build.
+		if [[ ${CATEGORY}/${PN} == "sys-apps/kmod" ]]; then
+			local kmb="${S}/meson.build"
+			if [[ -f ${kmb} ]] && grep -qE 'libkmod[[:space:]]*=[[:space:]]*shared_library\(' "${kmb}"; then
+				einfo "kmod: rewriting shared_library() → library() for static libkmod"
+				sed -i -E 's/libkmod[[:space:]]*=[[:space:]]*shared_library\(/libkmod = library(/' "${kmb}"
+			else
+				ewarn "kmod: expected 'libkmod = shared_library(' not found in ${kmb} — static rewrite skipped (upstream may have changed)"
+			fi
+		fi
+
 		# meson: force static-only library builds so .so link steps never
 		# occur and -static in LDFLAGS never conflicts with -shared.
 		if declare -f meson_src_configure > /dev/null 2>&1; then
