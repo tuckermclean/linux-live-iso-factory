@@ -56,9 +56,18 @@ src_compile() {
 	# from the JSON filename stem (i486-unknown-linux-musl).
 	export "CARGO_TARGET_I486_UNKNOWN_LINUX_MUSL_LINKER=${CHOST}-gcc"
 
+	# Diagnostics: confirm CHOST/linker resolve as expected and show where the
+	# crossdev musl gcc driver actually finds its crt objects (crtend.o/crtn.o),
+	# in case the crossdev sysroot layout is nonstandard.
+	einfo "CHOST=${CHOST}  linker=${CARGO_TARGET_I486_UNKNOWN_LINUX_MUSL_LINKER}"
+	i486-linux-musl-gcc -print-file-name=crtn.o || true
+	i486-linux-musl-gcc -print-file-name=crtend.o || true
+	i486-linux-musl-gcc -print-search-dirs || true
+
 	einfo "Cross-compiling rl144 for ${RUST_TARGET} (nightly build-std, backend-term)"
 	cargo "+${RUST_NIGHTLY}" \
 		-Z build-std=std,panic_abort \
+		-Z build-std-features=panic_immediate_abort \
 		-Z json-target-spec \
 		build --release \
 		--no-default-features --features backend-term \
