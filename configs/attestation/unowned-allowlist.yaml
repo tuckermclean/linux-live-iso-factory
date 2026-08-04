@@ -70,6 +70,7 @@ allowlist:
   - etc/init.d/rcK
   - etc/init.d/S20keygen
   - etc/init.d/S30gpm
+  - etc/init.d/S35netprobe
   - etc/init.d/S40network
   - etc/init.d/S50advisory
   - etc/monolith-release
@@ -78,6 +79,12 @@ allowlist:
   # ── Advisory scripts (pending proper ebuilds) ───────────────────────────────
   - usr/sbin/monolith-advisory-check
   - etc/profile.d/monolith-advisory.sh
+
+  # ── Network helper (SP1) — pending monolith-base ebuild ─────────────────────
+  # monolith-net wakes pre-Plug-and-Play ISA NICs that emit no modalias; hand-
+  # installed by build-rootfs.sh from configs/rootfs-overlay/usr/bin/. Grouped
+  # with etc/init.d/S35netprobe above under the SP-base ownership task.
+  - usr/bin/monolith-net
 
   # ── Prompt customisation ─────────────────────────────────────────────────────
   - etc/bash/bashrc.d/99-monolith-square.bash

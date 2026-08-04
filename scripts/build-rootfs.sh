@@ -394,6 +394,25 @@ iface lo inet loopback
 #iface eth0 inet dhcp
 EOF
 
+    # Install the monolith-net ISA NIC probe helper (standalone, unit-tested;
+    # see configs/rootfs-overlay/usr/bin/monolith-net + scripts/tests/).
+    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/bin/monolith-net" \
+        "$ROOTFS_DIR/usr/bin/monolith-net"
+
+    # /etc/init.d/S35netprobe - reach ISA NICs that can't announce themselves.
+    # Runs AFTER rcS coldplug (which self-loads PCI/virtual NICs by modalias) and
+    # BEFORE S40network (which DHCPs whatever interfaces exist). Only the SAFE,
+    # self-identifying ISA path runs automatically; the blind io= sweep is opt-in
+    # via `monolith-net probe`. See configs/rootfs-overlay/usr/bin/monolith-net.
+    cat > "$ROOTFS_DIR/etc/init.d/S35netprobe" << 'EOF'
+#!/bin/sh
+case "$1" in
+    start) monolith-net autoprobe ;;
+esac
+exit 0
+EOF
+    chmod 755 "$ROOTFS_DIR/etc/init.d/S35netprobe"
+
     # /etc/init.d/S40network - network startup
     cat > "$ROOTFS_DIR/etc/init.d/S40network" << 'EOF'
 #!/bin/sh
