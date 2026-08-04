@@ -13,6 +13,13 @@ name: Build
 on:
   push:
     branches: [master]
+  # Full build as a PR check, but ONLY when the PR carries the 'full-ci' label
+  # (gated in the `changes` job below). This keeps the expensive Gentoo build
+  # off every push while still letting a maintainer demand end-to-end proof on
+  # a PR. `labeled` fires the run when the label is added; `synchronize` re-runs
+  # it on subsequent pushes to an already-labeled PR.
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
   workflow_dispatch:
   workflow_call:
     outputs:
@@ -30,12 +37,30 @@ permissions:
   contents: read
   packages: write
 
+# Cancel a superseded run for the SAME pull request when a new commit is pushed,
+# so rapid pushes to a 'full-ci'-labeled PR don't stack expensive builds. Non-PR
+# events (push to master, schedule, workflow_dispatch, and workflow_call from
+# release.yml) get a unique per-run group, so they never cancel one another.
+concurrency:
+  group: >-
+    build-${{ github.event_name == 'pull_request'
+      && format('pr-{0}', github.event.pull_request.number)
+      || github.run_id }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io/${{ github.repository_owner }}
 
 jobs:
   changes:
     runs-on: ubuntu-latest
+    # On pull_request, only run the (expensive) build chain when the PR is
+    # labeled 'full-ci'. Every other event runs normally. Gating the root job
+    # cascades the skip to build-image → build → boot-test → attestation via
+    # their `needs:`, so no label means no full build on the PR.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'full-ci')
     outputs:
       dockerfile: ${{ steps.filter.outputs.dockerfile }}
       packages: ${{ steps.filter.outputs.packages }}
@@ -129,6 +154,7 @@ jobs:
       needs.build-image.outputs.image-changed == 'true' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
+      github.event_name == 'pull_request' ||
       startsWith(github.ref, 'refs/tags/')
     outputs:
       build-started-on: ${{ steps.set-version.outputs.build-started-on }}

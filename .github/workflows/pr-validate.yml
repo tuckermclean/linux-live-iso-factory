@@ -1,0 +1,59 @@
+name: PR Validate
+
+# Fast, cheap sanity checks on every pull request — syntax and lint only, no
+# build. The full build + boot-test + attestation (build.yml) is expensive: it
+# runs on merge to master and, on a PR, only when the 'full-ci' label is added.
+# This gives quick feedback on each push without a Gentoo cross-compile.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell script syntax (bash -n)
+        run: |
+          set -euo pipefail
+          rc=0
+          for f in scripts/*.sh; do
+            bash -n "$f" || { echo "::error file=$f::bash -n failed"; rc=1; }
+          done
+          exit $rc
+
+      - name: Python syntax (py_compile)
+        run: python3 -m py_compile scripts/*.py
+
+      - name: YAML well-formedness
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          rc = 0
+          for f in sorted(glob.glob('configs/**/*.yaml', recursive=True)
+                          + glob.glob('.github/workflows/*.yml')):
+              try:
+                  yaml.safe_load(open(f))
+              except yaml.YAMLError as e:
+                  print(f'::error file={f}::{e}')
+                  rc = 1
+          sys.exit(rc)
+          PY
+
+      - name: Workflow lint (actionlint)
+        run: |
+          set -euo pipefail
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          # -shellcheck= disables actionlint's bundled shellcheck on run: blocks
+          # (scripts/ are linted separately below); actionlint's own checks stay on.
+          ./actionlint -color -shellcheck=
+
+      - name: Shell lint (shellcheck, errors only)
+        run: shellcheck --severity=error scripts/*.sh
