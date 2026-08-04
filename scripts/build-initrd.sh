@@ -128,6 +128,7 @@ if [ -x "$KMOD_BIN" ]; then
         for tool in modprobe depmod insmod rmmod lsmod modinfo; do
             ln -sf kmod "${INITRD_DIR}/bin/${tool}"
         done
+        ls -l "${INITRD_DIR}/bin/kmod" "${INITRD_DIR}/bin/modprobe"
     else
         log_error "kmod at $KMOD_BIN is dynamically linked — it cannot run in the"
         log_error "initramfs (no ld-musl / shared libs there). ELF details:"
