@@ -64,32 +64,28 @@ src_compile() {
 	i486-linux-musl-gcc -print-file-name=crtend.o || true
 	i486-linux-musl-gcc -print-search-dirs || true
 
-	# panic=immediate-abort (this nightly's replacement for the older
-	# build-std-features=panic_immediate_abort spelling) drops the LLVM
-	# libunwind dependency entirely — the crossdev toolchain only ships
-	# libgcc's unwinder, not libunwind. It's an unstable panic strategy, so
-	# it must go through RUSTFLAGS (applies to build-std's core too, not
-	# just rl144's own crate) rather than a -Z build-std-features flag.
-	# rl144's Cargo.toml already sets profile.release panic="abort"; this
-	# overrides it to immediate-abort, which is intended.
-	#
 	# link-self-contained=no: by default rustc links "self-contained" —
 	# passes -nostartfiles -nodefaultlibs, supplies its own bare
 	# crt1.o/crti.o/crtbegin.o/crtend.o/crtn.o, and only -L's its own
 	# rustlib self-contained dir (empty for this custom target; those
 	# objects live in the crossdev toolchain, not rustc's sysroot). This
-	# was the real source of "cannot find crtend.o/crtn.o" (the -lunwind
-	# error was collateral from the same failing link). Disabling
+	# was the source of "cannot find crtend.o/crtn.o". Disabling
 	# self-contained linking lets the i486-linux-musl-gcc driver supply
 	# its own crt objects/libs from paths it already knows (confirmed via
 	# -print-file-name above: crtn.o under /usr/i486-linux-musl/usr/lib/,
 	# crtend.o under /usr/lib/gcc/i486-linux-musl/15/).
-	export RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort -Clink-self-contained=no ${RUSTFLAGS}"
+	#
+	# The target spec itself now sets "panic-strategy": "abort" (see
+	# files/i486-unknown-linux-musl.json) — that's what actually removes
+	# the -lunwind dependency, since it applies to build-std's compile of
+	# std/core too, not just rl144's own crate. rl144's Cargo.toml already
+	# sets profile.release panic="abort"; the target spec makes that
+	# consistent all the way down.
+	export RUSTFLAGS="-Clink-self-contained=no ${RUSTFLAGS}"
 
 	einfo "Cross-compiling rl144 for ${RUST_TARGET} (nightly build-std, backend-term)"
 	cargo "+${RUST_NIGHTLY}" \
 		-Z build-std=std \
-		-Z unstable-options \
 		-Z json-target-spec \
 		build --release \
 		--no-default-features --features backend-term \

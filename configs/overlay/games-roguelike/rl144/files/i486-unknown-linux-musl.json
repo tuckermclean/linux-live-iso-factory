@@ -22,6 +22,7 @@
     "tier": 2
   },
   "os": "linux",
+  "panic-strategy": "abort",
   "position-independent-executables": true,
   "post-link-objects-fallback": {
     "dynamic-dylib": [
