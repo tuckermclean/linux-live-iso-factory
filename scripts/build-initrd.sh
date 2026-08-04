@@ -263,9 +263,12 @@ else
     log_warn "  manifest: $MODULE_MANIFEST   modules: $MODULES_SRC_BASE"
 fi
 
-# Show initrd contents for debugging
+# Show initrd contents for debugging. `|| true` because `set -o pipefail` +
+# `head` closing the pipe early makes `find` exit 141 (SIGPIPE) once the tree is
+# large enough to overflow the pipe buffer — now that the initrd carries the
+# Tier-1 module set, it is. A debug listing must never abort the build.
 log_info "Initramfs contents:"
-find "${INITRD_DIR}" -type f -o -type l | head -50
+find "${INITRD_DIR}" -type f -o -type l | head -50 || true
 echo "..."
 
 # Calculate uncompressed size
