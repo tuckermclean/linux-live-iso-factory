@@ -88,6 +88,45 @@ wait_for_device() {
     [ -e "$device" ]
 }
 
+# Coldplug pass: read every device's modalias and modprobe the match. Only the
+# Tier-1 storage drivers were bundled into this initramfs (see
+# configs/initrd-modules.txt), so modprobe silently no-ops on aliases for
+# rootfs-only drivers (NIC, sound, ...) that aren't here yet — they load later
+# from the squashfs. Loads exactly the storage controllers this machine has.
+coldplug_once() {
+    command -v modprobe >/dev/null 2>&1 || return 0
+    find /sys -name modalias -type f 2>/dev/null | while read -r _ma; do
+        modprobe -q "$(cat "$_ma")" 2>/dev/null || true
+    done
+}
+
+# Load the Tier-1 boot-media drivers so AHCI/NVMe/USB/SAS/SATA/MMC/... devices
+# enumerate BEFORE we search for rootfs.squashfs. A 486 booting built-in IDE has
+# none of these and loads nothing. The RAM is reclaimed after switch_root, so a
+# broad manifest costs steady-state nothing — see docs/kernel-tiers.md.
+load_storage_modules() {
+    [ -d "/lib/modules/$(uname -r)" ] || { dbg "no modules bundled in initramfs"; return 0; }
+    msg "Loading boot-media drivers (Tier 1)..."
+
+    # Pass 1: load controllers the present hardware advertises via modalias.
+    coldplug_once
+
+    # Explicit manifest fallback (order-independent; depmod resolved deps at
+    # build time). Harmless for anything already loaded by the coldplug above.
+    if [ -r /etc/initrd-modules ]; then
+        while read -r _mod; do
+            case "$_mod" in ''|\#*) continue ;; esac
+            modprobe -q "$_mod" 2>/dev/null || true
+        done < /etc/initrd-modules
+    fi
+
+    # Pass 2: a disk behind a bus we just enabled (USB/SD/SATA) appears a beat
+    # later — settle, coldplug again so its driver and /dev node come up.
+    sleep 1
+    coldplug_once
+    command -v mdev >/dev/null 2>&1 && mdev -s 2>/dev/null || true
+}
+
 # Drop to rescue shell
 rescue_shell() {
     err "Dropping to rescue shell"
@@ -171,6 +210,18 @@ PERSIST=$(cmdline_has persist && echo 1 || echo 0)
 dbg "ROOT_DEV=$ROOT_DEV ROOT_TYPE=$ROOT_TYPE INIT_PROG=$INIT_PROG TORAM=$TORAM PERSIST=$PERSIST"
 
 # ============================================================================
+# Load boot-media drivers (Tier 1) before any device search
+# ============================================================================
+# Both the root= path and the squashfs search need the controller drivers
+# present. `nomodules` skips this (debugging / a machine that is entirely
+# Tier-0 built-in and wants the fastest possible boot).
+if cmdline_has nomodules; then
+    msg "nomodules: skipping initramfs driver load"
+else
+    load_storage_modules
+fi
+
+# ============================================================================
 # If root= specified, use traditional mount (no overlay)
 # ============================================================================
 
@@ -205,69 +256,75 @@ if [ "$OVERLAY_MODE" = "1" ]; then
     # Create mount points
     mkdir -p /media /squashfs /overlay /overlay/upper /overlay/work /newroot
 
-    # Find and mount boot media
+    # Find and mount boot media. The three passes (known CD nodes, by-label,
+    # then every block device) live in scan_for_boot_media and run inside a
+    # retry loop: a modular storage bus (USB/NVMe/SAS/SATA) can enumerate its
+    # disk a beat after the driver loads, so if the first sweep is empty we
+    # settle, re-coldplug, and sweep again. Media already present (built-in IDE
+    # CD) is found on attempt 1 and never sleeps.
     msg "Searching for boot media..."
     BOOT_MEDIA=""
 
-    # Wait for CD-ROM devices to appear
-    sleep 2
-
-    # Try common CD-ROM devices
-    for dev in /dev/sr0 /dev/sr1 /dev/cdrom /dev/hdc /dev/hdd; do
-        [ -e "$dev" ] || continue
-        dbg "Trying $dev..."
-        if mount -t iso9660 -o ro "$dev" /media 2>/dev/null; then
-            if [ -f /media/rootfs.squashfs ]; then
-                BOOT_MEDIA="$dev"
-                msg "Found boot media at $dev"
-                break
-            fi
-            umount /media
-        fi
-    done
-
-    # Also try looking in /dev/disk/by-label if available
-    if [ -z "$BOOT_MEDIA" ] && [ -d /dev/disk/by-label ]; then
-        for label in MONOLITH LIVECD; do
-            dev="/dev/disk/by-label/$label"
+    scan_for_boot_media() {
+        # Pass 1: known CD-ROM device nodes.
+        for dev in /dev/sr0 /dev/sr1 /dev/cdrom /dev/hdc /dev/hdd; do
             [ -e "$dev" ] || continue
-            dbg "Trying label $label..."
+            dbg "Trying $dev..."
             if mount -t iso9660 -o ro "$dev" /media 2>/dev/null; then
                 if [ -f /media/rootfs.squashfs ]; then
-                    BOOT_MEDIA="$dev"
-                    msg "Found boot media at $label"
-                    break
+                    BOOT_MEDIA="$dev"; msg "Found boot media at $dev"; return 0
                 fi
                 umount /media
             fi
         done
-    fi
 
-    # Fallback: scan all block devices (catches USB sticks, etc.)
-    if [ -z "$BOOT_MEDIA" ]; then
+        # Pass 2: /dev/disk/by-label if populated.
+        if [ -d /dev/disk/by-label ]; then
+            for label in MONOLITH LIVECD; do
+                dev="/dev/disk/by-label/$label"
+                [ -e "$dev" ] || continue
+                dbg "Trying label $label..."
+                if mount -t iso9660 -o ro "$dev" /media 2>/dev/null; then
+                    if [ -f /media/rootfs.squashfs ]; then
+                        BOOT_MEDIA="$dev"; msg "Found boot media at $label"; return 0
+                    fi
+                    umount /media
+                fi
+            done
+        fi
+
+        # Pass 3: every block device — USB sticks, SATA/NVMe/SAS/MMC disks, and
+        # isohybrid media written to a raw disk all surface here once their
+        # Tier-1 driver has loaded.
         dbg "Scanning all block devices..."
         for sysdev in /sys/block/*; do
-            [ -z "$BOOT_MEDIA" ] || break
             devname=$(basename "$sysdev")
-            # Skip loop and ram devices
-            case "$devname" in
-                loop*|ram*) continue ;;
-            esac
-            # Try the device itself, then its partitions
+            case "$devname" in loop*|ram*) continue ;; esac
             for dev in "/dev/$devname" "/dev/${devname}"[0-9]*; do
                 [ -b "$dev" ] || continue
                 dbg "Trying block device $dev..."
                 if mount -o ro "$dev" /media 2>/dev/null; then
                     if [ -f /media/rootfs.squashfs ]; then
-                        BOOT_MEDIA="$dev"
-                        msg "Found boot media at $dev"
-                        break
+                        BOOT_MEDIA="$dev"; msg "Found boot media at $dev"; return 0
                     fi
                     umount /media
                 fi
             done
         done
-    fi
+        return 1
+    }
+
+    _media_attempt=1
+    while [ -z "$BOOT_MEDIA" ] && [ "$_media_attempt" -le 4 ]; do
+        if [ "$_media_attempt" -gt 1 ]; then
+            dbg "boot media not found yet (attempt $_media_attempt) — settling and re-coldplugging"
+            sleep 2
+            coldplug_once
+            command -v mdev >/dev/null 2>&1 && mdev -s 2>/dev/null || true
+        fi
+        scan_for_boot_media || true
+        _media_attempt=$((_media_attempt + 1))
+    done
 
     if [ -z "$BOOT_MEDIA" ]; then
         err "Could not find boot media with rootfs.squashfs"

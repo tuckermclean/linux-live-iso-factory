@@ -10,6 +10,14 @@ machine that can't find its own boot media.
 The regime resolves this by splitting drivers into three tiers by **when** they
 must be available, not by how useful they are.
 
+That resolution has a corollary worth stating up front, because it drives every
+decision in Tier 1 below: a module that never loads costs the 486 nothing at
+steady state. The tier that finds and mounts the boot medium is therefore the
+one place in the regime where breadth is close to free and caution is the
+expensive choice, not the cheap one. Tier 1 is Phase 2 of the regime, it is
+underway now, and — unlike Tier 2's one-family-at-a-time modularization — it is
+being built **deliberately broad**.
+
 > **Why this lives in a doc and not in `kernel.config` comments.** The kernel
 > ebuild (`configs/overlay/sys-kernel/monolith-kernel/*.ebuild`) does
 > `cp .config "${CONFIGS_DIR}/kernel.config"` at the end of every build, so
@@ -42,16 +50,105 @@ The boot-critical `=y` members, and why each is built in:
 machine's boot *media* is unreachable without it (that's Tier 1's job — see
 below). NICs, mice, sound, USB HID, and graphics accelerators belong in Tier 2.
 
+> **Audit item: `CONFIG_ATA_PIIX` is not enough.** `ata_piix` covers Intel
+> southbridges, but the Socket-7 486/Pentium-class world this ISO claims to
+> serve was never Intel-only — VIA, SiS, and ALi southbridges were common on
+> that generation of boards, and they're the myth's core constituency, not an
+> edge case. Whatever gives those chipsets PATA support (`pata_legacy` /
+> `ata_generic` as a floor, or the specific `pata_via` / `pata_sis` /
+> `pata_ali` drivers where they do better than the generic ones) must be `=y`,
+> the same as `ata_piix` — never a module, because the kid's machine *is* Tier
+> 0 by definition: it has nothing else to load a module with. This document
+> records the requirement; the actual `kernel.config` audit against it is
+> tracked separately.
+
 ### Tier 1 — initramfs modules: "reach the media"
 
 Drivers a given machine needs to *find and mount the squashfs* but that the 486
-doesn't need built in — e.g. AHCI, NVMe, USB mass-storage, and their bus/HID
-prerequisites for boot from those media. They ship inside the initramfs (not the
-squashfs, which isn't mounted yet) and load before the root pivot.
+doesn't need built in — storage controllers, their USB/bus prerequisites, and
+nothing else. They ship inside the initramfs (not the squashfs, which isn't
+mounted yet) and load, by modalias coldplug, before the root pivot.
 
-**Status: not yet populated.** Today the only supported boot medium is the
-CD-ROM, whose driver is Tier 0, so the initramfs carries no modules. Tier 1 is
-Phase 2 of the regime (`configs/initrd-modules.txt` + `build-initrd.sh`).
+**Status: Phase 2, populated broad.** `configs/initrd-modules.txt` +
+`build-initrd.sh` carry a wide manifest of storage- and bus-adapter drivers
+spanning three decades of hardware, on purpose.
+
+#### Why broad is correct here
+
+A Tier-1 module only ever costs the 486 two things: the time to load it off the
+CD once, and the RAM it occupies temporarily until `switch_root` frees the
+initramfs. Neither cost survives into steady state. That's the structural
+guarantee the whole regime is built on, and it holds regardless of how large
+the Tier-1 manifest grows: a resident `=y` driver costs RAM forever, whether or
+not the hardware it drives is present; an initrd `=m` driver the machine never
+loads costs nothing once the shell comes up. Growing Tier 1 does not erode the
+486 contract Tier 0 makes — it can't, by construction.
+
+The actual bill, measured: the broad manifest is roughly 3 MB of `.ko` files
+uncompressed, which gzip's down to about 1.2 MB inside the initrd cpio — on a
+2x CD-ROM, on the order of four extra seconds before the shell appears. That is
+the right sacrifice for this project. Trimming hardware out of Tier 1 to save
+those seconds is the wrong one: it means some machine, somewhere between 1996
+and 2026, finds its CD-ROM but can't find *itself* on it, which is precisely
+the failure Tier 1 exists to prevent. This ISO is meant to follow you from 1996
+to 2026 and beyond; a few seconds of extra spin-up is a small price for that
+promise.
+
+#### The manifest
+
+Organized by the controller family it drives and the era of hardware it exists
+for, not alphabetically — the point of this table is to show the span, not the
+symbol list.
+
+| Controller family | Representative modules | Era / hardware it serves |
+|---|---|---|
+| AHCI / SATA | `ahci` | 2004–present; the default SATA controller mode |
+| NVMe | `nvme` | 2015–present; PCIe SSD boot |
+| USB host controllers (full chain) | `uhci_hcd`, `ohci_hcd`, `ehci_hcd`/`ehci_pci`, `xhci_hcd`/`xhci_pci` | 1996 (UHCI)–2010 (xHCI). OHCI and UHCI matter as much as xHCI here: a 2002 machine booting from a USB CD-ROM is exactly what this ISO claims to follow you to |
+| USB mass storage | `usb_storage`, `uas` | The USB flash drive or CD-ROM itself, once a host controller above has found it |
+| Virtualized block | `virtio_blk`, `virtio_scsi` | VMs, cloud instances, and CI's own QEMU boots |
+| SD/MMC | `sdhci`, `sdhci_pci`, `sdhci_acpi`, `mmc_block` | eMMC and SD-card boot media; SBCs |
+| SAS/RAID HBAs — 2000s server room | `mptspi`, `mptsas` | LSI Fusion-MPT controllers, circa 2003 rackmount servers |
+| SAS/RAID HBAs — 2010s server room | `mpt3sas`, `megaraid_sas` | LSI/Avago/Broadcom controllers, circa 2015 rackmount servers |
+| Pre-AHCI SATA | `sata_sil`, `sata_via`, `sata_nv`, `sata_promise` | 2003–2006, SATA before AHCI existed — classic thrift-store add-in cards and chipsets |
+| FireWire | `sbp2` | External FireWire storage — small, and exactly "hardware that followed someone" |
+
+#### The firm line: no firmware-blob drivers
+
+Breadth has one hard boundary. **No driver that requires loading a firmware
+blob at runtime belongs in Tier 1** (or anywhere in the manifest, for that
+matter). The brand promise here isn't only "boots on anything" — it's paired
+with verifiability: every artifact on the ISO is attested, and a driver that
+pulls in an opaque, separately-licensed firmware blob at load time breaks that
+attestation chain. This is why WiFi — which almost universally needs
+loadable firmware — is explicitly **not** in the manifest. It's deferred to a
+future policy conversation about how (or whether) firmware blobs fit the
+attestation model, not omitted by oversight.
+
+#### The budget, reframed
+
+There is an initrd size budget: **~6 MB uncompressed** triggers a required
+human review before a PR that grows the manifest past it merges. Note what
+that budget is *for*. The old, implicit ~2 MB expectation functioned as a
+vanity metric wearing an engineering costume — a number that looked like a
+constraint but wasn't actually protecting anything the structural RAM argument
+above doesn't already protect. The ~6 MB line does the opposite job: it isn't
+there to keep hardware out, it's there to make sure a human looks at *why* the
+manifest grew before it grows further. Exclusion is not the goal; a deliberate,
+reviewed decision is.
+
+#### The escape hatch (future architecture, not built)
+
+If real measurement — not speculation — ever shows the broad initrd
+meaningfully hurting boot time on the slowest supported hardware, the
+architecture already has an answer that doesn't require narrowing the
+manifest: ship two initrds on one ISO, with ISOLINUX loading a lean one and
+GRUB loading the full one. That buys back seconds on the machines that need
+them most, at the cost of a second artifact to build, sign, and attest. It is
+**not implemented now** — there's no measured problem to solve yet — but
+naming it here matters: it's the reason we can go broad today without
+flinching. If breadth ever turns out to be a real cost somewhere, there's
+already a place to put the trade-off that isn't "quietly drop the driver."
 
 ### Tier 2 — rootfs squashfs modules (`=m`): "everything we like"
 
@@ -82,6 +179,29 @@ Phase 1 moved these out of the monolith and into Tier 2:
   (compile → `modules_install` → squashfs → modalias coldplug → load); the
   second proves the driver then works. Keeping them separate localizes any
   fault to either the module machinery or the driver.
+
+### The distribution model for Tier 1's broad manifest
+
+A manifest spanning three decades of controllers cannot be exhaustively proven in CI, and QEMU
+mostly can't provide the hardware to try — there is no virtual `mpt3sas`
+backplane. So CI is not asked to prove the manifest's breadth; it's asked to
+prove the *mechanism*, which is a much smaller and fully testable claim:
+
+- A **NIC-less negative test** proves that a device class the running machine
+  doesn't have costs nothing — no hang, no delay, no error, just an absent
+  `modalias` match.
+- Four **positive boot paths** — AHCI, NVMe, USB, and virtio — each prove the
+  same pipeline end to end: initrd module load order, device settle timing,
+  and retry-on-not-yet-enumerated all work for that class of controller.
+
+Every other driver in the manifest rides those same four mechanisms; a
+positive AHCI boot proves the coldplug-and-mount pipeline works for block
+devices in general, not just for the `ahci` module specifically. What CI
+deliberately does **not** attempt is per-controller proof for every entry in
+the table above — proving `mpt3sas` against a real RAID backplane's firmware
+gets proven the way the 486 itself gets proven: someone boots it on the real
+hardware and reports back. For a project with this hardware span, that isn't a
+gap in the test suite — it *is* the distribution model.
 
 ## The `CONFIG_TRIM_UNUSED_KSYMS` watch-item
 

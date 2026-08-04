@@ -13,6 +13,20 @@ Modes
           squashfs was copied into RAM, then eject the CD-ROM via the QEMU
           monitor and confirm the system keeps running.
 
+Phase-2 Tier-1 module-regime variants — each boots the isohybrid ISO (it is
+a valid raw disk image, not just a CD image) from a DIFFERENT emulated
+storage controller via GRUB/UEFI, and asserts the matching kernel module
+was coldplug-loaded from the initrd before the squashfs was mounted:
+  ahci    SATA/AHCI (q35 + ich9-ahci), asserts `ahci` is loaded.
+  nvme    NVMe namespace, asserts `nvme` is loaded.
+  usb     USB mass storage on an xHCI controller, asserts `xhci_hcd` and
+          `usb_storage` are both loaded (the modular HCD chain + disk driver).
+  virtio  virtio-blk-pci, asserts `virtio_blk` is loaded.
+  nicless Negative control: BIOS/ISOLINUX boot with `-nic none` (no NIC
+          hardware at all), asserts `e1000` is NOT loaded — proving
+          coldplug loads modules for hardware that's present, not
+          unconditionally.
+
 Ground truth this script is built against (re-check these if the boot
 sequence ever changes — this script has no other source of truth):
   rootfs/init                 — initramfs init: mount sequence, log lines
@@ -173,6 +187,142 @@ def build_uefi_cmd(args):
     return cmd
 
 
+def _require_ovmf(args):
+    ovmf = find_ovmf_code(args.ovmf_code)
+    if not ovmf:
+        raise BootTestError(
+            "OVMF firmware not found. Install ovmf/edk2-ovmf, or pass --ovmf-code /path/to/OVMF_CODE.fd. "
+            f"Checked: {', '.join(OVMF_CODE_CANDIDATES)}"
+        )
+    log(f"Using OVMF firmware: {ovmf}")
+    return ovmf
+
+
+def build_ahci_cmd(args):
+    """
+    Boot the isohybrid ISO from an emulated AHCI/SATA controller instead of
+    the default -cdrom device: q35 + an explicit ich9-ahci controller, with
+    the ISO attached as an AHCI CD-ROM behind it. Proves CONFIG_SATA_AHCI=m
+    (ahci.ko) is coldplug-loaded from the initrd before the squashfs is
+    mounted, for hardware where drive discovery genuinely goes through the
+    AHCI driver rather than a legacy IDE emulation shortcut.
+    """
+    qemu = require_binary(args.qemu_x86_64)
+    ovmf = _require_ovmf(args)
+    cmd = [
+        qemu,
+        "-machine", "q35",
+        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf}",
+        "-device", "ich9-ahci,id=ahci",
+        "-drive", f"id=cd,if=none,media=cdrom,file={args.iso}",
+        "-device", "ide-cd,bus=ahci.0,drive=cd",
+        "-boot", "d",
+        "-m", str(args.ram_mb),
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_nvme_cmd(args):
+    """
+    Boot the isohybrid ISO as the backing file of an emulated NVMe namespace
+    (not a CD-ROM at all — the ISO's own MBR/GPT hybrid layout makes it a
+    valid raw disk image). Proves CONFIG_BLK_DEV_NVME=m (nvme.ko) is
+    coldplug-loaded from the initrd in time to find and mount the root
+    filesystem on NVMe-attached media.
+    """
+    qemu = require_binary(args.qemu_x86_64)
+    ovmf = _require_ovmf(args)
+    cmd = [
+        qemu,
+        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf}",
+        "-drive", f"id=nvm,if=none,format=raw,file={args.iso}",
+        "-device", "nvme,serial=cafe1234,drive=nvm",
+        "-boot", "c",
+        "-m", str(args.ram_mb),
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_usb_cmd(args):
+    """
+    Boot the isohybrid ISO as a USB mass-storage device behind an emulated
+    xHCI host controller. Proves TWO Tier-1 modules are coldplug-loaded in
+    the right order: xhci_hcd (the USB host controller itself) and
+    usb_storage (the USB Mass Storage Class driver on top of it) — either
+    one missing means no root filesystem to mount.
+    """
+    qemu = require_binary(args.qemu_x86_64)
+    ovmf = _require_ovmf(args)
+    cmd = [
+        qemu,
+        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf}",
+        "-device", "qemu-xhci,id=xhci",
+        "-drive", f"id=usbdisk,if=none,format=raw,file={args.iso}",
+        "-device", "usb-storage,bus=xhci.0,drive=usbdisk",
+        "-boot", "c",
+        "-m", str(args.ram_mb),
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_virtio_cmd(args):
+    """
+    Boot the isohybrid ISO as the backing image of a virtio-blk-pci device —
+    the paravirtualized block device most real-world cloud/VM deployments of
+    this ISO would actually use. Proves CONFIG_VIRTIO_BLK=m (virtio_blk.ko)
+    is coldplug-loaded from the initrd.
+    """
+    qemu = require_binary(args.qemu_x86_64)
+    ovmf = _require_ovmf(args)
+    cmd = [
+        qemu,
+        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf}",
+        "-drive", f"id=vblk,if=none,format=raw,file={args.iso}",
+        "-device", "virtio-blk-pci,drive=vblk",
+        "-boot", "c",
+        "-m", str(args.ram_mb),
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_nicless_cmd(args):
+    """
+    The negative control for the Tier-1 module regime: identical to
+    build_bios_cmd's device set, except `-nic none` removes the emulated
+    NIC entirely (QEMU's default `pc` machine would otherwise add an
+    e1000 automatically). With no NIC hardware present at all, the
+    initrd's modalias coldplug has nothing PCI-network-shaped to match —
+    so e1000.ko must NOT appear in `lsmod`. This is the other half of the
+    "refund is real" claim: modules load because hardware matched, not
+    unconditionally.
+    """
+    qemu = require_binary(args.qemu_i386)
+    cmd = [
+        qemu,
+        "-cdrom", args.iso,
+        "-m", str(args.ram_mb),
+        "-cpu", "486",
+        "-boot", "d",
+        "-nic", "none",
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
 # ---------------------------------------------------------------------------
 # Boot-loader navigation
 # ---------------------------------------------------------------------------
@@ -321,6 +471,23 @@ def regex_matches(pattern, flags=0):
     return _v
 
 
+def regex_absent(pattern, flags=0):
+    """
+    Inverse of regex_matches: passes only when `pattern` does NOT appear in
+    the output. Used for negative proofs (e.g. "this driver did not load")
+    where a positive regex_matches check can't express the assertion.
+    """
+    compiled = re.compile(pattern, flags)
+    def _v(exit_code, output):
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        match = compiled.search(output)
+        if match:
+            return False, f"expected /{pattern}/ to NOT match output, but found: {match.group(0)!r}"
+        return True, "ok"
+    return _v
+
+
 def exit_code_only():
     def _v(exit_code, output):
         if exit_code != 0:
@@ -414,6 +581,94 @@ def smoke_man(child):
         child, "man ls renders via mandoc", "MANPAGER=cat PAGER=cat man ls 2>&1 | head -5",
         regex_matches(r"\bLS\b|\bls\b"),
         timeout=30,
+    )
+
+
+def smoke_ahci_is_module(child):
+    """
+    kernel.config carries CONFIG_SATA_AHCI=m, and the ahci mode boots the ISO
+    behind an emulated ich9-ahci controller instead of a plain -cdrom. A
+    passing `lsmod | grep ahci` proves ahci.ko rode into the initrd,
+    modules_install'd, and the initrd's modalias coldplug matched the AHCI
+    controller's PCI id and loaded it in time to find the boot media —
+    exactly the same "reaches the boot media" mechanism smoke_nic_is_module
+    proves for networking, applied to a storage controller instead.
+    """
+    return run_check(
+        child, "ahci SATA driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^ahci\b", re.MULTILINE),
+    )
+
+
+def smoke_nvme_is_module(child):
+    """
+    kernel.config carries CONFIG_BLK_DEV_NVME=m, and the nvme mode attaches
+    the ISO as an NVMe namespace instead of a CD-ROM. A passing
+    `lsmod | grep nvme` proves nvme.ko was coldplug-loaded from the initrd
+    before pivot_root — if this fails, the boot media itself would never
+    have been found on NVMe-attached hardware.
+    """
+    return run_check(
+        child, "nvme driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^nvme\b", re.MULTILINE),
+    )
+
+
+def smoke_xhci_hcd_is_module(child):
+    """
+    kernel.config carries CONFIG_USB_XHCI_HCD=m (usbcore itself stays built-in).
+    The usb mode attaches the ISO behind an emulated xHCI host controller; the
+    initrd coldplugs xhci-pci by the controller's PCI modalias, which pulls in
+    xhci_hcd. Without it the USB bus never comes up and usb_storage has nothing
+    to attach to — so this is the first link of the Tier-1 USB chain.
+    """
+    return run_check(
+        child, "xhci_hcd USB host-controller driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^xhci_hcd\b", re.MULTILINE),
+    )
+
+
+def smoke_usb_storage_is_module(child):
+    """
+    kernel.config carries CONFIG_USB_STORAGE=m (module name usb-storage, which
+    shows as usb_storage in lsmod). Second link of the Tier-1 USB chain: once
+    the modular HCD above has enumerated the USB bus, the initrd coldplug loads
+    usb-storage.ko onto the appearing disk in time to expose the ISO as a block
+    device.
+    """
+    return run_check(
+        child, "usb_storage driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^usb_storage\b", re.MULTILINE),
+    )
+
+
+def smoke_virtio_blk_is_module(child):
+    """
+    kernel.config carries CONFIG_VIRTIO_BLK=m. The virtio mode attaches the
+    ISO via virtio-blk-pci — the paravirtualized disk most real deployments
+    of this ISO under a VM would actually use. Proves virtio_blk.ko was
+    coldplug-loaded from the initrd before the squashfs mount.
+    """
+    return run_check(
+        child, "virtio_blk driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(r"^virtio_blk\b", re.MULTILINE),
+    )
+
+
+def smoke_nic_not_loaded(child):
+    """
+    Negative counterpart to smoke_nic_is_module. The nicless mode boots with
+    `-nic none` — no emulated NIC of any kind — so the initrd's modalias
+    coldplug has no PCI network device to match against. If `lsmod` still
+    showed e1000 here, it would mean modules load unconditionally rather
+    than by matching present hardware, silently defeating the whole point
+    of the Tier-1 module regime (smaller initrd, nothing loaded for
+    hardware that isn't there). A clean absence is the other half of the
+    "refund is real" proof that smoke_nic_is_module only argues positively.
+    """
+    return run_check(
+        child, "e1000 NIC driver is NOT loaded (no NIC hardware present)", "lsmod",
+        regex_absent(r"^e1000\b", re.MULTILINE),
     )
 
 
@@ -554,22 +809,125 @@ def run_toram(child, args):
     return ok
 
 
+def run_uefi_driver_variant(child, args, driver_checks):
+    """
+    Shared UEFI/GRUB boot-and-verify path for the Tier-1 storage-controller
+    variants (ahci, nvme, usb, virtio). Same milestone sequence as run_uefi,
+    but runs `driver_checks` — the module-coldplug assertions specific to the
+    storage controller under test — BEFORE the reduced smoke suite, so a
+    driver failing to load is reported as its own distinct failure instead of
+    being buried inside "did the shell come up at all". `driver_checks` is a
+    list of (name, check_fn) pairs where check_fn(child) -> (ok, detail).
+    """
+    select_grub_serial_entry(child)
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+
+    results = []
+    for name, check_fn in driver_checks:
+        results.append((name, *check_fn(child)))
+    results.extend(run_reduced_smoke_suite(child, args.kernel_version))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_ahci(child, args):
+    return run_uefi_driver_variant(
+        child, args,
+        [("ahci SATA driver is loaded as a module (coldplug)", smoke_ahci_is_module)],
+    )
+
+
+def run_nvme(child, args):
+    return run_uefi_driver_variant(
+        child, args,
+        [("nvme driver is loaded as a module (coldplug)", smoke_nvme_is_module)],
+    )
+
+
+def run_usb(child, args):
+    # The full USB host-controller chain (xHCI/EHCI/OHCI/UHCI) is Tier-1 modular
+    # (usbcore stays built-in); the initrd coldplugs the HCD, the bus enumerates,
+    # then usb-storage binds the disk. Assert both links of that chain.
+    return run_uefi_driver_variant(
+        child, args,
+        [
+            ("xhci_hcd USB host-controller driver is loaded as a module (coldplug)", smoke_xhci_hcd_is_module),
+            ("usb_storage driver is loaded as a module (coldplug)", smoke_usb_storage_is_module),
+        ],
+    )
+
+
+def run_virtio(child, args):
+    return run_uefi_driver_variant(
+        child, args,
+        [("virtio_blk driver is loaded as a module (coldplug)", smoke_virtio_blk_is_module)],
+    )
+
+
+def run_nicless(child, args):
+    """
+    Negative control: boot via BIOS/ISOLINUX (same as run_bios) with no NIC
+    hardware attached at all, then assert e1000 did NOT load. Skips the
+    NIC-dependent parts of the smoke suite (eth0 link, DHCP) since there is
+    deliberately no NIC to bring up — only uname and the overlay mount are
+    checked alongside the negative lsmod assertion.
+    """
+    select_isolinux_label(child, "serial")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+
+    results = []
+    results.append(("e1000 NIC driver NOT loaded (no NIC hardware present)", *smoke_nic_not_loaded(child)))
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, args.kernel_version)))
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
 MODE_BUILDERS = {
     "bios": build_bios_cmd,
     "uefi": build_uefi_cmd,
     "toram": build_bios_cmd,
+    "ahci": build_ahci_cmd,
+    "nvme": build_nvme_cmd,
+    "usb": build_usb_cmd,
+    "virtio": build_virtio_cmd,
+    "nicless": build_nicless_cmd,
 }
 
 MODE_RUNNERS = {
     "bios": run_bios,
     "uefi": run_uefi,
     "toram": run_toram,
+    "ahci": run_ahci,
+    "nvme": run_nvme,
+    "usb": run_usb,
+    "virtio": run_virtio,
+    "nicless": run_nicless,
 }
 
 MODE_DEFAULT_RAM = {
     "bios": 64,
     "uefi": 512,
     "toram": 512,  # copies the full squashfs into RAM + a 50% tmpfs overlay; 128M OOMs
+    "ahci": 512,
+    "nvme": 512,
+    "usb": 512,
+    "virtio": 512,
+    "nicless": 64,  # mirrors bios: same machine type, no extra RAM pressure
 }
 
 
