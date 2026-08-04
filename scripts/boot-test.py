@@ -1047,6 +1047,7 @@ def parse_args():
     )
     p.add_argument("--log-file", default=None, help="Write the full serial session transcript here")
     p.add_argument("--nic-model", default=None,
+                   choices=["pcnet", "rtl8139", "tulip", "ne2k_pci", "ne2k_isa"],
                    help="QEMU NIC model for --mode nic (pcnet|rtl8139|tulip|ne2k_pci|ne2k_isa)")
     return p.parse_args()
 

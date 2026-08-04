@@ -217,6 +217,44 @@ jobs:
           while true; do echo "=== $(date) ==="; df -h; free -h; echo "---"; sleep 60; done &
           make build-packages JOBS=2 LOAD_AVG=2
 
+      # Build/ship assertion for the sp1-nic-zoo `=m` NIC drivers (design doc
+      # §7). The boot-test NIC-model matrix only proves 6 of the 21 new
+      # symbols actually work (the ones QEMU can emulate); this step is the
+      # authoritative catch for a symbol silently dropped by the kernel's
+      # `olddefconfig` — especially the retirement-prone ISA ones, which have
+      # no boot-test coverage at all. `make build-packages` populates
+      # output/sysroot/ (see scripts/build-packages.sh), so the modules are
+      # already on disk here, before rootfs/ISO assembly even starts.
+      - name: Assert NIC kernel modules built and shipped
+        run: |
+          set -euo pipefail
+          KVER=$(grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2 | sed -E 's/-r[0-9]+$//')
+          LOCALVERSION=$(grep '^CONFIG_LOCALVERSION=' configs/kernel.config | sed -E 's/^CONFIG_LOCALVERSION="(.*)"$/\1/')
+          MODDIR="output/sysroot/lib/modules/${KVER}${LOCALVERSION}"
+          echo "==> Checking for NIC .ko modules under ${MODDIR}"
+          if [ ! -d "$MODDIR" ]; then
+            echo "::error::Module directory not found: $MODDIR"
+            exit 1
+          fi
+          # Representative set of the new `=m` NIC symbols (configs/kernel.config):
+          # the risky ISA drivers first, then the PCI zoo.
+          MODULES=(
+            ne wd smc-ultra lance 3c509
+            pcnet32 tulip via-rhine natsemi sis900
+            e1000e igb sky2 r8169 vmxnet3
+          )
+          MISSING=()
+          for m in "${MODULES[@]}"; do
+            if [ -z "$(find "$MODDIR" -name "${m}.ko*" -print -quit)" ]; then
+              MISSING+=("$m")
+            fi
+          done
+          if [ "${#MISSING[@]}" -ne 0 ]; then
+            echo "::error::Missing NIC kernel modules under ${MODDIR}: ${MISSING[*]}"
+            exit 1
+          fi
+          echo "==> All ${#MODULES[@]} NIC modules present under ${MODDIR}"
+
       - name: Save binary packages to S3
         if: always()
         run: aws s3 sync output/packages/ s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/
