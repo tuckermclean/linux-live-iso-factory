@@ -64,10 +64,20 @@ src_compile() {
 	i486-linux-musl-gcc -print-file-name=crtend.o || true
 	i486-linux-musl-gcc -print-search-dirs || true
 
+	# panic=immediate-abort (this nightly's replacement for the older
+	# build-std-features=panic_immediate_abort spelling) drops the LLVM
+	# libunwind dependency entirely — the crossdev toolchain only ships
+	# libgcc's unwinder, not libunwind. It's an unstable panic strategy, so
+	# it must go through RUSTFLAGS (applies to build-std's core too, not
+	# just rl144's own crate) rather than a -Z build-std-features flag.
+	# rl144's Cargo.toml already sets profile.release panic="abort"; this
+	# overrides it to immediate-abort, which is intended.
+	export RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort ${RUSTFLAGS}"
+
 	einfo "Cross-compiling rl144 for ${RUST_TARGET} (nightly build-std, backend-term)"
 	cargo "+${RUST_NIGHTLY}" \
-		-Z build-std=std,panic_abort \
-		-Z build-std-features=panic_immediate_abort \
+		-Z build-std=std \
+		-Z unstable-options \
 		-Z json-target-spec \
 		build --release \
 		--no-default-features --features backend-term \
