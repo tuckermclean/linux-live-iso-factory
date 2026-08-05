@@ -335,7 +335,15 @@ def build_nic_cmd(args):
     return cmd
 
 
-NAT_SOCKET_PORT = 12420  # private LAN link between the router and client guests
+# Private LAN link between the router and client guests, carried as a
+# connectionless UDP datagram pair on loopback. TCP `listen`/`connect` socket
+# netdevs raced connection establishment between the two independently-spawned
+# QEMU processes and left the link dead (client ARP 100% loss, `ip neigh`
+# FAILED) on most runs. UDP has no handshake to lose: each guest binds its own
+# local port and sends frames to the other's — order-independent, and by the
+# time the test drives traffic both ends are bound, so datagrams flow.
+NAT_ROUTER_PORT = 12420  # router binds this; client sends its frames here
+NAT_CLIENT_PORT = 12421  # client binds this; router sends its frames here
 
 
 def build_nat_router_cmd(args):
@@ -348,13 +356,10 @@ def build_nat_router_cmd(args):
         "-boot", "d", "-nographic", "-serial", "mon:stdio", "-no-reboot",
         "-nic", "none",
         "-netdev", "user,id=wan", "-device", "e1000,netdev=wan",
-        # Pin the LAN link listener to explicit IPv4 loopback. A bare
-        # `listen=:PORT` lets QEMU resolve the empty host however getaddrinfo
-        # orders it — intermittently binding IPv6 `[::]` (v6only), which then
-        # REFUSES the client's IPv4 `connect=127.0.0.1` and silently leaves the
-        # inter-guest link dead (client ARP for the gateway goes unanswered ->
-        # curl EHOSTUNREACH). Matching both sides to 127.0.0.1 is deterministic.
-        "-netdev", f"socket,id=lan,listen=127.0.0.1:{NAT_SOCKET_PORT}", "-device", "e1000,netdev=lan",
+        # LAN link: UDP datagram socket to the client (see the port constants).
+        "-netdev",
+        f"socket,id=lan,udp=127.0.0.1:{NAT_CLIENT_PORT},localaddr=127.0.0.1:{NAT_ROUTER_PORT}",
+        "-device", "e1000,netdev=lan",
     ]
 
 
@@ -365,7 +370,10 @@ def build_nat_client_cmd(args):
         qemu, "-cdrom", args.iso, "-m", str(args.ram_mb), "-cpu", "486",
         "-boot", "d", "-nographic", "-serial", "mon:stdio", "-no-reboot",
         "-nic", "none",
-        "-netdev", f"socket,id=lan,connect=127.0.0.1:{NAT_SOCKET_PORT}", "-device", "e1000,netdev=lan",
+        # LAN link: UDP datagram socket to the router (mirror of the router's).
+        "-netdev",
+        f"socket,id=lan,udp=127.0.0.1:{NAT_ROUTER_PORT},localaddr=127.0.0.1:{NAT_CLIENT_PORT}",
+        "-device", "e1000,netdev=lan",
     ]
 
 
