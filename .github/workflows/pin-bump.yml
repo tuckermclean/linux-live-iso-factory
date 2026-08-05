@@ -186,6 +186,11 @@ jobs:
       - name: Compute pin diff summary
         id: diff
         run: |
+          # The lock files are regenerated inside the builder container (via the
+          # /configs bind mount), so on the host they are owned by root and the
+          # unprivileged runner's `git add` fails to index them ("Permission
+          # denied"). Reclaim ownership before staging.
+          sudo chown -R "$(id -u):$(id -g)" configs/portage
           git add -A
           git diff --cached --stat -- Dockerfile configs/portage/crossdev.lock configs/portage/versions.lock \
             > /tmp/diffstat.txt || true
