@@ -1038,9 +1038,14 @@ def run_nat(child, args):
     results.append(("router: nft masquerade present",
                     *run_check(child, "nft ruleset", "nft list ruleset",
                                contains("masquerade"))))
+    # Emit a distinctive marker rather than the bare "1": bash's bracketed-paste
+    # escape (\x1b[?2004l) prepends the value on its line, so a line-anchored
+    # ^1 regex misses it. `contains("ipfwd=1")` is escape-tolerant like the other
+    # NAT assertions.
     results.append(("router: ip_forward=1",
-                    *run_check(child, "ip_forward", "cat /proc/sys/net/ipv4/ip_forward",
-                               regex_matches(r"^1", re.MULTILINE))))
+                    *run_check(child, "ip_forward",
+                               "echo ipfwd=$(cat /proc/sys/net/ipv4/ip_forward)",
+                               contains("ipfwd=1"))))
 
     client = None
     try:
