@@ -109,13 +109,13 @@ has 'multiple candidate' "$out" "ambiguous auto errors"
 teardown
 # 6. down: deletes table, ip_forward=0
 setup; echo 1 > "$MONOLITH_IP_FORWARD"; out=$(sh "$SCRIPT" down 2>&1)
-has 'delete table inet monolith_router' "$(cat "$NFTLOG")" "down deletes table"
+has 'delete table ip monolith_router' "$(cat "$NFTLOG")" "down deletes table"
 has '0' "$(cat "$MONOLITH_IP_FORWARD")" "down disables ip_forward"
 teardown
 # 7. status: shows ip_forward + queries the table
 setup; out=$(sh "$SCRIPT" status 2>&1)
 has 'ip_forward' "$out" "status shows ip_forward"
-has 'list table inet monolith_router' "$(cat "$NFTLOG")" "status queries the table"
+has 'list table ip monolith_router' "$(cat "$NFTLOG")" "status queries the table"
 teardown
 
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
@@ -191,9 +191,9 @@ cmd_up() {
     if ! ip -4 addr show dev "$LAN" 2>/dev/null | grep -q 'inet '; then
         ip addr add "$cidr" dev "$LAN" 2>/dev/null || true
     fi
-    nft delete table inet "$NFT_TABLE" 2>/dev/null || true
+    nft delete table ip "$NFT_TABLE" 2>/dev/null || true
     nft -f - <<NFT
-table inet $NFT_TABLE {
+table ip $NFT_TABLE {
     chain postrouting {
         type nat hook postrouting priority srcnat;
         oifname "$WAN" masquerade
@@ -209,7 +209,7 @@ NFT
 }
 
 cmd_down() {
-    nft delete table inet "$NFT_TABLE" 2>/dev/null || true
+    nft delete table ip "$NFT_TABLE" 2>/dev/null || true
     echo 0 > "$FORWARD_FILE" 2>/dev/null || true
     echo "monolith-router: NAT down"
 }
@@ -221,7 +221,7 @@ cmd_status() {
         printf '  %s: %s\n' "$i" "$(ip -4 addr show dev "$i" 2>/dev/null | awk '/inet /{print $2}' | tr '\n' ' ')"
     done
     echo '--- nft ruleset ---'
-    nft list table inet "$NFT_TABLE" 2>/dev/null || echo "  (no $NFT_TABLE table)"
+    nft list table ip "$NFT_TABLE" 2>/dev/null || echo "  (no $NFT_TABLE table)"
 }
 
 case "${1:-}" in
@@ -325,7 +325,7 @@ git commit -m "feat(net): install monolith-router + allowlist it"
 set -u
 cfg=configs/kernel.config
 fails=0
-for s in NETFILTER NETFILTER_ADVANCED NF_TABLES_INET; do
+for s in NETFILTER NETFILTER_ADVANCED NF_TABLES_IPV4; do
     grep -q "^CONFIG_$s=y$" "$cfg" || { echo "FAIL: CONFIG_$s not =y"; fails=$((fails+1)); }
 done
 for s in NF_CONNTRACK NF_NAT NF_TABLES NFT_CT NFT_NAT NFT_MASQ NF_DEFRAG_IPV4; do
@@ -338,7 +338,7 @@ done
 
 Run: `sh scripts/tests/verify-netfilter-config.sh` → FAIL.
 
-- [ ] **Step 3: Edit `configs/kernel.config`.** Replace any `# CONFIG_X is not set` (or add the line) so these exist. Note `NF_TABLES_INET` and the two gates are **bools (`=y`)**; the rest are modules (`=m`). Grouping near the existing net options is preferred; `olddefconfig` normalizes ordering:
+- [ ] **Step 3: Edit `configs/kernel.config`.** Replace any `# CONFIG_X is not set` (or add the line) so these exist. Note `NF_TABLES_IPV4` and the two gates are **bools (`=y`)**; the rest are modules (`=m`). Grouping near the existing net options is preferred; `olddefconfig` normalizes ordering:
 
 ```
 CONFIG_NETFILTER=y
@@ -346,7 +346,7 @@ CONFIG_NETFILTER_ADVANCED=y
 CONFIG_NF_CONNTRACK=m
 CONFIG_NF_NAT=m
 CONFIG_NF_TABLES=m
-CONFIG_NF_TABLES_INET=y
+CONFIG_NF_TABLES_IPV4=y
 CONFIG_NFT_CT=m
 CONFIG_NFT_NAT=m
 CONFIG_NFT_MASQ=m

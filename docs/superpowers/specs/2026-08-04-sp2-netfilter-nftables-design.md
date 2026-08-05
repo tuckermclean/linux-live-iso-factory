@@ -39,7 +39,7 @@ Framework *gate* on (tiny, no resident tables), the heavy parts `=m`:
 | `CONFIG_NF_CONNTRACK` | `m` | connection tracking (NAT needs it) |
 | `CONFIG_NF_NAT` | `m` | NAT core |
 | `CONFIG_NF_TABLES` | `m` | nftables core |
-| `CONFIG_NF_TABLES_INET` | `m` | the `inet` family (v4+v6 in one table) |
+| `CONFIG_NF_TABLES_IPV4` | `y` | the `ip` family (IPv4; bool — `inet`/IPv6 needs CONFIG_IPV6, a future task) |
 | `CONFIG_NFT_CT` | `m` | `ct` expression (conntrack match) |
 | `CONFIG_NFT_NAT` | `m` | `nat` statement |
 | `CONFIG_NFT_MASQ` | `m` | `masquerade` statement |
@@ -88,7 +88,7 @@ Validate the CIDR (an address with `/prefix`) and fail clearly if malformed.
      clients set their gateway to it.
   3. Install one nftables table (idempotent — delete-then-add):
      ```
-     table inet monolith_router {
+     table ip monolith_router {
        chain postrouting { type nat hook postrouting priority srcnat;
                             oifname "<wan>" masquerade }
        chain forward     { type filter hook forward priority filter; policy drop;
