@@ -86,6 +86,9 @@ allowlist:
   # with etc/init.d/S35netprobe above under the SP-base ownership task.
   - usr/bin/monolith-net
 
+  # ── NAT router helper (SP2) — pending monolith-base ebuild ──────────────────
+  - usr/sbin/monolith-router
+
   # ── Prompt customisation ─────────────────────────────────────────────────────
   - etc/bash/bashrc.d/99-monolith-square.bash
 
