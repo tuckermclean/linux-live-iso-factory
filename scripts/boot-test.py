@@ -1073,13 +1073,27 @@ def run_nat(child, args):
                     "ip link set eth0 up",
                     "ip route add default via 192.168.99.1"]:
             run_check(client, cmd, cmd, exit_code_only())
-        # Non-fatal diagnostics that both localize a failure (L2 socket link vs
-        # L3/NAT) and drain the router's serial channel. While the parent drives
-        # the client, it never reads the router child; a stalled QEMU stdout pipe
-        # can freeze that QEMU's whole event loop — including the netdev packet
-        # pump — which would silently kill the inter-guest link. Probing the
-        # router here drains it right before the client pings; if ARP then
-        # resolves, starvation was the cause. exit_code_only never fails the run.
+        # LOAD-BEARING — do not remove. Confirmed root cause of the nat-router
+        # flake: while the parent drives the client, it isn't reading the router
+        # child's serial. When the router's QEMU stdout pipe fills, that QEMU
+        # blocks on the write and its whole event loop freezes — including the
+        # netdev packet pump — which silently kills the inter-guest LAN link
+        # (the client's gateway ARP then goes 100% unanswered -> EHOSTUNREACH).
+        # Draining the router before each cross-guest client step keeps its
+        # event loop live. Evidence: with the drain the client's first ping came
+        # back at 590ms — the router resuming the instant its serial was read —
+        # then 1ms; without it, 100% packet loss and `ip neigh` FAILED.
+        def drain_router():
+            try:
+                while True:
+                    child.read_nonblocking(size=65536, timeout=0)
+            except Exception:
+                pass  # pexpect TIMEOUT/EOF — nothing more queued
+
+        # These probes also localize any failure (L2 link vs L3/NAT) and, run on
+        # the router, double as drains. A REACHABLE gateway ping here means the
+        # link carries frames, so a later curl failure is NAT/routing, not a dead
+        # link. exit_code_only never fails the run — the asserts below decide it.
         def _diag(node, label, cmds):
             for d in cmds:
                 run_check(node, f"{label}-diag: {d}", d, exit_code_only(), timeout=15)
@@ -1099,6 +1113,7 @@ def run_nat(child, args):
         # NAT is ever exercised. Poll until the path is reachable (condition-
         # based waiting), breaking on the first success. A genuine NAT break
         # still fails here — the loop exhausts without ever seeing the marker.
+        drain_router()  # keep the router's event loop live through this step
         results.append(("client: curl host service through NAT",
                         *run_check(client, "curl via NAT",
                                    "for i in $(seq 1 20); do "
