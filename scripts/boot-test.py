@@ -1073,15 +1073,23 @@ def run_nat(child, args):
                     "ip link set eth0 up",
                     "ip route add default via 192.168.99.1"]:
             run_check(client, cmd, cmd, exit_code_only())
-        # Non-fatal diagnostics: localize any failure to L2 (the inter-guest
-        # QEMU socket link) vs L3/NAT. A successful `ping 192.168.99.1` means
-        # the socket link carries frames and the gateway ARP resolved — so a
-        # curl failure after this is NAT/routing, not a dead link. These only
-        # log (exit_code_only never fails the run); the asserts below decide it.
-        for diag in ["ip -o addr show dev eth0",
-                     "ping -c2 -W2 192.168.99.1",
-                     "ip neigh show"]:
-            run_check(client, f"diag: {diag}", diag, exit_code_only(), timeout=15)
+        # Non-fatal diagnostics that both localize a failure (L2 socket link vs
+        # L3/NAT) and drain the router's serial channel. While the parent drives
+        # the client, it never reads the router child; a stalled QEMU stdout pipe
+        # can freeze that QEMU's whole event loop — including the netdev packet
+        # pump — which would silently kill the inter-guest link. Probing the
+        # router here drains it right before the client pings; if ARP then
+        # resolves, starvation was the cause. exit_code_only never fails the run.
+        def _diag(node, label, cmds):
+            for d in cmds:
+                run_check(node, f"{label}-diag: {d}", d, exit_code_only(), timeout=15)
+        _diag(child, "router-pre",
+              ["ip -o addr show dev eth1", "ip -o link show dev eth1", "cat /proc/net/dev"])
+        _diag(client, "client",
+              ["ip -o addr show dev eth0", "ping -c2 -W2 192.168.99.1", "ip neigh show"])
+        # Second router probe: did the router LEARN the client's neighbour and
+        # tick eth1 RX counters? That proves frames actually crossed the link.
+        _diag(child, "router-post", ["ip neigh show", "cat /proc/net/dev"])
         # Positive: reach the host http.server THROUGH the router's masquerade.
         # The LAN path between the two independently-spawned guests — the QEMU
         # socket segment plus the client's first-packet ARP to the gateway —
