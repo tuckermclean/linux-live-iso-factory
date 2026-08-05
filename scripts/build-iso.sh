@@ -134,8 +134,13 @@ cat > "${ISO_DIR}/isolinux/isolinux.cfg" << EOF
 #   root=/dev/fd0               - Boot from floppy
 #   console=ttyS0,9600n8        - Serial console at 9600 baud
 
-# Timeout in 1/10 seconds (50 = 5 seconds)
-TIMEOUT 50
+# Timeout in 1/10 seconds before auto-booting DEFAULT with no keypress.
+# 300 = 30s: the automated boot-test types a label (e.g. "serial") at this
+# prompt over a serial console, and under CI load pexpect can see the prompt
+# and deliver the keystroke several seconds late; a 5s window raced and flaked
+# (the keypress landed after auto-boot). 30s gives ample margin. A human at the
+# console still boots instantly by pressing Enter (any key cancels the count).
+TIMEOUT 300
 
 # Default entry
 DEFAULT fb800
