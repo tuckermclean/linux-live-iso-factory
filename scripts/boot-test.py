@@ -335,6 +335,34 @@ def build_nic_cmd(args):
     return cmd
 
 
+NAT_SOCKET_PORT = 12420  # private LAN link between the router and client guests
+
+
+def build_nat_router_cmd(args):
+    # BIOS/pc guest with TWO NICs: WAN via user-net (SLIRP gateway 10.0.2.2 is
+    # the CI host), LAN via a socket segment the client connects to. -nic none
+    # suppresses QEMU's default NIC so exactly these two exist (eth0=WAN, eth1=LAN).
+    qemu = require_binary(args.qemu_i386)
+    return [
+        qemu, "-cdrom", args.iso, "-m", str(args.ram_mb), "-cpu", "486",
+        "-boot", "d", "-nographic", "-serial", "mon:stdio", "-no-reboot",
+        "-nic", "none",
+        "-netdev", "user,id=wan", "-device", "e1000,netdev=wan",
+        "-netdev", f"socket,id=lan,listen=:{NAT_SOCKET_PORT}", "-device", "e1000,netdev=lan",
+    ]
+
+
+def build_nat_client_cmd(args):
+    # Single NIC on the router's LAN socket segment. No WAN, no default NIC.
+    qemu = require_binary(args.qemu_i386)
+    return [
+        qemu, "-cdrom", args.iso, "-m", str(args.ram_mb), "-cpu", "486",
+        "-boot", "d", "-nographic", "-serial", "mon:stdio", "-no-reboot",
+        "-nic", "none",
+        "-netdev", f"socket,id=lan,connect=127.0.0.1:{NAT_SOCKET_PORT}", "-device", "e1000,netdev=lan",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Boot-loader navigation
 # ---------------------------------------------------------------------------
@@ -980,6 +1008,72 @@ def run_nic(child, args):
     return ok
 
 
+def _boot_isolinux_to_shell(child, args):
+    select_isolinux_label(child, "serial")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+    # Serial warmup: the FIRST command after the shell appears can lose its
+    # output to a serial-read race (observed intermittently on the storage
+    # jobs — the boot succeeds but the first assertion's output is dropped).
+    # A throwaway command absorbs that race so the first real assertion below
+    # is reliable. Cheap; runs once per guest.
+    run_check(child, "serial warmup", "true", exit_code_only())
+
+
+def run_nat(child, args):
+    # child == router (spawned by main via build_nat_router_cmd).
+    results = []
+    _boot_isolinux_to_shell(child, args)
+    # Router: bring NAT up (eth0=WAN/user, eth1=LAN/socket), assert it took.
+    results.append(("router: monolith-router up",
+                    *run_check(child, "monolith-router eth0 eth1", "monolith-router eth0 eth1",
+                               contains("NAT up"), timeout=60)))
+    results.append(("router: nft masquerade present",
+                    *run_check(child, "nft ruleset", "nft list ruleset",
+                               contains("masquerade"))))
+    results.append(("router: ip_forward=1",
+                    *run_check(child, "ip_forward", "cat /proc/sys/net/ipv4/ip_forward",
+                               regex_matches(r"^1", re.MULTILINE))))
+
+    client = None
+    try:
+        client = pexpect.spawn(build_nat_client_cmd(args)[0], build_nat_client_cmd(args)[1:],
+                               timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace")
+        if args.log_file:
+            client.logfile = open(args.log_file + ".client", "w", encoding="utf-8", errors="replace")
+        _boot_isolinux_to_shell(client, args)
+        # Client: static LAN config, default route via the router.
+        for cmd in ["ip addr add 192.168.99.2/24 dev eth0",
+                    "ip link set eth0 up",
+                    "ip route add default via 192.168.99.1"]:
+            run_check(client, cmd, cmd, exit_code_only())
+        # Positive: reach the host http.server THROUGH the router's masquerade.
+        results.append(("client: curl host service through NAT",
+                        *run_check(client, "curl via NAT", "curl -s -m 20 http://10.0.2.2:8000/probe.txt",
+                                   contains("NAT_OK_marker"), timeout=40)))
+        # Negative control: tear NAT down on the router, the client can no longer reach it.
+        run_check(child, "monolith-router down", "monolith-router down", contains("NAT down"))
+        neg_ok, neg_detail = run_check(client, "curl fails after NAT down",
+                                       "curl -s -m 8 http://10.0.2.2:8000/probe.txt; echo RC=$?",
+                                       contains("RC=28"), timeout=20)  # curl 28 = timeout
+        results.append(("client: no route after NAT down (negative control)", neg_ok, neg_detail))
+    finally:
+        if client is not None:
+            try: client.close(force=True)
+            except Exception: pass
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
 MODE_BUILDERS = {
     "bios": build_bios_cmd,
     "uefi": build_uefi_cmd,
@@ -990,6 +1084,7 @@ MODE_BUILDERS = {
     "virtio": build_virtio_cmd,
     "nicless": build_nicless_cmd,
     "nic": build_nic_cmd,
+    "nat": build_nat_router_cmd,
 }
 
 MODE_RUNNERS = {
@@ -1002,6 +1097,7 @@ MODE_RUNNERS = {
     "virtio": run_virtio,
     "nicless": run_nicless,
     "nic": run_nic,
+    "nat": run_nat,
 }
 
 MODE_DEFAULT_RAM = {
@@ -1014,6 +1110,7 @@ MODE_DEFAULT_RAM = {
     "virtio": 512,
     "nicless": 64,  # mirrors bios: same machine type, no extra RAM pressure
     "nic": 256,
+    "nat": 256,
 }
 
 
