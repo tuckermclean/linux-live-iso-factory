@@ -24,12 +24,14 @@ if [ "$1" = "-f" ] && [ "$2" = "-" ]; then
 fi
 exit 0
 STUB
-    # stub ip: log argv; answer `route show default` from $DEFROUTE_DEV; emit no
-    # inet for `-4 addr show dev` so the script always assigns the LAN address.
+    # stub ip: log argv; answer `route show default` from $DEFROUTE_DEV; for
+    # `addr show`, emit $IP_EXISTING_INET if set (default none) so a test can
+    # simulate the LAN already carrying an address (e.g. a zeroconf link-local).
     cat > "$BIN/ip" <<'STUB'
 #!/bin/sh
 echo "ip $*" >> "$IPLOG"
 [ "$1 $2 $3" = "route show default" ] && [ -n "${DEFROUTE_DEV:-}" ] && echo "default via 10.0.2.2 dev $DEFROUTE_DEV"
+case "$*" in *"addr show"*) [ -n "${IP_EXISTING_INET:-}" ] && echo "$IP_EXISTING_INET" ;; esac
 exit 0
 STUB
     chmod +x "$BIN"/*; export PATH="$BIN:$PATH"
@@ -75,6 +77,23 @@ teardown
 setup; out=$(NFT_FAIL=1 sh "$SCRIPT" up eth0 eth1 2>&1); rc=$?
 has 'nft apply failed' "$out" "nft failure surfaced"
 [ "$rc" -ne 0 ] && echo "  ok: nft-fail exits non-zero" || { echo "  FAIL: exit=$rc"; fails=$((fails+1)); }
+teardown
+# 9. LAN already carries a 169.254 zeroconf link-local (failed-DHCP fallback):
+#    up must DROP it and still assign our CIDR. Regression: the old guard saw an
+#    inet and skipped the assignment, so the router held no gateway address.
+setup
+out=$(IP_EXISTING_INET='3: eth1    inet 169.254.9.9/16 scope global eth1' \
+      sh "$SCRIPT" up eth0 eth1 2>&1)
+has 'addr del 169.254.9.9/16 dev eth1' "$(cat "$IPLOG")" "up removes stale 169.254 link-local"
+has 'addr add 192.168.99.1/24 dev eth1' "$(cat "$IPLOG")" "up assigns LAN cidr despite existing link-local"
+teardown
+# 10. LAN already has exactly our CIDR -> idempotent, no duplicate add
+setup
+out=$(IP_EXISTING_INET='3: eth1    inet 192.168.99.1/24 scope global eth1' \
+      sh "$SCRIPT" up eth0 eth1 2>&1)
+if grep -qF 'addr add 192.168.99.1/24' "$IPLOG"; then
+    echo "  FAIL: re-added an already-present CIDR"; fails=$((fails+1))
+else echo "  ok: existing exact CIDR not re-added (idempotent)"; fi
 teardown
 
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

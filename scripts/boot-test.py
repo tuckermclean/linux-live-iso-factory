@@ -1073,16 +1073,12 @@ def run_nat(child, args):
                     "ip link set eth0 up",
                     "ip route add default via 192.168.99.1"]:
             run_check(client, cmd, cmd, exit_code_only())
-        # LOAD-BEARING — do not remove. Confirmed root cause of the nat-router
-        # flake: while the parent drives the client, it isn't reading the router
-        # child's serial. When the router's QEMU stdout pipe fills, that QEMU
-        # blocks on the write and its whole event loop freezes — including the
-        # netdev packet pump — which silently kills the inter-guest LAN link
-        # (the client's gateway ARP then goes 100% unanswered -> EHOSTUNREACH).
-        # Draining the router before each cross-guest client step keeps its
-        # event loop live. Evidence: with the drain the client's first ping came
-        # back at 590ms — the router resuming the instant its serial was read —
-        # then 1ms; without it, 100% packet loss and `ip neigh` FAILED.
+        # Defensive: drain the router child's serial so its pexpect pty can't
+        # back up while we're busy driving the client. This is hygiene, NOT the
+        # historical nat-router flake — that was a monolith-router bug (it skipped
+        # assigning the LAN gateway CIDR when eth1 already carried a failed-DHCP
+        # 169.254 link-local, so the router answered no ARP for the gateway). It's
+        # fixed in monolith-router; these diagnostics are what localized it.
         def drain_router():
             try:
                 while True:
@@ -1090,10 +1086,12 @@ def run_nat(child, args):
             except Exception:
                 pass  # pexpect TIMEOUT/EOF — nothing more queued
 
-        # These probes also localize any failure (L2 link vs L3/NAT) and, run on
-        # the router, double as drains. A REACHABLE gateway ping here means the
-        # link carries frames, so a later curl failure is NAT/routing, not a dead
-        # link. exit_code_only never fails the run — the asserts below decide it.
+        # Localize any failure: L2 (dead inter-guest link) vs L3/NAT vs a router
+        # mis-config. router-pre shows eth1's actual address + link/counters (this
+        # is what caught the missing gateway CIDR); client pings the gateway;
+        # router-post proves whether frames crossed (RX ticks, neighbour learned).
+        # A REACHABLE gateway ping means the link + gateway addressing are good, so
+        # a later curl failure is NAT/routing. exit_code_only never fails the run.
         def _diag(node, label, cmds):
             for d in cmds:
                 run_check(node, f"{label}-diag: {d}", d, exit_code_only(), timeout=15)
@@ -1101,19 +1099,14 @@ def run_nat(child, args):
               ["ip -o addr show dev eth1", "ip -o link show dev eth1", "cat /proc/net/dev"])
         _diag(client, "client",
               ["ip -o addr show dev eth0", "ping -c2 -W2 192.168.99.1", "ip neigh show"])
-        # Second router probe: did the router LEARN the client's neighbour and
-        # tick eth1 RX counters? That proves frames actually crossed the link.
         _diag(child, "router-post", ["ip neigh show", "cat /proc/net/dev"])
         # Positive: reach the host http.server THROUGH the router's masquerade.
-        # The LAN path between the two independently-spawned guests — the QEMU
-        # socket segment plus the client's first-packet ARP to the gateway —
-        # takes a moment to warm up. A single-shot curl the instant after
-        # `ip route add` races that warmup: the first frame hits an unresolved
-        # neighbour and the kernel returns EHOSTUNREACH (curl exit 7) before
-        # NAT is ever exercised. Poll until the path is reachable (condition-
-        # based waiting), breaking on the first success. A genuine NAT break
-        # still fails here — the loop exhausts without ever seeing the marker.
-        drain_router()  # keep the router's event loop live through this step
+        # Poll rather than fire a single shot — the client's first-packet ARP to
+        # the gateway plus conntrack setup can take a moment, and a lone curl the
+        # instant after `ip route add` can race that and return EHOSTUNREACH.
+        # Retry a bounded number of times, breaking on the first success; a
+        # genuine NAT break still fails — the loop exhausts without the marker.
+        drain_router()
         results.append(("client: curl host service through NAT",
                         *run_check(client, "curl via NAT",
                                    "for i in $(seq 1 20); do "
