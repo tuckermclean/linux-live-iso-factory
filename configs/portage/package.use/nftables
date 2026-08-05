@@ -1,0 +1,3 @@
+# Keep nftables lean for the static i486-musl image: no JSON output, no
+# python bindings, no iptables-compat. readline for the interactive CLI.
+net-firewall/nftables -json -python -xtables readline
