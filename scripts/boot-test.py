@@ -1060,9 +1060,20 @@ def run_nat(child, args):
                     "ip route add default via 192.168.99.1"]:
             run_check(client, cmd, cmd, exit_code_only())
         # Positive: reach the host http.server THROUGH the router's masquerade.
+        # The LAN path between the two independently-spawned guests — the QEMU
+        # socket segment plus the client's first-packet ARP to the gateway —
+        # takes a moment to warm up. A single-shot curl the instant after
+        # `ip route add` races that warmup: the first frame hits an unresolved
+        # neighbour and the kernel returns EHOSTUNREACH (curl exit 7) before
+        # NAT is ever exercised. Poll until the path is reachable (condition-
+        # based waiting), breaking on the first success. A genuine NAT break
+        # still fails here — the loop exhausts without ever seeing the marker.
         results.append(("client: curl host service through NAT",
-                        *run_check(client, "curl via NAT", "curl -s -m 20 http://10.0.2.2:8000/probe.txt",
-                                   contains("NAT_OK_marker"), timeout=40)))
+                        *run_check(client, "curl via NAT",
+                                   "for i in $(seq 1 20); do "
+                                   "curl -s -m 4 http://10.0.2.2:8000/probe.txt && break; "
+                                   "sleep 1; done",
+                                   contains("NAT_OK_marker"), timeout=120)))
         # Negative control: tear NAT down on the router, the client can no longer reach it.
         run_check(child, "monolith-router down", "monolith-router down", contains("NAT down"))
         neg_ok, neg_detail = run_check(client, "curl fails after NAT down",
