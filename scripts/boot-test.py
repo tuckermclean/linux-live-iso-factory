@@ -348,7 +348,13 @@ def build_nat_router_cmd(args):
         "-boot", "d", "-nographic", "-serial", "mon:stdio", "-no-reboot",
         "-nic", "none",
         "-netdev", "user,id=wan", "-device", "e1000,netdev=wan",
-        "-netdev", f"socket,id=lan,listen=:{NAT_SOCKET_PORT}", "-device", "e1000,netdev=lan",
+        # Pin the LAN link listener to explicit IPv4 loopback. A bare
+        # `listen=:PORT` lets QEMU resolve the empty host however getaddrinfo
+        # orders it — intermittently binding IPv6 `[::]` (v6only), which then
+        # REFUSES the client's IPv4 `connect=127.0.0.1` and silently leaves the
+        # inter-guest link dead (client ARP for the gateway goes unanswered ->
+        # curl EHOSTUNREACH). Matching both sides to 127.0.0.1 is deterministic.
+        "-netdev", f"socket,id=lan,listen=127.0.0.1:{NAT_SOCKET_PORT}", "-device", "e1000,netdev=lan",
     ]
 
 
@@ -1059,6 +1065,15 @@ def run_nat(child, args):
                     "ip link set eth0 up",
                     "ip route add default via 192.168.99.1"]:
             run_check(client, cmd, cmd, exit_code_only())
+        # Non-fatal diagnostics: localize any failure to L2 (the inter-guest
+        # QEMU socket link) vs L3/NAT. A successful `ping 192.168.99.1` means
+        # the socket link carries frames and the gateway ARP resolved — so a
+        # curl failure after this is NAT/routing, not a dead link. These only
+        # log (exit_code_only never fails the run); the asserts below decide it.
+        for diag in ["ip -o addr show dev eth0",
+                     "ping -c2 -W2 192.168.99.1",
+                     "ip neigh show"]:
+            run_check(client, f"diag: {diag}", diag, exit_code_only(), timeout=15)
         # Positive: reach the host http.server THROUGH the router's masquerade.
         # The LAN path between the two independently-spawned guests — the QEMU
         # socket segment plus the client's first-packet ARP to the gateway —
