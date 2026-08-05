@@ -6,20 +6,19 @@ EAPI=8
 DESCRIPTION="rl144 — a deterministic, integer-only roguelike built for the 486DX"
 HOMEPAGE="https://github.com/tuckermclean/rl144"
 
-# Pinned to a specific commit on the feature/happy-valley branch (no release tag
-# yet). GitHub's per-commit archive is the DIST tarball; the Manifest pins its
-# exact bytes. If GitHub's archive gzip ever drifts and the hash mismatches,
-# host the tarball in the project's own S3 and repoint SRC_URI.
-COMMIT="e82e00e0aaa411fa44e879b065fecbca1be19553"
+# Pinned to a specific commit (no release tag yet). As of this sync master and
+# feature/happy-valley have converged, so this HEAD carries both the 486 target
+# spec/design docs AND the LICENSE. GitHub's per-commit archive is the DIST
+# tarball; the Manifest pins its exact bytes. If GitHub's archive gzip ever
+# drifts and the hash mismatches, host the tarball in the project's own S3 and
+# repoint SRC_URI.
+COMMIT="f33a80efc4b0b02ce72e708182594b84695e742d"
 SRC_URI="https://github.com/tuckermclean/rl144/archive/${COMMIT}.tar.gz -> ${P}.tar.gz"
 S="${WORKDIR}/rl144-${COMMIT}"
 
-# rl144 is MIT-licensed (LICENSE file committed on the repo's master branch).
-# NOTE: the pinned commit is on feature/happy-valley (where the 486 target spec
-# and design docs live), and master's LICENSE has not been merged there yet, so
-# this commit's tree does not carry the LICENSE file. The declaration here is
-# accurate; for full MIT compliance, merge the LICENSE onto the 486 branch (or
-# cut a tag that has both) and re-pin so the shipped source includes it.
+# rl144 is MIT-licensed; the LICENSE file is present in this commit's tree (the
+# earlier happy-valley/master split is resolved now that they've converged), so
+# the shipped source carries it and src_install dodoc's it below.
 LICENSE="MIT"
 SLOT="0"
 KEYWORDS="~amd64"
@@ -123,5 +122,6 @@ src_install() {
 	exeinto /usr/bin
 	doexe "${bin}"
 
+	dodoc "${S}/LICENSE"
 	dodoc "${S}/docs/design/486/2026-08-04-boot-on-a-486-scope.md" 2>/dev/null || true
 }
