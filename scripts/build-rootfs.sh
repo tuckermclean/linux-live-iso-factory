@@ -399,6 +399,11 @@ EOF
     install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/bin/monolith-net" \
         "$ROOTFS_DIR/usr/bin/monolith-net"
 
+    # Install the monolith-router NAT helper (standalone, unit-tested;
+    # see configs/rootfs-overlay/usr/sbin/monolith-router + scripts/tests/).
+    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/sbin/monolith-router" \
+        "$ROOTFS_DIR/usr/sbin/monolith-router"
+
     # /etc/init.d/S35netprobe - reach ISA NICs that can't announce themselves.
     # Runs AFTER rcS coldplug (which self-loads PCI/virtual NICs by modalias) and
     # BEFORE S40network (which DHCPs whatever interfaces exist). Only the SAFE,

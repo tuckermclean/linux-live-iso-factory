@@ -335,6 +335,48 @@ def build_nic_cmd(args):
     return cmd
 
 
+# Private LAN link between the router and client guests, carried as a
+# connectionless UDP datagram pair on loopback. TCP `listen`/`connect` socket
+# netdevs raced connection establishment between the two independently-spawned
+# QEMU processes and left the link dead (client ARP 100% loss, `ip neigh`
+# FAILED) on most runs. UDP has no handshake to lose: each guest binds its own
+# local port and sends frames to the other's — order-independent, and by the
+# time the test drives traffic both ends are bound, so datagrams flow.
+NAT_ROUTER_PORT = 12420  # router binds this; client sends its frames here
+NAT_CLIENT_PORT = 12421  # client binds this; router sends its frames here
+
+
+def build_nat_router_cmd(args):
+    # BIOS/pc guest with TWO NICs: WAN via user-net (SLIRP gateway 10.0.2.2 is
+    # the CI host), LAN via a socket segment the client connects to. -nic none
+    # suppresses QEMU's default NIC so exactly these two exist (eth0=WAN, eth1=LAN).
+    qemu = require_binary(args.qemu_i386)
+    return [
+        qemu, "-cdrom", args.iso, "-m", str(args.ram_mb), "-cpu", "486",
+        "-boot", "d", "-nographic", "-serial", "mon:stdio", "-no-reboot",
+        "-nic", "none",
+        "-netdev", "user,id=wan", "-device", "e1000,netdev=wan",
+        # LAN link: UDP datagram socket to the client (see the port constants).
+        "-netdev",
+        f"socket,id=lan,udp=127.0.0.1:{NAT_CLIENT_PORT},localaddr=127.0.0.1:{NAT_ROUTER_PORT}",
+        "-device", "e1000,netdev=lan",
+    ]
+
+
+def build_nat_client_cmd(args):
+    # Single NIC on the router's LAN socket segment. No WAN, no default NIC.
+    qemu = require_binary(args.qemu_i386)
+    return [
+        qemu, "-cdrom", args.iso, "-m", str(args.ram_mb), "-cpu", "486",
+        "-boot", "d", "-nographic", "-serial", "mon:stdio", "-no-reboot",
+        "-nic", "none",
+        # LAN link: UDP datagram socket to the router (mirror of the router's).
+        "-netdev",
+        f"socket,id=lan,udp=127.0.0.1:{NAT_ROUTER_PORT},localaddr=127.0.0.1:{NAT_CLIENT_PORT}",
+        "-device", "e1000,netdev=lan",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Boot-loader navigation
 # ---------------------------------------------------------------------------
@@ -980,6 +1022,120 @@ def run_nic(child, args):
     return ok
 
 
+def _boot_isolinux_to_shell(child, args):
+    select_isolinux_label(child, "serial")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+    # Serial warmup: the FIRST command after the shell appears can lose its
+    # output to a serial-read race (observed intermittently on the storage
+    # jobs — the boot succeeds but the first assertion's output is dropped).
+    # A throwaway command absorbs that race so the first real assertion below
+    # is reliable. Cheap; runs once per guest.
+    run_check(child, "serial warmup", "true", exit_code_only())
+
+
+def run_nat(child, args):
+    # child == router (spawned by main via build_nat_router_cmd).
+    results = []
+    _boot_isolinux_to_shell(child, args)
+    # Router: bring NAT up (eth0=WAN/user, eth1=LAN/socket), assert it took.
+    results.append(("router: monolith-router up",
+                    *run_check(child, "monolith-router eth0 eth1", "monolith-router eth0 eth1",
+                               contains("NAT up"), timeout=60)))
+    results.append(("router: nft masquerade present",
+                    *run_check(child, "nft ruleset", "nft list ruleset",
+                               contains("masquerade"))))
+    # Emit a distinctive marker rather than the bare "1": bash's bracketed-paste
+    # escape (\x1b[?2004l) prepends the value on its line, so a line-anchored
+    # ^1 regex misses it. `contains("ipfwd=1")` is escape-tolerant like the other
+    # NAT assertions.
+    results.append(("router: ip_forward=1",
+                    *run_check(child, "ip_forward",
+                               "echo ipfwd=$(cat /proc/sys/net/ipv4/ip_forward)",
+                               contains("ipfwd=1"))))
+
+    client = None
+    try:
+        client = pexpect.spawn(build_nat_client_cmd(args)[0], build_nat_client_cmd(args)[1:],
+                               timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace")
+        if args.log_file:
+            client.logfile = open(args.log_file + ".client", "w", encoding="utf-8", errors="replace")
+        _boot_isolinux_to_shell(client, args)
+        # Client: static LAN config, default route via the router.
+        for cmd in ["ip addr add 192.168.99.2/24 dev eth0",
+                    "ip link set eth0 up",
+                    "ip route add default via 192.168.99.1"]:
+            run_check(client, cmd, cmd, exit_code_only())
+        # LOAD-BEARING — do not remove. Confirmed root cause of the nat-router
+        # flake: while the parent drives the client, it isn't reading the router
+        # child's serial. When the router's QEMU stdout pipe fills, that QEMU
+        # blocks on the write and its whole event loop freezes — including the
+        # netdev packet pump — which silently kills the inter-guest LAN link
+        # (the client's gateway ARP then goes 100% unanswered -> EHOSTUNREACH).
+        # Draining the router before each cross-guest client step keeps its
+        # event loop live. Evidence: with the drain the client's first ping came
+        # back at 590ms — the router resuming the instant its serial was read —
+        # then 1ms; without it, 100% packet loss and `ip neigh` FAILED.
+        def drain_router():
+            try:
+                while True:
+                    child.read_nonblocking(size=65536, timeout=0)
+            except Exception:
+                pass  # pexpect TIMEOUT/EOF — nothing more queued
+
+        # These probes also localize any failure (L2 link vs L3/NAT) and, run on
+        # the router, double as drains. A REACHABLE gateway ping here means the
+        # link carries frames, so a later curl failure is NAT/routing, not a dead
+        # link. exit_code_only never fails the run — the asserts below decide it.
+        def _diag(node, label, cmds):
+            for d in cmds:
+                run_check(node, f"{label}-diag: {d}", d, exit_code_only(), timeout=15)
+        _diag(child, "router-pre",
+              ["ip -o addr show dev eth1", "ip -o link show dev eth1", "cat /proc/net/dev"])
+        _diag(client, "client",
+              ["ip -o addr show dev eth0", "ping -c2 -W2 192.168.99.1", "ip neigh show"])
+        # Second router probe: did the router LEARN the client's neighbour and
+        # tick eth1 RX counters? That proves frames actually crossed the link.
+        _diag(child, "router-post", ["ip neigh show", "cat /proc/net/dev"])
+        # Positive: reach the host http.server THROUGH the router's masquerade.
+        # The LAN path between the two independently-spawned guests — the QEMU
+        # socket segment plus the client's first-packet ARP to the gateway —
+        # takes a moment to warm up. A single-shot curl the instant after
+        # `ip route add` races that warmup: the first frame hits an unresolved
+        # neighbour and the kernel returns EHOSTUNREACH (curl exit 7) before
+        # NAT is ever exercised. Poll until the path is reachable (condition-
+        # based waiting), breaking on the first success. A genuine NAT break
+        # still fails here — the loop exhausts without ever seeing the marker.
+        drain_router()  # keep the router's event loop live through this step
+        results.append(("client: curl host service through NAT",
+                        *run_check(client, "curl via NAT",
+                                   "for i in $(seq 1 20); do "
+                                   "curl -s -m 4 http://10.0.2.2:8000/probe.txt && break; "
+                                   "sleep 1; done",
+                                   contains("NAT_OK_marker"), timeout=120)))
+        # Negative control: tear NAT down on the router, the client can no longer reach it.
+        run_check(child, "monolith-router down", "monolith-router down", contains("NAT down"))
+        neg_ok, neg_detail = run_check(client, "curl fails after NAT down",
+                                       "curl -s -m 8 http://10.0.2.2:8000/probe.txt; echo RC=$?",
+                                       contains("RC=28"), timeout=20)  # curl 28 = timeout
+        results.append(("client: no route after NAT down (negative control)", neg_ok, neg_detail))
+    finally:
+        if client is not None:
+            try: client.close(force=True)
+            except Exception: pass
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
 MODE_BUILDERS = {
     "bios": build_bios_cmd,
     "uefi": build_uefi_cmd,
@@ -990,6 +1146,7 @@ MODE_BUILDERS = {
     "virtio": build_virtio_cmd,
     "nicless": build_nicless_cmd,
     "nic": build_nic_cmd,
+    "nat": build_nat_router_cmd,
 }
 
 MODE_RUNNERS = {
@@ -1002,6 +1159,7 @@ MODE_RUNNERS = {
     "virtio": run_virtio,
     "nicless": run_nicless,
     "nic": run_nic,
+    "nat": run_nat,
 }
 
 MODE_DEFAULT_RAM = {
@@ -1014,6 +1172,7 @@ MODE_DEFAULT_RAM = {
     "virtio": 512,
     "nicless": 64,  # mirrors bios: same machine type, no extra RAM pressure
     "nic": 256,
+    "nat": 256,
 }
 
 

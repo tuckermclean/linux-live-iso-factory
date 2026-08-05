@@ -1,0 +1,106 @@
+#!/bin/sh
+# monolith-router — turn the box into a one-command IPv4 NAT router.
+#
+# Enables ip_forward and installs an nftables masquerade+forward ruleset so a
+# private LAN reaches a WAN. DHCP/DNS for LAN clients is separate (dnsmasq, SP3).
+#
+#   monolith-router [up] [<wan> <lan> [<lan-cidr>]]   bring NAT up
+#   monolith-router down                              tear it down
+#   monolith-router status                            show state
+#
+# With no <wan>/<lan>, WAN = the default-route interface and LAN = the single
+# other non-lo interface. <lan-cidr> (default 192.168.99.1/24, or
+# $MONOLITH_LAN_CIDR) is the router's own LAN address; clients use its host part
+# as their gateway.
+set -u
+
+SYSCLASS="${MONOLITH_NET_SYSCLASS:-/sys/class/net}"
+FORWARD_FILE="${MONOLITH_IP_FORWARD:-/proc/sys/net/ipv4/ip_forward}"
+DEFAULT_LAN_CIDR="${MONOLITH_LAN_CIDR:-192.168.99.1/24}"
+NFT_TABLE="monolith_router"
+
+list_ifaces() {
+    for d in "$SYSCLASS"/*; do
+        [ -e "$d" ] || continue
+        n=${d##*/}; [ "$n" = lo ] && continue
+        echo "$n"
+    done
+}
+
+default_route_iface() {
+    ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}'
+}
+
+# Sets WAN and LAN. $1/$2 override; else autodetect.
+resolve_ifaces() {
+    if [ -n "${1:-}" ] && [ -n "${2:-}" ]; then WAN=$1; LAN=$2; return 0; fi
+    WAN=$(default_route_iface)
+    [ -n "$WAN" ] || { echo "monolith-router: no default route — specify <wan> <lan>" >&2; return 1; }
+    LAN=""
+    for i in $(list_ifaces); do
+        [ "$i" = "$WAN" ] && continue
+        if [ -n "$LAN" ]; then
+            echo "monolith-router: multiple candidate LAN interfaces — specify <wan> <lan>" >&2; return 1
+        fi
+        LAN=$i
+    done
+    [ -n "$LAN" ] || { echo "monolith-router: no LAN interface found — specify <wan> <lan>" >&2; return 1; }
+}
+
+valid_cidr() { echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'; }
+
+cmd_up() {
+    resolve_ifaces "${1:-}" "${2:-}" || return 1
+    cidr="${3:-$DEFAULT_LAN_CIDR}"
+    valid_cidr "$cidr" || { echo "monolith-router: invalid lan-cidr '$cidr' (want A.B.C.D/prefix)" >&2; return 1; }
+    if ! echo 1 > "$FORWARD_FILE" 2>/dev/null; then
+        echo "monolith-router: cannot enable ip_forward ($FORWARD_FILE)" >&2; return 1
+    fi
+    ip link set "$LAN" up 2>/dev/null || true
+    if ! ip -4 addr show dev "$LAN" 2>/dev/null | grep -q 'inet '; then
+        ip addr add "$cidr" dev "$LAN" 2>/dev/null || true
+    fi
+    nft delete table ip "$NFT_TABLE" 2>/dev/null || true
+    if ! nft -f - <<NFT
+table ip $NFT_TABLE {
+    chain postrouting {
+        type nat hook postrouting priority srcnat;
+        oifname "$WAN" masquerade
+    }
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+        iifname "$LAN" oifname "$WAN" accept
+    }
+}
+NFT
+    then
+        echo "monolith-router: nft apply failed" >&2
+        return 1
+    fi
+    echo "monolith-router: NAT up — LAN $LAN ($cidr) -> WAN $WAN (masquerade)"
+}
+
+cmd_down() {
+    nft delete table ip "$NFT_TABLE" 2>/dev/null || true
+    echo 0 > "$FORWARD_FILE" 2>/dev/null || true
+    echo "monolith-router: NAT down"
+}
+
+cmd_status() {
+    printf 'ip_forward: %s\n' "$(cat "$FORWARD_FILE" 2>/dev/null || echo '?')"
+    echo '--- interfaces ---'
+    for i in $(list_ifaces); do
+        printf '  %s: %s\n' "$i" "$(ip -4 addr show dev "$i" 2>/dev/null | awk '/inet /{print $2}' | tr '\n' ' ')"
+    done
+    echo '--- nft ruleset ---'
+    nft list table ip "$NFT_TABLE" 2>/dev/null || echo "  (no $NFT_TABLE table)"
+}
+
+case "${1:-}" in
+    down)   cmd_down ;;
+    status) cmd_status ;;
+    up)     shift; cmd_up "$@" ;;
+    "")     cmd_up ;;
+    *)      cmd_up "$@" ;;   # bare: <wan> <lan> [<lan-cidr>]
+esac

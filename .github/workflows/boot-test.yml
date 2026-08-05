@@ -519,3 +519,68 @@ jobs:
           path: output/boot-test-nic-${{ matrix.nic_model }}.log
           retention-days: 14
           if-no-files-found: warn
+
+  # Two-node NAT boot test: a router guest (monolith-router on eth0=WAN/user,
+  # eth1=LAN/socket) and a client guest on the same LAN socket segment. The
+  # client curls a host http.server THROUGH the router's masquerade — proving
+  # the whole netfilter/conntrack/NAT/nftables chain (Tasks 1-4) end to end —
+  # then a negative control tears NAT down and confirms the reach dies. See
+  # run_nat in scripts/boot-test.py for the full orchestration.
+  nat-router:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from S3
+        run: |
+          mkdir -p output
+          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
+            "output/themonolith-${{ inputs.build-version }}.iso"
+
+      - name: Start host http.server (the client reaches this through NAT)
+        run: |
+          mkdir -p /tmp/natsrv && echo NAT_OK_marker > /tmp/natsrv/probe.txt
+          ( cd /tmp/natsrv && python3 -m http.server 8000 --bind 0.0.0.0 ) &
+          echo "HTTP_PID=$!" >> "$GITHUB_ENV"
+          sleep 2
+
+      - name: Boot test — two-node NAT (router + client)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode nat \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-nat.log"
+
+      - name: Stop host http.server
+        if: always()
+        run: kill "${HTTP_PID}" 2>/dev/null || true
+
+      - name: Upload serial console logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-nat-${{ github.run_id }}
+          path: output/boot-test-nat.log*
+          retention-days: 14
+          if-no-files-found: warn

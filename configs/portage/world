@@ -68,6 +68,9 @@ sys-apps/net-tools
 net-misc/iputils
 net-misc/dhcpcd
 
+# Firewall / NAT (see monolith-router; SP2)
+net-firewall/nftables
+
 # Remote access
 net-misc/dropbear
 
