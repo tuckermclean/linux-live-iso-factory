@@ -61,7 +61,7 @@ cmd_up() {
         ip addr add "$cidr" dev "$LAN" 2>/dev/null || true
     fi
     nft delete table ip "$NFT_TABLE" 2>/dev/null || true
-    nft -f - <<NFT
+    if ! nft -f - <<NFT
 table ip $NFT_TABLE {
     chain postrouting {
         type nat hook postrouting priority srcnat;
@@ -74,6 +74,10 @@ table ip $NFT_TABLE {
     }
 }
 NFT
+    then
+        echo "monolith-router: nft apply failed" >&2
+        return 1
+    fi
     echo "monolith-router: NAT up — LAN $LAN ($cidr) -> WAN $WAN (masquerade)"
 }
 

@@ -236,12 +236,13 @@ jobs:
             echo "::error::Module directory not found: $MODDIR"
             exit 1
           fi
-          # Representative set of the new `=m` NIC symbols (configs/kernel.config):
-          # the risky ISA drivers first, then the PCI zoo.
+          # Representative set of the new `=m` NIC and netfilter symbols
+          # (configs/kernel.config): the risky ISA drivers first, then the PCI
+          # zoo, then the netfilter/nftables modules.
           MODULES=(
             ne wd smc-ultra lance 3c509
             pcnet32 tulip via-rhine natsemi sis900
-            e1000e igb sky2 r8169 vmxnet3
+            e1000 e1000e igb sky2 r8169 vmxnet3
             nf_conntrack nf_nat nf_tables nft_ct nft_nat nft_masq nf_defrag_ipv4
           )
           MISSING=()

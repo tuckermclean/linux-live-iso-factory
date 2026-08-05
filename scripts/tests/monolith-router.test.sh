@@ -18,7 +18,10 @@ setup() {
     cat > "$BIN/nft" <<'STUB'
 #!/bin/sh
 echo "nft $*" >> "$NFTLOG"
-[ "$1" = "-f" ] && [ "$2" = "-" ] && cat >> "$NFTLOG"
+if [ "$1" = "-f" ] && [ "$2" = "-" ]; then
+    cat >> "$NFTLOG"
+    [ -n "${NFT_FAIL:-}" ] && exit 1
+fi
 exit 0
 STUB
     # stub ip: log argv; answer `route show default` from $DEFROUTE_DEV; emit no
@@ -67,6 +70,11 @@ teardown
 setup; out=$(sh "$SCRIPT" status 2>&1)
 has 'ip_forward' "$out" "status shows ip_forward"
 has 'list table ip monolith_router' "$(cat "$NFTLOG")" "status queries the table"
+teardown
+# 8. nft apply failure -> up reports error, non-zero exit
+setup; out=$(NFT_FAIL=1 sh "$SCRIPT" up eth0 eth1 2>&1); rc=$?
+has 'nft apply failed' "$out" "nft failure surfaced"
+[ "$rc" -ne 0 ] && echo "  ok: nft-fail exits non-zero" || { echo "  FAIL: exit=$rc"; fails=$((fails+1)); }
 teardown
 
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
