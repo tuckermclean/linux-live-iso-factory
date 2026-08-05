@@ -181,3 +181,10 @@ allowlist:
   # the skip/unread tracking files are not owned by any package.
   - var/lib/gentoo/news/news-gentoo.skip
   - var/lib/gentoo/news/news-gentoo.unread
+
+  # ── nftables service state (SP2) — net-firewall/nftables pkg_postinst / its
+  # OpenRC service create /var/lib/nftables/rules-save (ruleset persistence for
+  # the `nftables` service, which we do NOT use — monolith-router drives nft
+  # directly). Not in the package CONTENTS. Pending the monolith-base sweep.
+  - var/lib/nftables
+  - var/lib/nftables/rules-save
