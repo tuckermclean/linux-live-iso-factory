@@ -60,9 +60,9 @@ cmd_up() {
     if ! ip -4 addr show dev "$LAN" 2>/dev/null | grep -q 'inet '; then
         ip addr add "$cidr" dev "$LAN" 2>/dev/null || true
     fi
-    nft delete table inet "$NFT_TABLE" 2>/dev/null || true
+    nft delete table ip "$NFT_TABLE" 2>/dev/null || true
     nft -f - <<NFT
-table inet $NFT_TABLE {
+table ip $NFT_TABLE {
     chain postrouting {
         type nat hook postrouting priority srcnat;
         oifname "$WAN" masquerade
@@ -78,7 +78,7 @@ NFT
 }
 
 cmd_down() {
-    nft delete table inet "$NFT_TABLE" 2>/dev/null || true
+    nft delete table ip "$NFT_TABLE" 2>/dev/null || true
     echo 0 > "$FORWARD_FILE" 2>/dev/null || true
     echo "monolith-router: NAT down"
 }
@@ -90,7 +90,7 @@ cmd_status() {
         printf '  %s: %s\n' "$i" "$(ip -4 addr show dev "$i" 2>/dev/null | awk '/inet /{print $2}' | tr '\n' ' ')"
     done
     echo '--- nft ruleset ---'
-    nft list table inet "$NFT_TABLE" 2>/dev/null || echo "  (no $NFT_TABLE table)"
+    nft list table ip "$NFT_TABLE" 2>/dev/null || echo "  (no $NFT_TABLE table)"
 }
 
 case "${1:-}" in

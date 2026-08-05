@@ -60,13 +60,13 @@ has 'multiple candidate' "$out" "ambiguous auto errors"
 teardown
 # 6. down: deletes table, ip_forward=0
 setup; echo 1 > "$MONOLITH_IP_FORWARD"; out=$(sh "$SCRIPT" down 2>&1)
-has 'delete table inet monolith_router' "$(cat "$NFTLOG")" "down deletes table"
+has 'delete table ip monolith_router' "$(cat "$NFTLOG")" "down deletes table"
 has '0' "$(cat "$MONOLITH_IP_FORWARD")" "down disables ip_forward"
 teardown
 # 7. status: shows ip_forward + queries the table
 setup; out=$(sh "$SCRIPT" status 2>&1)
 has 'ip_forward' "$out" "status shows ip_forward"
-has 'list table inet monolith_router' "$(cat "$NFTLOG")" "status queries the table"
+has 'list table ip monolith_router' "$(cat "$NFTLOG")" "status queries the table"
 teardown
 
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
