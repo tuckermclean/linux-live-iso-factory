@@ -1,3 +1,7 @@
-# Keep nftables lean for the static i486-musl image: no JSON output, no
-# python bindings, no iptables-compat. readline for the interactive CLI.
-net-firewall/nftables -json -python -xtables readline
+# Keep nftables lean for the static i486-musl image: no JSON, no python
+# bindings, no iptables-compat, and NO readline. We only ever drive nft in
+# batch mode (nft -f -, nft list/add/delete — see monolith-router), never the
+# interactive line-editing CLI, and static `-lreadline` fails to link here
+# (readline needs -ltinfo, which its naive configure probe doesn't add).
+# -readline -> --without-cli, which keeps every batch feature we use.
+net-firewall/nftables -json -python -xtables -readline
