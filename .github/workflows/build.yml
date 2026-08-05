@@ -242,6 +242,7 @@ jobs:
             ne wd smc-ultra lance 3c509
             pcnet32 tulip via-rhine natsemi sis900
             e1000e igb sky2 r8169 vmxnet3
+            nf_conntrack nf_nat nf_tables nft_ct nft_nat nft_masq nf_defrag_ipv4
           )
           MISSING=()
           for m in "${MODULES[@]}"; do
