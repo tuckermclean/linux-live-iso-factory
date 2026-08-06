@@ -1,0 +1,6 @@
+# dnsmasq for the static i486-musl image: DHCP+DNS for the LAN (see
+# monolith-router --dhcp). No dbus IPC surface, no lease-change script exec
+# surface, no NLS, IPv4-only (project-wide), no DNSSEC (needs a trust anchor;
+# deferred), no TFTP (netboot is deferred behind persistence + an initrd-mod
+# selection UI). DHCP and the DNS forwarder/cache are built in by default.
+net-dns/dnsmasq -dbus -script -nls -ipv6 -dnssec -tftp
