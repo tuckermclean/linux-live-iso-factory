@@ -1105,11 +1105,14 @@ def run_nat(child, args):
 
         drain_router()
         run_check(client, "client hostname", "hostname natclient", exit_code_only())
-        # Lease from the box's dnsmasq (one-shot, bounded). dhcpcd writes the
-        # box as gateway + DNS into the client's resolv.conf.
+        # Lease from the box's dnsmasq (one-shot, bounded). `dhcpcd -1` exits 0
+        # once configured with a lease and non-zero on timeout/failure, so the
+        # exit code — not a log-string match — is the reliable success signal
+        # (dhcpcd's own "leased ..." line goes to syslog, not this shell's
+        # stdout). The leased-address-in-range check below corroborates it.
         results.append(("client: DHCP lease from the box",
                         *run_check(client, "dhcpcd", "dhcpcd -1 -t 30 eth0",
-                                   contains("leased"), timeout=45)))
+                                   exit_code_only(), timeout=45)))
 
         drain_router()
         # Lease is inside the dnsmasq range 192.168.99.50-200.
@@ -1118,11 +1121,14 @@ def run_nat(child, args):
                                    "ip -4 -o addr show dev eth0 | grep -oE '192\\.168\\.99\\.[0-9]+'",
                                    regex_matches(r"192\.168\.99\.(5[0-9]|[6-9][0-9]|1[0-9][0-9]|200)"),
                                    timeout=15)))
-        # DNS through the box: resolve the router's own registered name. Proves
-        # the client's resolv.conf points at the box and the .home.arpa zone works.
+        # DNS through the box: resolve the router's own registered name against
+        # the box's dnsmasq. The GNU booted rootfs has no standalone `nslookup`
+        # (bind-tools isn't installed); we call busybox's nslookup applet
+        # (CONFIG_NSLOOKUP=y) explicitly — `busybox nslookup HOST SERVER` queries
+        # SERVER directly, proving the .home.arpa zone resolves through the box.
         results.append(("client: resolves monolith.home.arpa via the box",
                         *run_check(client, "nslookup",
-                                   "nslookup monolith.home.arpa 192.168.99.1",
+                                   "busybox nslookup monolith.home.arpa 192.168.99.1",
                                    contains("192.168.99.1"), timeout=20)))
 
         # DHCP-hostname → DNS zone registration: the client sent its hostname
@@ -1133,7 +1139,7 @@ def run_nat(child, args):
         # line (.1 is outside .50-.200), so only a genuine leased answer passes.
         results.append(("client: natclient.home.arpa resolves to the leased address",
                         *run_check(client, "nslookup natclient",
-                                   "nslookup natclient.home.arpa 192.168.99.1",
+                                   "busybox nslookup natclient.home.arpa 192.168.99.1",
                                    regex_matches(r"192\.168\.99\.(5[0-9]|[6-9][0-9]|1[0-9][0-9]|200)"),
                                    timeout=20)))
 
