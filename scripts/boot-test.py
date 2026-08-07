@@ -1104,17 +1104,23 @@ def run_nat(child, args):
                 run_check(node, f"{label}-diag: {d}", d, exit_code_only(), timeout=15)
 
         drain_router()
-        run_check(client, "client hostname", "hostname natclient", exit_code_only())
-        # Lease from the box's dnsmasq (one-shot, bounded). `-h natclient` makes
-        # dhcpcd send the hostname (DHCP option 12) — dhcpcd does NOT send it by
-        # default, so without this the box has no name to register and the
-        # natclient.home.arpa check below (the DHCP-hostname→DNS-registration
-        # proof) fails. `dhcpcd -1` exits 0 once configured with a lease and
-        # non-zero on timeout/failure, so the exit code — not a log-string match
-        # — is the reliable success signal (dhcpcd's own "leased ..." line goes
-        # to syslog, not this shell's stdout). The in-range check corroborates.
+        # Set the client's name via busybox (the GNU rootfs has no standalone
+        # `hostname` command; busybox is built CONFIG_HOSTNAME=y).
+        run_check(client, "client hostname", "busybox hostname natclient", exit_code_only())
+        # Lease from the box's dnsmasq (one-shot, bounded). `--hostname=natclient`
+        # makes dhcpcd send the hostname (DHCP option 12) — dhcpcd does NOT send
+        # it by default, and its `-h` short form takes an OPTIONAL argument (so
+        # `-h natclient` does NOT bind the value), which is why an earlier attempt
+        # left the lease hostname empty ("*"). The explicit long `--hostname=`
+        # form is unambiguous. Without a name sent, dnsmasq has nothing to
+        # register and the natclient.home.arpa check below (the DHCP-hostname →
+        # DNS-registration proof) fails. `dhcpcd -1` exits 0 once configured with
+        # a lease and non-zero on timeout/failure, so the exit code — not a
+        # log-string match — is the reliable success signal (dhcpcd's own
+        # "leased ..." line goes to syslog, not this shell's stdout). The
+        # in-range check corroborates.
         results.append(("client: DHCP lease from the box",
-                        *run_check(client, "dhcpcd", "dhcpcd -1 -t 30 -h natclient eth0",
+                        *run_check(client, "dhcpcd", "dhcpcd -1 -t 30 --hostname=natclient eth0",
                                    exit_code_only(), timeout=45)))
 
         drain_router()
@@ -1134,24 +1140,13 @@ def run_nat(child, args):
                                    "busybox nslookup monolith.home.arpa 192.168.99.1",
                                    contains("192.168.99.1"), timeout=20)))
 
-        # DIAGNOSTIC (SP3): natclient.home.arpa isn't resolving even with
-        # `dhcpcd -h natclient`. Gather evidence (non-failing) on both sides
-        # before theorising further: does the bare name resolve (expand-hosts
-        # not appending the domain?), what did dhcpcd write to resolv.conf, what
-        # is dnsmasq's actual cmdline + generated conf, and does the lease file
-        # carry the client hostname at all?
+        # DIAGNOSTIC (SP3, kept until natclient resolves): the decisive evidence
+        # is the router lease file's hostname field — "*" means the client sent
+        # no name (nothing for dnsmasq to register), a real name means the
+        # registration path should work.
         drain_router()
-        _diag(client, "client-dns",
-              ["cat /etc/resolv.conf",
-               "hostname",
-               "busybox nslookup natclient 192.168.99.1",
-               "busybox nslookup natclient.home.arpa 192.168.99.1"])
-        _diag(child, "router-dnsmasq",
-              ["ps w",
-               "find /var /run /etc -name '*.leases' 2>/dev/null",
-               "cat /var/lib/misc/dnsmasq.leases 2>/dev/null || true",
-               "cat /var/lib/dnsmasq/dnsmasq.leases 2>/dev/null || true",
-               "cat /run/monolith-router/dnsmasq.conf"])
+        _diag(child, "router-leases",
+              ["cat /var/lib/misc/dnsmasq.leases 2>/dev/null || true"])
         # DHCP-hostname → DNS zone registration: the client sent its hostname
         # (DHCP option 12) in the lease, so dnsmasq (expand-hosts + domain=home.arpa)
         # must have registered natclient.home.arpa → the client's leased address.
