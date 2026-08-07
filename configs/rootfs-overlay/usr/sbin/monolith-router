@@ -53,6 +53,12 @@ resolve_ifaces() {
 valid_cidr() { echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'; }
 
 valid_domain() {
+    # Reject any char outside the DNS label set — this also rejects embedded
+    # newlines/whitespace, closing a dnsmasq.conf injection via --domain — then
+    # validate label structure.
+    case "$1" in
+        ''|*[!A-Za-z0-9.-]*) return 1 ;;
+    esac
     echo "$1" | grep -qE '^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$'
 }
 
@@ -69,13 +75,15 @@ derive_dhcp_range() {
 # One-time-per-boot lecture. Fails closed when non-interactive without --yes.
 dhcp_gate() {
     _lan="$1"; _yes="$2"
-    [ -f "$RUNDIR/dhcp-lectured" ] && return 0
-    cat >&2 <<LEC
+    # Lecture text is shown once per boot (cached), but consent is enforced EVERY time.
+    if [ ! -f "$RUNDIR/dhcp-lectured" ]; then
+        cat >&2 <<LEC
 monolith-router: enabling a DHCP server on $_lan. It will hand out IP leases
 and DNS to everything on that segment. Do NOT do this on a network that already
 has a DHCP server (office/dorm/home ISP router) — you will break it. Only
 proceed if THIS box owns the LAN.
 LEC
+    fi
     if [ -n "$_yes" ]; then
         :
     elif [ -t 0 ]; then
@@ -129,7 +137,7 @@ cmd_up() {
         case "$1" in
             --dhcp)            _want_dhcp=1 ;;
             --yes|--i-understand) _yes=1 ;;
-            --domain)          shift; _domain="${1:-}" ;;
+            --domain)          if [ $# -ge 2 ]; then shift; _domain="$1"; else _domain=""; fi ;;
             --domain=*)        _domain="${1#--domain=}" ;;
             --*)               echo "monolith-router: unknown option '$1'" >&2; return 1 ;;
             *)

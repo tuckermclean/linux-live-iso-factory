@@ -162,5 +162,19 @@ out=$(sh "$SCRIPT" up eth0 eth1 --domain 'bad domain' --dhcp --yes </dev/null 2>
 has 'invalid' "$out" "invalid domain surfaced"
 [ "$rc" -ne 0 ] && echo "  ok: invalid domain exits non-zero" || { echo "  FAIL: rc=$rc"; fails=$((fails+1)); }
 teardown
+# 18. config-injection guard: a newline-bearing --domain is rejected, dnsmasq not started
+setup
+out=$(sh "$SCRIPT" up eth0 eth1 --domain "$(printf 'dhcp-range=1.2.3.4,1.2.3.9,1h\nhome')" --dhcp --yes </dev/null 2>&1); rc=$?
+[ "$rc" -ne 0 ] && echo "  ok: newline --domain rejected" || { echo "  FAIL: rc=$rc"; fails=$((fails+1)); }
+if [ -s "$DNSMASQLOG" ]; then echo "  FAIL: dnsmasq started on injected domain"; fails=$((fails+1)); else echo "  ok: dnsmasq not started on injected domain"; fi
+teardown
+# 19. consent enforced every time: even with the boot lecture flag already set, a
+#     non-interactive --dhcp without --yes still fails closed (starts nothing)
+setup
+mkdir -p "$MONOLITH_RUN_DIR"; : > "$MONOLITH_RUN_DIR/dhcp-lectured"
+out=$(sh "$SCRIPT" up eth0 eth1 --dhcp </dev/null 2>&1); rc=$?
+[ "$rc" -ne 0 ] && echo "  ok: consent still enforced after lecture cached" || { echo "  FAIL: rc=$rc"; fails=$((fails+1)); }
+if [ -s "$DNSMASQLOG" ]; then echo "  FAIL: dnsmasq started without consent (post-lecture)"; fails=$((fails+1)); else echo "  ok: dnsmasq not started (post-lecture, no --yes)"; fi
+teardown
 
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
