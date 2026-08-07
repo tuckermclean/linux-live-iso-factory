@@ -191,7 +191,16 @@ NFT
     fi
 }
 
+stop_dhcp() {
+    if [ -f "$RUNDIR/dnsmasq.pid" ]; then
+        kill "$(cat "$RUNDIR/dnsmasq.pid")" 2>/dev/null || true
+    fi
+    rm -f "$RUNDIR/dnsmasq.conf" "$RUNDIR/dnsmasq.pid" "$RUNDIR/dhcp-lectured" 2>/dev/null || true
+    rmdir "$RUNDIR" 2>/dev/null || true
+}
+
 cmd_down() {
+    stop_dhcp
     nft delete table ip "$NFT_TABLE" 2>/dev/null || true
     echo 0 > "$FORWARD_FILE" 2>/dev/null || true
     echo "monolith-router: NAT down"
@@ -203,6 +212,12 @@ cmd_status() {
     for i in $(list_ifaces); do
         printf '  %s: %s\n' "$i" "$(ip -4 addr show dev "$i" 2>/dev/null | awk '/inet /{print $2}' | tr '\n' ' ')"
     done
+    echo '--- dhcp/dns (dnsmasq) ---'
+    if [ -f "$RUNDIR/dnsmasq.pid" ] && kill -0 "$(cat "$RUNDIR/dnsmasq.pid" 2>/dev/null)" 2>/dev/null; then
+        echo "  running (pid $(cat "$RUNDIR/dnsmasq.pid"))"
+    else
+        echo "  (not running)"
+    fi
     echo '--- nft ruleset ---'
     nft list table ip "$NFT_TABLE" 2>/dev/null || echo "  (no $NFT_TABLE table)"
 }

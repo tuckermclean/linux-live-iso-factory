@@ -177,4 +177,28 @@ out=$(sh "$SCRIPT" up eth0 eth1 --dhcp </dev/null 2>&1); rc=$?
 if [ -s "$DNSMASQLOG" ]; then echo "  FAIL: dnsmasq started without consent (post-lecture)"; fails=$((fails+1)); else echo "  ok: dnsmasq not started (post-lecture, no --yes)"; fi
 teardown
 
+# 20. down stops a running dnsmasq (via pidfile) and clears the run dir
+setup
+mkdir -p "$MONOLITH_RUN_DIR"
+sleep 30 & _sp=$!; echo "$_sp" > "$MONOLITH_RUN_DIR/dnsmasq.pid"
+: > "$MONOLITH_RUN_DIR/dnsmasq.conf"
+out=$(sh "$SCRIPT" down 2>&1)
+sleep 1
+if kill -0 "$_sp" 2>/dev/null; then echo "  FAIL: dnsmasq pid still alive after down"; fails=$((fails+1)); kill "$_sp" 2>/dev/null; else echo "  ok: down killed dnsmasq"; fi
+[ -f "$MONOLITH_RUN_DIR/dnsmasq.conf" ] && { echo "  FAIL: run dir not cleared"; fails=$((fails+1)); } || echo "  ok: down cleared run dir"
+teardown
+# 21. status reports dnsmasq running when the pid is alive
+setup
+mkdir -p "$MONOLITH_RUN_DIR"
+sleep 30 & _sp=$!; echo "$_sp" > "$MONOLITH_RUN_DIR/dnsmasq.pid"
+out=$(sh "$SCRIPT" status 2>&1)
+has 'running' "$out" "status shows dnsmasq running"
+kill "$_sp" 2>/dev/null
+teardown
+# 22. status reports not-running when there is no pidfile
+setup
+out=$(sh "$SCRIPT" status 2>&1)
+has 'not running' "$out" "status shows dnsmasq not running"
+teardown
+
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
