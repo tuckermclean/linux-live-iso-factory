@@ -1134,6 +1134,24 @@ def run_nat(child, args):
                                    "busybox nslookup monolith.home.arpa 192.168.99.1",
                                    contains("192.168.99.1"), timeout=20)))
 
+        # DIAGNOSTIC (SP3): natclient.home.arpa isn't resolving even with
+        # `dhcpcd -h natclient`. Gather evidence (non-failing) on both sides
+        # before theorising further: does the bare name resolve (expand-hosts
+        # not appending the domain?), what did dhcpcd write to resolv.conf, what
+        # is dnsmasq's actual cmdline + generated conf, and does the lease file
+        # carry the client hostname at all?
+        drain_router()
+        _diag(client, "client-dns",
+              ["cat /etc/resolv.conf",
+               "hostname",
+               "busybox nslookup natclient 192.168.99.1",
+               "busybox nslookup natclient.home.arpa 192.168.99.1"])
+        _diag(child, "router-dnsmasq",
+              ["ps w",
+               "find /var /run /etc -name '*.leases' 2>/dev/null",
+               "cat /var/lib/misc/dnsmasq.leases 2>/dev/null || true",
+               "cat /var/lib/dnsmasq/dnsmasq.leases 2>/dev/null || true",
+               "cat /run/monolith-router/dnsmasq.conf"])
         # DHCP-hostname → DNS zone registration: the client sent its hostname
         # (DHCP option 12) in the lease, so dnsmasq (expand-hosts + domain=home.arpa)
         # must have registered natclient.home.arpa → the client's leased address.
