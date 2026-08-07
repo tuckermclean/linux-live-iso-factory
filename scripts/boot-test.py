@@ -1107,18 +1107,19 @@ def run_nat(child, args):
         # Set the client's name via busybox (the GNU rootfs has no standalone
         # `hostname` command; busybox is built CONFIG_HOSTNAME=y).
         run_check(client, "client hostname", "busybox hostname natclient", exit_code_only())
-        # Lease from the box's dnsmasq (one-shot, bounded). `--hostname=natclient`
-        # makes dhcpcd send the hostname (DHCP option 12) — dhcpcd does NOT send
-        # it by default, and its `-h` short form takes an OPTIONAL argument (so
-        # `-h natclient` does NOT bind the value), which is why an earlier attempt
-        # left the lease hostname empty ("*"). The explicit long `--hostname=`
-        # form is unambiguous. Without a name sent, dnsmasq has nothing to
-        # register and the natclient.home.arpa check below (the DHCP-hostname →
-        # DNS-registration proof) fails. `dhcpcd -1` exits 0 once configured with
-        # a lease and non-zero on timeout/failure, so the exit code — not a
-        # log-string match — is the reliable success signal (dhcpcd's own
-        # "leased ..." line goes to syslog, not this shell's stdout). The
-        # in-range check corroborates.
+        # CRITICAL: a dhcpcd daemon is ALREADY running from boot (S40network runs
+        # `dhcpcd -b eth0`) and it leased at boot WITHOUT a hostname. Re-invoking
+        # `dhcpcd ... --hostname=natclient` then only sends a control command to
+        # that running daemon ("sending commands to dhcpcd process") and the flag
+        # is inert — which is why the lease hostname stayed "*". Stop the boot
+        # daemon first, then start a FRESH one-shot client that actually sends the
+        # hostname (DHCP option 12). dhcpcd honors --hostname when run as a fresh
+        # manual client.
+        run_check(client, "stop boot dhcpcd", "dhcpcd -x 2>/dev/null; dhcpcd -k eth0 2>/dev/null; sleep 1; true",
+                  exit_code_only(), timeout=20)
+        # Fresh lease WITH the hostname. `dhcpcd -1` exits 0 once configured with a
+        # lease and non-zero on timeout/failure, so the exit code — not a log
+        # string — is the reliable success signal. The in-range check corroborates.
         results.append(("client: DHCP lease from the box",
                         *run_check(client, "dhcpcd", "dhcpcd -1 -t 30 --hostname=natclient eth0",
                                    exit_code_only(), timeout=45)))
@@ -1147,6 +1148,8 @@ def run_nat(child, args):
         drain_router()
         _diag(child, "router-leases",
               ["cat /var/lib/misc/dnsmasq.leases 2>/dev/null || true"])
+        _diag(client, "client-dhcpcd-conf",
+              ["grep -v '^#' /etc/dhcpcd.conf 2>/dev/null | grep -vE '^[[:space:]]*$' || echo '(no dhcpcd.conf)'"])
         # DHCP-hostname → DNS zone registration: the client sent its hostname
         # (DHCP option 12) in the lease, so dnsmasq (expand-hosts + domain=home.arpa)
         # must have registered natclient.home.arpa → the client's leased address.
