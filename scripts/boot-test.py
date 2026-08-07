@@ -1125,6 +1125,18 @@ def run_nat(child, args):
                                    "nslookup monolith.home.arpa 192.168.99.1",
                                    contains("192.168.99.1"), timeout=20)))
 
+        # DHCP-hostname → DNS zone registration: the client sent its hostname
+        # (DHCP option 12) in the lease, so dnsmasq (expand-hosts + domain=home.arpa)
+        # must have registered natclient.home.arpa → the client's leased address.
+        # This is the actual "DHCP client names auto-populate the zone" proof. The
+        # lease-range regex CANNOT be satisfied by nslookup's own "Server: 192.168.99.1"
+        # line (.1 is outside .50-.200), so only a genuine leased answer passes.
+        results.append(("client: natclient.home.arpa resolves to the leased address",
+                        *run_check(client, "nslookup natclient",
+                                   "nslookup natclient.home.arpa 192.168.99.1",
+                                   regex_matches(r"192\.168\.99\.(5[0-9]|[6-9][0-9]|1[0-9][0-9]|200)"),
+                                   timeout=20)))
+
         _diag(child, "router-pre",
               ["ip -o addr show dev eth1", "ip -o link show dev eth1", "cat /proc/net/dev"])
         _diag(client, "client",

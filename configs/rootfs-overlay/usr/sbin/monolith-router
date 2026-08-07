@@ -139,7 +139,7 @@ cmd_up() {
             --yes|--i-understand) _yes=1 ;;
             --domain)          if [ $# -ge 2 ]; then shift; _domain="$1"; else _domain=""; fi ;;
             --domain=*)        _domain="${1#--domain=}" ;;
-            --*)               echo "monolith-router: unknown option '$1'" >&2; return 1 ;;
+            -*)                echo "monolith-router: unknown option '$1'" >&2; return 1 ;;
             *)
                 _np=$((_np+1))
                 case $_np in

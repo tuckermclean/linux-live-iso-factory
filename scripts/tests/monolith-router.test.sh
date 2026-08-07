@@ -201,4 +201,11 @@ out=$(sh "$SCRIPT" status 2>&1)
 has 'not running' "$out" "status shows dnsmasq not running"
 teardown
 
+# 23. an unknown single-dash flag errors instead of being taken as a positional
+setup
+out=$(sh "$SCRIPT" up -x eth0 eth1 </dev/null 2>&1); rc=$?
+has 'unknown option' "$out" "single-dash unknown flag rejected"
+[ "$rc" -ne 0 ] && echo "  ok: unknown flag exits non-zero" || { echo "  FAIL: rc=$rc"; fails=$((fails+1)); }
+teardown
+
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
