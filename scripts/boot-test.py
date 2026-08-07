@@ -1105,13 +1105,16 @@ def run_nat(child, args):
 
         drain_router()
         run_check(client, "client hostname", "hostname natclient", exit_code_only())
-        # Lease from the box's dnsmasq (one-shot, bounded). `dhcpcd -1` exits 0
-        # once configured with a lease and non-zero on timeout/failure, so the
-        # exit code — not a log-string match — is the reliable success signal
-        # (dhcpcd's own "leased ..." line goes to syslog, not this shell's
-        # stdout). The leased-address-in-range check below corroborates it.
+        # Lease from the box's dnsmasq (one-shot, bounded). `-h natclient` makes
+        # dhcpcd send the hostname (DHCP option 12) — dhcpcd does NOT send it by
+        # default, so without this the box has no name to register and the
+        # natclient.home.arpa check below (the DHCP-hostname→DNS-registration
+        # proof) fails. `dhcpcd -1` exits 0 once configured with a lease and
+        # non-zero on timeout/failure, so the exit code — not a log-string match
+        # — is the reliable success signal (dhcpcd's own "leased ..." line goes
+        # to syslog, not this shell's stdout). The in-range check corroborates.
         results.append(("client: DHCP lease from the box",
-                        *run_check(client, "dhcpcd", "dhcpcd -1 -t 30 eth0",
+                        *run_check(client, "dhcpcd", "dhcpcd -1 -t 30 -h natclient eth0",
                                    exit_code_only(), timeout=45)))
 
         drain_router()
