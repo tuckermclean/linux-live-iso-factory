@@ -1046,9 +1046,10 @@ def run_nat(child, args):
     results = []
     _boot_isolinux_to_shell(child, args)
     # Router: bring NAT up (eth0=WAN/user, eth1=LAN/socket), assert it took.
-    results.append(("router: monolith-router up",
-                    *run_check(child, "monolith-router eth0 eth1", "monolith-router eth0 eth1",
-                               contains("NAT up"), timeout=60)))
+    results.append(("router: monolith-router up --dhcp",
+                    *run_check(child, "monolith-router eth0 eth1 --dhcp --yes",
+                               "monolith-router eth0 eth1 --dhcp --yes",
+                               contains("DHCP+DNS up"), timeout=60)))
     results.append(("router: nft masquerade present",
                     *run_check(child, "nft ruleset", "nft list ruleset",
                                contains("masquerade"))))
@@ -1060,6 +1061,16 @@ def run_nat(child, args):
                     *run_check(child, "ip_forward",
                                "echo ipfwd=$(cat /proc/sys/net/ipv4/ip_forward)",
                                contains("ipfwd=1"))))
+    # Secure by default: dnsmasq must be bound to the LAN address only, never
+    # the WAN address or a wildcard. netstat (net-tools) is always present.
+    results.append(("router: dnsmasq bound to LAN only",
+                    *run_check(child, "dnsmasq bind",
+                               "netstat -lnu | grep ':53 ' || true",
+                               contains("192.168.99.1:53"))))
+    results.append(("router: dnsmasq NOT on wildcard",
+                    *run_check(child, "dnsmasq no wildcard",
+                               "echo bind=$(netstat -lnu | grep -c '0.0.0.0:53')",
+                               contains("bind=0"))))
 
     client = None
     try:
@@ -1068,11 +1079,7 @@ def run_nat(child, args):
         if args.log_file:
             client.logfile = open(args.log_file + ".client", "w", encoding="utf-8", errors="replace")
         _boot_isolinux_to_shell(client, args)
-        # Client: static LAN config, default route via the router.
-        for cmd in ["ip addr add 192.168.99.2/24 dev eth0",
-                    "ip link set eth0 up",
-                    "ip route add default via 192.168.99.1"]:
-            run_check(client, cmd, cmd, exit_code_only())
+
         # Defensive: drain the router child's serial so its pexpect pty can't
         # back up while we're busy driving the client. This is hygiene, NOT the
         # historical nat-router flake — that was a monolith-router bug (it skipped
@@ -1095,6 +1102,29 @@ def run_nat(child, args):
         def _diag(node, label, cmds):
             for d in cmds:
                 run_check(node, f"{label}-diag: {d}", d, exit_code_only(), timeout=15)
+
+        drain_router()
+        run_check(client, "client hostname", "hostname natclient", exit_code_only())
+        # Lease from the box's dnsmasq (one-shot, bounded). dhcpcd writes the
+        # box as gateway + DNS into the client's resolv.conf.
+        results.append(("client: DHCP lease from the box",
+                        *run_check(client, "dhcpcd", "dhcpcd -1 -t 30 eth0",
+                                   contains("leased"), timeout=45)))
+
+        drain_router()
+        # Lease is inside the dnsmasq range 192.168.99.50-200.
+        results.append(("client: leased address in DHCP range",
+                        *run_check(client, "client addr",
+                                   "ip -4 -o addr show dev eth0 | grep -oE '192\\.168\\.99\\.[0-9]+'",
+                                   regex_matches(r"192\.168\.99\.(5[0-9]|[6-9][0-9]|1[0-9][0-9]|200)"),
+                                   timeout=15)))
+        # DNS through the box: resolve the router's own registered name. Proves
+        # the client's resolv.conf points at the box and the .home.arpa zone works.
+        results.append(("client: resolves monolith.home.arpa via the box",
+                        *run_check(client, "nslookup",
+                                   "nslookup monolith.home.arpa 192.168.99.1",
+                                   contains("192.168.99.1"), timeout=20)))
+
         _diag(child, "router-pre",
               ["ip -o addr show dev eth1", "ip -o link show dev eth1", "cat /proc/net/dev"])
         _diag(client, "client",
