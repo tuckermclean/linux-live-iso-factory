@@ -267,10 +267,6 @@ jobs:
         # so the next build's purge step sees a match and reuses it.
         run: bash scripts/savedconfig-cache.sh mark "${{ secrets.S3_BUCKET }}" "$BUILD_EPOCH"
 
-      - name: Save build logs to S3
-        if: always()
-        run: aws s3 sync output/logs/ s3://${{ secrets.S3_BUCKET }}/builds/$BUILD_VERSION/logs/
-
       - name: Determine whether to publish 'latest' pointers
         # Only master and tag builds overwrite the public themonolith.iso/.squashfs/
         # .vmlinuz/.initrd "latest" pointers. Branch and workflow_dispatch validation
@@ -285,15 +281,17 @@ jobs:
             echo "==> Validation build (ref: $GITHUB_REF): versioned artifacts only, 'latest' preserved."
           fi
 
+      - name: Save build logs to S3
+        if: env.PUBLISH_LATEST == 'true'
+        run: aws s3 sync output/logs/ s3://${{ secrets.S3_BUCKET }}/builds/$BUILD_VERSION/logs/
+
       - name: Save kernel image to S3
-        if: always()
+        if: env.PUBLISH_LATEST == 'true'
         run: |
           if [ -f output/vmlinuz ]; then
             cp output/vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
             aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz
-            if [ "$PUBLISH_LATEST" = "true" ]; then
-              aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
-            fi
+            aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
           fi
 
       - name: Build rootfs
@@ -306,23 +304,19 @@ jobs:
           key: ci-artifacts-${{ github.run_id }}-squashfs
 
       - name: Save squashfs to S3
-        if: always()
+        if: env.PUBLISH_LATEST == 'true'
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.squashfs ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs
-            if [ "$PUBLISH_LATEST" = "true" ]; then
-              aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
-            fi
+            aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
           fi
 
       - name: Save initrd to S3
-        if: always()
+        if: env.PUBLISH_LATEST == 'true'
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.initrd ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd
-            if [ "$PUBLISH_LATEST" = "true" ]; then
-              aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
-            fi
+            aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
           fi
 
       - name: Build ISO
@@ -335,14 +329,11 @@ jobs:
           key: ci-artifacts-${{ github.run_id }}-iso
 
       - name: Upload ISO to S3
+        if: env.PUBLISH_LATEST == 'true'
         run: |
           aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.iso
-          if [ "$PUBLISH_LATEST" = "true" ]; then
-            aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
-            echo "==> Uploaded themonolith-$BUILD_VERSION.iso and themonolith.iso (latest)"
-          else
-            echo "==> Uploaded themonolith-$BUILD_VERSION.iso (versioned only; 'latest' preserved)"
-          fi
+          aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
+          echo "==> Uploaded versioned + latest ISO"
 
   # Actually boots the ISO in QEMU (BIOS, UEFI, and toram+eject) and proves it
   # reaches a working shell before anything downstream treats this build as
