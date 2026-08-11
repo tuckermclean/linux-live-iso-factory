@@ -544,10 +544,13 @@ jobs:
       - name: Generate and upload site
         if: always()
         run: |
-          # Sync ALL historical attestation records from S3 so generate-dashboard.py
-          # can build the complete builds-index.json from all-time summaries.
+          # Sync only the small per-build attestation-summary.json files from S3 —
+          # generate-dashboard.py only ever rglobs attestation-summary.json to build
+          # builds-index.json, so full SBOMs/provenance history don't need to be
+          # downloaded here.
           mkdir -p output/all-attestation
-          aws s3 sync s3://${{ secrets.S3_BUCKET }}/attestation/ output/all-attestation/
+          aws s3 sync s3://${{ secrets.S3_BUCKET }}/attestation/ output/all-attestation/ \
+            --exclude "*" --include "*/attestation-summary.json"
 
           # Generate builds-index.json + copy static SPA assets into output/web/
           make dashboard ATTEST_INPUT_DIR=output/all-attestation
