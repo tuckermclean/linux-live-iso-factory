@@ -160,7 +160,14 @@ jobs:
         run: git switch -c "pins/bump-${OLD_EPOCH}-${NEW_EPOCH}"
 
       - name: Bump BUILD_EPOCH + SOURCE_DATE_EPOCH
-        run: scripts/update-build-pins.sh update "${NEW_EPOCH}" | tee /tmp/pin-bump-update.log
+        run: |
+          set -euo pipefail
+          scripts/update-build-pins.sh update "${NEW_EPOCH}" 2>&1 | tee /tmp/pin-bump-update.log
+          NOW=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
+          if [ "$NOW" != "${NEW_EPOCH}" ]; then
+            echo "::error::BUILD_EPOCH is $NOW, expected ${NEW_EPOCH} — bump did not apply; aborting."
+            exit 1
+          fi
 
       - name: Build new-epoch builder image (needed to regenerate locks)
         id: build-image

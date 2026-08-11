@@ -130,8 +130,16 @@ cmd_check() {
 
     printf "\n  %-25s %-28s %-28s\n" "Pin" "Current" "Latest"
     printf "  %-25s %-28s %-28s\n" "---" "-------" "------"
-    printf "  %-25s %-28s %-28s" "BUILD_EPOCH" "${current_epoch}" "${latest_date}"
-    [[ "${current_epoch}" != "${latest_date}" ]] && echo " *" || echo ""
+    if [[ "${latest_date}" != "(unavailable)" ]] && [[ "${current_epoch}" != "${latest_date}" ]]; then
+        if verify_portage_snapshot "${latest_date}"; then
+            printf "  %-25s %-28s %-28s *\n" "BUILD_EPOCH" "${current_epoch}" "${latest_date}"
+        else
+            printf "  %-25s %-28s %-28s (stage3 ahead; portage snapshot for %s not yet published)\n" \
+                "BUILD_EPOCH" "${current_epoch}" "${latest_date}" "${latest_date}"
+        fi
+    else
+        printf "  %-25s %-28s %-28s\n" "BUILD_EPOCH" "${current_epoch}" "${latest_date}"
+    fi
     printf "  %-25s %-28s %-28s\n" "SOURCE_DATE_EPOCH" "${current_source_epoch}" "${latest_epoch:-derived}"
     echo ""
     echo "  * = update available"
