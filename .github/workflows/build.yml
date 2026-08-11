@@ -159,6 +159,7 @@ jobs:
     outputs:
       build-started-on: ${{ steps.set-version.outputs.build-started-on }}
       build-version: ${{ steps.set-version.outputs.build-version }}
+      publish-latest: ${{ steps.publish.outputs.publish-latest }}
     steps:
       - uses: actions/checkout@v4
 
@@ -209,6 +210,12 @@ jobs:
         # config edit is silently a no-op. See scripts/savedconfig-cache.sh.
         run: bash scripts/savedconfig-cache.sh check "${{ secrets.S3_BUCKET }}" "$BUILD_EPOCH"
 
+      # Binpkg cache kept on S3 (NOT migrated to actions/cache). Deferred per the
+      # CI transfer-cost plan Task 3 measure-gate: the packages/<epoch> set is
+      # potentially multi-GB and would contend with the per-run ISO/squashfs cache
+      # for the free 10 GB actions/cache pool, and it is only a 1x/build read (not
+      # the ~17x/build ISO egress this effort primarily targets). Revisit under the
+      # K3s phase (persistent PVC cache). See docs/superpowers/plans/2026-08-11-ci-transfer-cost.md.
       - name: Restore binary package cache from S3
         run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/ output/packages/ || true
 
@@ -267,70 +274,82 @@ jobs:
         # so the next build's purge step sees a match and reuses it.
         run: bash scripts/savedconfig-cache.sh mark "${{ secrets.S3_BUCKET }}" "$BUILD_EPOCH"
 
-      - name: Save build logs to S3
-        if: always()
-        run: aws s3 sync output/logs/ s3://${{ secrets.S3_BUCKET }}/builds/$BUILD_VERSION/logs/
-
       - name: Determine whether to publish 'latest' pointers
         # Only master and tag builds overwrite the public themonolith.iso/.squashfs/
         # .vmlinuz/.initrd "latest" pointers. Branch and workflow_dispatch validation
         # builds still upload their versioned artifacts, but must NOT clobber the live
         # public download while a change is still being validated.
+        #
+        # id + if: always() so this still runs (and PUBLISH_LATEST/publish-latest are
+        # still set) even when an earlier build step failed — the "Save build logs to
+        # S3" step below needs that on a failed master/tag build, and the separate
+        # attestation job's S3-write steps key off the publish-latest job output.
+        id: publish
+        if: always()
         run: |
           if [ "$GITHUB_REF" = "refs/heads/master" ] || [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
             echo "PUBLISH_LATEST=true" >> "$GITHUB_ENV"
+            echo "publish-latest=true" >> "$GITHUB_OUTPUT"
             echo "==> Publishing 'latest' pointers (ref: $GITHUB_REF)"
           else
             echo "PUBLISH_LATEST=false" >> "$GITHUB_ENV"
+            echo "publish-latest=false" >> "$GITHUB_OUTPUT"
             echo "==> Validation build (ref: $GITHUB_REF): versioned artifacts only, 'latest' preserved."
           fi
 
+      - name: Save build logs to S3
+        if: always() && env.PUBLISH_LATEST == 'true'
+        run: aws s3 sync output/logs/ s3://${{ secrets.S3_BUCKET }}/builds/$BUILD_VERSION/logs/
+
       - name: Save kernel image to S3
-        if: always()
+        if: env.PUBLISH_LATEST == 'true'
         run: |
           if [ -f output/vmlinuz ]; then
             cp output/vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
             aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz
-            if [ "$PUBLISH_LATEST" = "true" ]; then
-              aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
-            fi
+            aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
           fi
 
       - name: Build rootfs
         run: make build-rootfs JOBS=2 LOAD_AVG=2
 
+      - name: Cache squashfs for downstream jobs (in-run handoff)
+        uses: actions/cache/save@v4
+        with:
+          path: output/themonolith-${{ env.BUILD_VERSION }}.squashfs
+          key: ci-artifacts-${{ github.run_id }}-squashfs
+
       - name: Save squashfs to S3
-        if: always()
+        if: env.PUBLISH_LATEST == 'true'
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.squashfs ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs
-            if [ "$PUBLISH_LATEST" = "true" ]; then
-              aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
-            fi
+            aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
           fi
 
       - name: Save initrd to S3
-        if: always()
+        if: env.PUBLISH_LATEST == 'true'
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.initrd ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd
-            if [ "$PUBLISH_LATEST" = "true" ]; then
-              aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
-            fi
+            aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
           fi
 
       - name: Build ISO
         run: make iso
 
+      - name: Cache ISO for downstream jobs (in-run handoff)
+        uses: actions/cache/save@v4
+        with:
+          path: output/themonolith-${{ env.BUILD_VERSION }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+
       - name: Upload ISO to S3
+        if: env.PUBLISH_LATEST == 'true'
         run: |
           aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.iso
-          if [ "$PUBLISH_LATEST" = "true" ]; then
-            aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
-            echo "==> Uploaded themonolith-$BUILD_VERSION.iso and themonolith.iso (latest)"
-          else
-            echo "==> Uploaded themonolith-$BUILD_VERSION.iso (versioned only; 'latest' preserved)"
-          fi
+          aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
+          echo "==> Uploaded versioned + latest ISO"
 
   # Actually boots the ISO in QEMU (BIOS, UEFI, and toram+eject) and proves it
   # reaches a working shell before anything downstream treats this build as
@@ -408,19 +427,23 @@ jobs:
       - name: Install squashfs-tools
         run: sudo apt-get install -y squashfs-tools
 
-      - name: Restore squashfs from S3
-        run: |
-          aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs \
-            output/themonolith-$BUILD_VERSION.squashfs
+      - name: Restore squashfs from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ env.BUILD_VERSION }}.squashfs
+          key: ci-artifacts-${{ github.run_id }}-squashfs
+          fail-on-cache-miss: true
 
       - name: Extract sysroot from squashfs
         run: |
           unsquashfs -d output/sysroot output/themonolith-$BUILD_VERSION.squashfs
 
-      - name: Restore ISO from S3
-        run: |
-          aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.iso \
-            output/themonolith-$BUILD_VERSION.iso
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ env.BUILD_VERSION }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       - name: Update Grype DB
         run: make grype-db-update
@@ -523,18 +546,26 @@ jobs:
           predicate: ${{ steps.read-predicate.outputs.predicate }}
 
       - name: Upload attestation artifacts to S3
-        if: always()
+        # Only master/tag builds write to S3 — see the 'build' job's "Determine
+        # whether to publish 'latest' pointers" step, which sets this job output.
+        # Validation (branch/PR) builds must leave zero S3 footprint.
+        if: needs.build.outputs.publish-latest == 'true'
         run: |
           aws s3 sync output/attestation/ \
             s3://${{ secrets.S3_BUCKET }}/attestation/$BUILD_VERSION/
 
       - name: Generate and upload site
-        if: always()
+        # Same gate as above: this overwrites the public dashboard, so it must not
+        # run on validation builds.
+        if: needs.build.outputs.publish-latest == 'true'
         run: |
-          # Sync ALL historical attestation records from S3 so generate-dashboard.py
-          # can build the complete builds-index.json from all-time summaries.
+          # Sync only the small per-build attestation-summary.json files from S3 —
+          # generate-dashboard.py only ever rglobs attestation-summary.json to build
+          # builds-index.json, so full SBOMs/provenance history don't need to be
+          # downloaded here.
           mkdir -p output/all-attestation
-          aws s3 sync s3://${{ secrets.S3_BUCKET }}/attestation/ output/all-attestation/
+          aws s3 sync s3://${{ secrets.S3_BUCKET }}/attestation/ output/all-attestation/ \
+            --exclude "*" --include "*/attestation-summary.json"
 
           # Generate builds-index.json + copy static SPA assets into output/web/
           make dashboard ATTEST_INPUT_DIR=output/all-attestation

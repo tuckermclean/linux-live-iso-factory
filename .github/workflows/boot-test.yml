@@ -25,7 +25,7 @@ on:
   workflow_call:
     inputs:
       build-version:
-        description: "BUILD_VERSION whose ISO should be pulled from S3 and boot-tested"
+        description: "BUILD_VERSION whose ISO should be restored from the in-run cache and boot-tested"
         required: true
         type: string
 
@@ -65,13 +65,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -84,11 +77,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       - name: Boot test — BIOS (ISOLINUX), ${{ matrix.ram_mb }}M RAM
         run: |
@@ -114,13 +108,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -133,11 +120,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       - name: Boot test — UEFI (GRUB + OVMF)
         run: |
@@ -162,13 +150,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -181,11 +162,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       # toram is exercised via BIOS/ISOLINUX only — GRUB's (toram) menuentry
       # has no console=ttyS0, so it isn't reachable over serial. See the
@@ -222,13 +204,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -241,11 +216,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       - name: Boot test — AHCI/SATA (q35 + ich9-ahci, UEFI)
         run: |
@@ -271,13 +247,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -290,11 +259,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       - name: Boot test — NVMe (UEFI)
         run: |
@@ -320,13 +290,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -339,11 +302,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       - name: Boot test — USB mass storage (xHCI, UEFI)
         run: |
@@ -369,13 +333,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -388,11 +345,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       - name: Boot test — virtio-blk (UEFI)
         run: |
@@ -418,13 +376,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -437,11 +388,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       # Negative control: no NIC hardware at all (-nic none), proving
       # coldplug does NOT load e1000 when there's nothing to match. See the
@@ -478,13 +430,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -497,11 +442,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       - name: Boot test — NIC model ${{ matrix.nic_model }}
         run: |
@@ -532,13 +478,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -551,11 +490,12 @@ jobs:
       - name: Install pexpect
         run: pip install pexpect
 
-      - name: Restore ISO from S3
-        run: |
-          mkdir -p output
-          aws s3 cp "s3://${{ secrets.S3_BUCKET }}/themonolith-${{ inputs.build-version }}.iso" \
-            "output/themonolith-${{ inputs.build-version }}.iso"
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
 
       - name: Start host http.server (the client reaches this through NAT)
         run: |
