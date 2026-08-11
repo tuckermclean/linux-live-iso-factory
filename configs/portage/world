@@ -71,6 +71,9 @@ net-misc/dhcpcd
 # Firewall / NAT (see monolith-router; SP2)
 net-firewall/nftables
 
+# DHCP + DNS for the LAN (see monolith-router --dhcp; SP3)
+net-dns/dnsmasq
+
 # Remote access
 net-misc/dropbear
 

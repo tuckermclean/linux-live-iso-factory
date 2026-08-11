@@ -1046,9 +1046,10 @@ def run_nat(child, args):
     results = []
     _boot_isolinux_to_shell(child, args)
     # Router: bring NAT up (eth0=WAN/user, eth1=LAN/socket), assert it took.
-    results.append(("router: monolith-router up",
-                    *run_check(child, "monolith-router eth0 eth1", "monolith-router eth0 eth1",
-                               contains("NAT up"), timeout=60)))
+    results.append(("router: monolith-router up --dhcp",
+                    *run_check(child, "monolith-router eth0 eth1 --dhcp --yes",
+                               "monolith-router eth0 eth1 --dhcp --yes",
+                               contains("DHCP+DNS up"), timeout=60)))
     results.append(("router: nft masquerade present",
                     *run_check(child, "nft ruleset", "nft list ruleset",
                                contains("masquerade"))))
@@ -1060,6 +1061,16 @@ def run_nat(child, args):
                     *run_check(child, "ip_forward",
                                "echo ipfwd=$(cat /proc/sys/net/ipv4/ip_forward)",
                                contains("ipfwd=1"))))
+    # Secure by default: dnsmasq must be bound to the LAN address only, never
+    # the WAN address or a wildcard. netstat (net-tools) is always present.
+    results.append(("router: dnsmasq bound to LAN only",
+                    *run_check(child, "dnsmasq bind",
+                               "netstat -lnu | grep ':53 ' || true",
+                               contains("192.168.99.1:53"))))
+    results.append(("router: dnsmasq NOT on wildcard",
+                    *run_check(child, "dnsmasq no wildcard",
+                               "echo bind=$(netstat -lnu | grep -c '0.0.0.0:53')",
+                               contains("bind=0"))))
 
     client = None
     try:
@@ -1068,11 +1079,7 @@ def run_nat(child, args):
         if args.log_file:
             client.logfile = open(args.log_file + ".client", "w", encoding="utf-8", errors="replace")
         _boot_isolinux_to_shell(client, args)
-        # Client: static LAN config, default route via the router.
-        for cmd in ["ip addr add 192.168.99.2/24 dev eth0",
-                    "ip link set eth0 up",
-                    "ip route add default via 192.168.99.1"]:
-            run_check(client, cmd, cmd, exit_code_only())
+
         # Defensive: drain the router child's serial so its pexpect pty can't
         # back up while we're busy driving the client. This is hygiene, NOT the
         # historical nat-router flake — that was a monolith-router bug (it skipped
@@ -1095,6 +1102,58 @@ def run_nat(child, args):
         def _diag(node, label, cmds):
             for d in cmds:
                 run_check(node, f"{label}-diag: {d}", d, exit_code_only(), timeout=15)
+
+        drain_router()
+        # Set the client's name via busybox (the GNU rootfs has no standalone
+        # `hostname` command; busybox is built CONFIG_HOSTNAME=y).
+        run_check(client, "client hostname", "busybox hostname natclient", exit_code_only())
+        # CRITICAL: a dhcpcd daemon is ALREADY running from boot (S40network runs
+        # `dhcpcd -b eth0`) and it leased at boot WITHOUT a hostname. Re-invoking
+        # `dhcpcd ... --hostname=natclient` then only sends a control command to
+        # that running daemon ("sending commands to dhcpcd process") and the flag
+        # is inert — which is why the lease hostname stayed "*". Stop the boot
+        # daemon first, then start a FRESH one-shot client that actually sends the
+        # hostname (DHCP option 12). dhcpcd honors --hostname when run as a fresh
+        # manual client.
+        run_check(client, "stop boot dhcpcd", "dhcpcd -x 2>/dev/null; dhcpcd -k eth0 2>/dev/null; sleep 1; true",
+                  exit_code_only(), timeout=20)
+        # Fresh lease WITH the hostname. `dhcpcd -1` exits 0 once configured with a
+        # lease and non-zero on timeout/failure, so the exit code — not a log
+        # string — is the reliable success signal. The in-range check corroborates.
+        results.append(("client: DHCP lease from the box",
+                        *run_check(client, "dhcpcd", "dhcpcd -1 -t 30 --hostname=natclient eth0",
+                                   exit_code_only(), timeout=45)))
+
+        drain_router()
+        # Lease is inside the dnsmasq range 192.168.99.50-200.
+        results.append(("client: leased address in DHCP range",
+                        *run_check(client, "client addr",
+                                   "ip -4 -o addr show dev eth0 | grep -oE '192\\.168\\.99\\.[0-9]+'",
+                                   regex_matches(r"192\.168\.99\.(5[0-9]|[6-9][0-9]|1[0-9][0-9]|200)"),
+                                   timeout=15)))
+        # DNS through the box: resolve the router's own registered name against
+        # the box's dnsmasq. The GNU booted rootfs has no standalone `nslookup`
+        # (bind-tools isn't installed); we call busybox's nslookup applet
+        # (CONFIG_NSLOOKUP=y) explicitly — `busybox nslookup HOST SERVER` queries
+        # SERVER directly, proving the .home.arpa zone resolves through the box.
+        results.append(("client: resolves monolith.home.arpa via the box",
+                        *run_check(client, "nslookup",
+                                   "busybox nslookup monolith.home.arpa 192.168.99.1",
+                                   contains("192.168.99.1"), timeout=20)))
+
+        drain_router()
+        # DHCP-hostname → DNS zone registration: the client sent its hostname
+        # (DHCP option 12) in the fresh lease, so dnsmasq (expand-hosts +
+        # domain=home.arpa) registered natclient.home.arpa → the leased address.
+        # This is the actual "DHCP client names auto-populate the zone" proof. The
+        # lease-range regex CANNOT be satisfied by nslookup's own "Server: 192.168.99.1"
+        # line (.1 is outside .50-.200), so only a genuine leased answer passes.
+        results.append(("client: natclient.home.arpa resolves to the leased address",
+                        *run_check(client, "nslookup natclient",
+                                   "busybox nslookup natclient.home.arpa 192.168.99.1",
+                                   regex_matches(r"192\.168\.99\.(5[0-9]|[6-9][0-9]|1[0-9][0-9]|200)"),
+                                   timeout=20)))
+
         _diag(child, "router-pre",
               ["ip -o addr show dev eth1", "ip -o link show dev eth1", "cat /proc/net/dev"])
         _diag(client, "client",

@@ -18,6 +18,9 @@ SYSCLASS="${MONOLITH_NET_SYSCLASS:-/sys/class/net}"
 FORWARD_FILE="${MONOLITH_IP_FORWARD:-/proc/sys/net/ipv4/ip_forward}"
 DEFAULT_LAN_CIDR="${MONOLITH_LAN_CIDR:-192.168.99.1/24}"
 NFT_TABLE="monolith_router"
+RUNDIR="${MONOLITH_RUN_DIR:-/run/monolith-router}"
+DEFAULT_LAN_DOMAIN="${MONOLITH_LAN_DOMAIN:-home.arpa}"
+DNSMASQ_USER="${MONOLITH_DNSMASQ_USER:-nobody}"
 
 list_ifaces() {
     for d in "$SYSCLASS"/*; do
@@ -49,21 +52,115 @@ resolve_ifaces() {
 
 valid_cidr() { echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'; }
 
+valid_domain() {
+    # Reject any char outside the DNS label set — this also rejects embedded
+    # newlines/whitespace, closing a dnsmasq.conf injection via --domain — then
+    # validate label structure.
+    case "$1" in
+        ''|*[!A-Za-z0-9.-]*) return 1 ;;
+    esac
+    echo "$1" | grep -qE '^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$'
+}
+
+# Sets RANGE_START/RANGE_END from a /24 cidr; errors on any other prefix.
+derive_dhcp_range() {
+    _ip=${1%/*}; _prefix=${1#*/}
+    if [ "$_prefix" != 24 ]; then
+        echo "monolith-router: --dhcp needs a /24 LAN (got /$_prefix)" >&2; return 1
+    fi
+    _net=${_ip%.*}
+    RANGE_START="$_net.50"; RANGE_END="$_net.200"
+}
+
+# One-time-per-boot lecture. Fails closed when non-interactive without --yes.
+dhcp_gate() {
+    _lan="$1"; _yes="$2"
+    # Lecture text is shown once per boot (cached), but consent is enforced EVERY time.
+    if [ ! -f "$RUNDIR/dhcp-lectured" ]; then
+        cat >&2 <<LEC
+monolith-router: enabling a DHCP server on $_lan. It will hand out IP leases
+and DNS to everything on that segment. Do NOT do this on a network that already
+has a DHCP server (office/dorm/home ISP router) — you will break it. Only
+proceed if THIS box owns the LAN.
+LEC
+    fi
+    if [ -n "$_yes" ]; then
+        :
+    elif [ -t 0 ]; then
+        printf 'Type "yes" to proceed: ' >&2
+        read -r _ans
+        [ "$_ans" = yes ] || { echo "monolith-router: aborted." >&2; return 1; }
+    else
+        echo "monolith-router: refusing to enable DHCP non-interactively without --yes." >&2
+        return 1
+    fi
+    mkdir -p "$RUNDIR" && : > "$RUNDIR/dhcp-lectured"
+}
+
+# Writes the hardened dnsmasq config and launches it. $1 lan $2 cidr $3 domain $4 yes
+start_dhcp() {
+    _lan="$1"; _cidr="$2"; _domain="$3"; _yes="$4"
+    valid_domain "$_domain" || { echo "monolith-router: invalid --domain '$_domain'" >&2; return 1; }
+    derive_dhcp_range "$_cidr" || return 1
+    dhcp_gate "$_lan" "$_yes" || return 1
+    _lanip=${_cidr%/*}
+    mkdir -p "$RUNDIR"
+    cat > "$RUNDIR/dnsmasq.conf" <<CONF
+interface=$_lan
+bind-interfaces
+except-interface=$WAN
+local-service
+domain=$_domain
+local=/$_domain/
+expand-hosts
+interface-name=monolith.$_domain,$_lan
+stop-dns-rebind
+rebind-localhost-ok
+domain-needed
+bogus-priv
+dhcp-authoritative
+dhcp-range=$RANGE_START,$RANGE_END,12h
+dhcp-option=option:router,$_lanip
+dhcp-option=option:dns-server,$_lanip
+pid-file=$RUNDIR/dnsmasq.pid
+user=$DNSMASQ_USER
+CONF
+    if ! dnsmasq --conf-file="$RUNDIR/dnsmasq.conf"; then
+        echo "monolith-router: dnsmasq failed to start" >&2; return 1
+    fi
+    echo "monolith-router: DHCP+DNS up — serving $RANGE_START-$RANGE_END on $_lan, zone $_domain"
+}
+
 cmd_up() {
-    resolve_ifaces "${1:-}" "${2:-}" || return 1
-    cidr="${3:-$DEFAULT_LAN_CIDR}"
+    _wan=""; _lan=""; _cidr_arg=""; _want_dhcp=""; _yes=""; _domain="$DEFAULT_LAN_DOMAIN"; _np=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dhcp)            _want_dhcp=1 ;;
+            --yes|--i-understand) _yes=1 ;;
+            --domain)          if [ $# -ge 2 ]; then shift; _domain="$1"; else _domain=""; fi ;;
+            --domain=*)        _domain="${1#--domain=}" ;;
+            -*)                echo "monolith-router: unknown option '$1'" >&2; return 1 ;;
+            *)
+                _np=$((_np+1))
+                case $_np in
+                    1) _wan="$1" ;;
+                    2) _lan="$1" ;;
+                    3) _cidr_arg="$1" ;;
+                    *) echo "monolith-router: too many arguments ('$1')" >&2; return 1 ;;
+                esac ;;
+        esac
+        shift
+    done
+    resolve_ifaces "$_wan" "$_lan" || return 1
+    cidr="${_cidr_arg:-$DEFAULT_LAN_CIDR}"
     valid_cidr "$cidr" || { echo "monolith-router: invalid lan-cidr '$cidr' (want A.B.C.D/prefix)" >&2; return 1; }
     if ! echo 1 > "$FORWARD_FILE" 2>/dev/null; then
         echo "monolith-router: cannot enable ip_forward ($FORWARD_FILE)" >&2; return 1
     fi
     ip link set "$LAN" up 2>/dev/null || true
     # A LAN NIC whose boot-time DHCP found no server commonly auto-assigns a
-    # 169.254.0.0/16 zeroconf link-local. That is never a usable NAT-LAN gateway
-    # address, and — crucially — its mere presence must NOT stop us installing
-    # ours: a prior "skip if the LAN has any inet" guard silently left the
-    # gateway CIDR unassigned, so the router answered no ARP for it and NAT
-    # appeared up but carried nothing. Drop any such link-local, then ensure our
-    # CIDR is on the interface (idempotent: a re-run hits "File exists").
+    # 169.254.0.0/16 zeroconf link-local; drop it, then ensure our CIDR is on
+    # the interface (idempotent). See PR #18.
     for a in $(ip -4 -o addr show dev "$LAN" 2>/dev/null | awk '{print $4}'); do
         case "$a" in 169.254.*) ip addr del "$a" dev "$LAN" 2>/dev/null || true ;; esac
     done
@@ -89,9 +186,21 @@ NFT
         return 1
     fi
     echo "monolith-router: NAT up — LAN $LAN ($cidr) -> WAN $WAN (masquerade)"
+    if [ -n "$_want_dhcp" ]; then
+        start_dhcp "$LAN" "$cidr" "$_domain" "$_yes" || return 1
+    fi
+}
+
+stop_dhcp() {
+    if [ -f "$RUNDIR/dnsmasq.pid" ]; then
+        kill "$(cat "$RUNDIR/dnsmasq.pid")" 2>/dev/null || true
+    fi
+    rm -f "$RUNDIR/dnsmasq.conf" "$RUNDIR/dnsmasq.pid" "$RUNDIR/dhcp-lectured" 2>/dev/null || true
+    rmdir "$RUNDIR" 2>/dev/null || true
 }
 
 cmd_down() {
+    stop_dhcp
     nft delete table ip "$NFT_TABLE" 2>/dev/null || true
     echo 0 > "$FORWARD_FILE" 2>/dev/null || true
     echo "monolith-router: NAT down"
@@ -103,6 +212,12 @@ cmd_status() {
     for i in $(list_ifaces); do
         printf '  %s: %s\n' "$i" "$(ip -4 addr show dev "$i" 2>/dev/null | awk '/inet /{print $2}' | tr '\n' ' ')"
     done
+    echo '--- dhcp/dns (dnsmasq) ---'
+    if [ -f "$RUNDIR/dnsmasq.pid" ] && kill -0 "$(cat "$RUNDIR/dnsmasq.pid" 2>/dev/null)" 2>/dev/null; then
+        echo "  running (pid $(cat "$RUNDIR/dnsmasq.pid"))"
+    else
+        echo "  (not running)"
+    fi
     echo '--- nft ruleset ---'
     nft list table ip "$NFT_TABLE" 2>/dev/null || echo "  (no $NFT_TABLE table)"
 }

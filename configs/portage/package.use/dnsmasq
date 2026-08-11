@@ -1,0 +1,20 @@
+# dnsmasq for the static i486-musl image: DHCP + DNS for the LAN (see
+# monolith-router --dhcp). No dbus IPC surface, no lease-change script exec
+# surface, no NLS, IPv4-only (project-wide), no DNSSEC (needs a trust anchor;
+# deferred), no TFTP (netboot is deferred behind persistence + an initrd-mod
+# selection UI).
+#
+# dhcp: our global USE="-*" (make.conf) strips dnsmasq's default +dhcp, so
+# without this the daemon compiles with -DNO_DHCP — a DNS-only resolver, which
+# is useless for SP3. Enable it explicitly to build the DHCP server in.
+#
+# -static: counter-intuitive, but required and does NOT make the binary dynamic.
+# Static linking on this image comes from env/static.conf's LDFLAGS
+# (-no-pie -static, applied to */* via package.env) — NOT from this USE flag.
+# dnsmasq's ebuild uses the `static` flag only to emit -DHAVE_DNSSEC_STATIC,
+# which makes its upstream Makefile link -lgmp unconditionally (even with
+# -dnssec). With DNSSEC off there is no static libgmp in the sysroot, so that
+# link fails ("cannot find -lgmp"). Turning the USE flag off drops the stray
+# gmp dependency while static.conf still delivers a fully static dnsmasq — no
+# nettle/gmp pulled into the image.
+net-dns/dnsmasq dhcp -static -dbus -script -nls -ipv6 -dnssec -tftp
