@@ -160,3 +160,52 @@ scheduled gc.yml:
    `latest`/release/attestation; end users/releases read).
 4. No regression: the full boot-test matrix + attestation gate still pass.
 5. A scheduled GC job keeps the bucket bounded (current epoch + latest + tags retained).
+
+## Related work: pin-bump hardening + bump streamlining
+
+A `BUILD_EPOCH` bump *is* the "big builder build" this effort reshapes (a new epoch = new
+stage3 base = cold binpkg cache = full from-scratch rebuild), and `pin-bump.yml` **dispatches
+`build.yml`** to validate — so pin-bump shares this workstream's surface. PR #20 (the automated
+`bump 20260803 -> 20260810`) surfaced two compounding bugs that must be fixed here; #20 itself is
+closed as bogus (its diff never bumped the Dockerfile — only a `versions.lock` nftables catch-up —
+and its "validation: success" build ran at the **old** epoch).
+
+**Root causes (diagnosed 2026-08-11 from run 31364589029, job "bump-and-validate"):**
+
+1. **`cmd_check` greenlights an un-buildable epoch.** `scripts/update-build-pins.sh` `cmd_check`
+   flags an update `*` purely from the Docker Hub **stage3** tag; it never calls
+   `verify_portage_snapshot`. On 2026-08-10 `stage3:...-20260810` was published but the matching
+   Gentoo portage snapshot (`distfiles.gentoo.org/snapshots/gentoo-20260810.tar.xz`) was not yet —
+   a mirror publish-timing race. `cmd_update` *does* verify and correctly refused, but the gate
+   (which keys off the `*` in check output) had already fired.
+
+2. **The bump step swallows the refusal.** `pin-bump.yml`'s "Bump BUILD_EPOCH + SOURCE_DATE_EPOCH"
+   step is `scripts/update-build-pins.sh update … | tee …`; the script exited 1
+   (`ERROR: No portage snapshot found`) but the `| tee` masks the non-zero exit, so the step
+   reported `success` and the job proceeded to build → "validate" → open a PR against the
+   unchanged (old-epoch) tree.
+
+**Fix (fail-closed, both bugs):**
+
+- **`cmd_check` must also `verify_portage_snapshot latest_date`** before emitting `*` (and print a
+  clear "stage3 ahead; portage snapshot for `<date>` not yet published — waiting" line otherwise).
+  This stops the weekly gate from firing during the stage3-ahead-of-snapshot race, which is the
+  actual trigger.
+- **The bump step must fail-closed.** Give it `set -euo pipefail` and, as the robust backstop, a
+  post-bump assertion that the intended change landed:
+  `NOW=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2); [ "$NOW" = "$NEW_EPOCH" ] || { echo "::error::BUILD_EPOCH is $NOW, expected $NEW_EPOCH — bump failed"; exit 1; }`
+  This halts the job on *any* silent no-op (not just this one), so a mislabeled/mis-validated PR can
+  never be produced again.
+
+**Streamlining (the "automate these bumps" goal):**
+
+- The validation dispatch must be guaranteed to run at the **new** epoch — the fail-closed guard
+  above ensures this (no bump ⇒ no dispatch ⇒ no false green).
+- Under this spec's binpkg-cache change (§C), a new epoch is an intentional guaranteed cache miss
+  (full rebuild) — that is inherent to bumping, not waste; the automation should *label* the PR with
+  the expected full-rebuild cost rather than trying to avoid it.
+- Optionally fold routine `versions.lock` drift catch-up (e.g. the nftables line #20 carried) into a
+  lighter periodic regen so lock drift is corrected without waiting on an epoch bump.
+
+These land as their own task(s) in the implementation plan, adjacent to the `build.yml` changes,
+since both edit the same CI surface.
