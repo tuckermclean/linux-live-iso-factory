@@ -66,3 +66,12 @@ while read -r _ _ _ key; do
 done <<EOF
 $LISTING
 EOF
+
+# A successful run must exit 0 regardless of which command the delete loop's
+# last iteration happened to execute — otherwise a trailing false test (e.g.
+# `[ -n "$APPLY" ]` in dry-run mode, which short-circuits `&&` to a false
+# exit status) leaks out as the script's exit status and makes the weekly
+# cron dry-run show as a failed GitHub Actions run even though nothing is
+# wrong. The abort guard above already exits 1 on the genuine mis-set-epoch
+# case, so it's correct for this to be an unconditional success exit.
+exit 0
