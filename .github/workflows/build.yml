@@ -159,6 +159,7 @@ jobs:
     outputs:
       build-started-on: ${{ steps.set-version.outputs.build-started-on }}
       build-version: ${{ steps.set-version.outputs.build-version }}
+      publish-latest: ${{ steps.publish.outputs.publish-latest }}
     steps:
       - uses: actions/checkout@v4
 
@@ -278,17 +279,26 @@ jobs:
         # .vmlinuz/.initrd "latest" pointers. Branch and workflow_dispatch validation
         # builds still upload their versioned artifacts, but must NOT clobber the live
         # public download while a change is still being validated.
+        #
+        # id + if: always() so this still runs (and PUBLISH_LATEST/publish-latest are
+        # still set) even when an earlier build step failed — the "Save build logs to
+        # S3" step below needs that on a failed master/tag build, and the separate
+        # attestation job's S3-write steps key off the publish-latest job output.
+        id: publish
+        if: always()
         run: |
           if [ "$GITHUB_REF" = "refs/heads/master" ] || [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
             echo "PUBLISH_LATEST=true" >> "$GITHUB_ENV"
+            echo "publish-latest=true" >> "$GITHUB_OUTPUT"
             echo "==> Publishing 'latest' pointers (ref: $GITHUB_REF)"
           else
             echo "PUBLISH_LATEST=false" >> "$GITHUB_ENV"
+            echo "publish-latest=false" >> "$GITHUB_OUTPUT"
             echo "==> Validation build (ref: $GITHUB_REF): versioned artifacts only, 'latest' preserved."
           fi
 
       - name: Save build logs to S3
-        if: env.PUBLISH_LATEST == 'true'
+        if: always() && env.PUBLISH_LATEST == 'true'
         run: aws s3 sync output/logs/ s3://${{ secrets.S3_BUCKET }}/builds/$BUILD_VERSION/logs/
 
       - name: Save kernel image to S3
@@ -536,13 +546,18 @@ jobs:
           predicate: ${{ steps.read-predicate.outputs.predicate }}
 
       - name: Upload attestation artifacts to S3
-        if: always()
+        # Only master/tag builds write to S3 — see the 'build' job's "Determine
+        # whether to publish 'latest' pointers" step, which sets this job output.
+        # Validation (branch/PR) builds must leave zero S3 footprint.
+        if: needs.build.outputs.publish-latest == 'true'
         run: |
           aws s3 sync output/attestation/ \
             s3://${{ secrets.S3_BUCKET }}/attestation/$BUILD_VERSION/
 
       - name: Generate and upload site
-        if: always()
+        # Same gate as above: this overwrites the public dashboard, so it must not
+        # run on validation builds.
+        if: needs.build.outputs.publish-latest == 'true'
         run: |
           # Sync only the small per-build attestation-summary.json files from S3 —
           # generate-dashboard.py only ever rglobs attestation-summary.json to build
