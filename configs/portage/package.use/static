@@ -312,3 +312,9 @@ app-misc/gpm static
 # flag gates it — only X11 is togglable). No qt/gtk/minimal IUSE exists on
 # this package; keep the atom minimal rather than setting no-op flags.
 games-roguelike/nethack -X
+
+# bind-tools (dig/host) + its net-dns/bind dep — strip optional features that
+# pull heavy/blocked deps: -xml (dev-libs/libxml2 is masked), -idn (libidn2),
+# -gssapi (krb5), -caps (libcap), -doc, -libedit/-readline.
+net-dns/bind-tools -caps -doc -gssapi -idn -libedit -readline -xml
+net-dns/bind -caps -doc -gssapi -idn -xml -dnstap -geoip -gssapi -jemalloc -lmdb

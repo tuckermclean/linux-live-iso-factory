@@ -93,6 +93,9 @@ net-misc/wget
 net-misc/whois
 net-analyzer/netcat
 net-analyzer/traceroute
+# bind-tools — dig + host for richer DNS debugging (busybox nslookup covers the
+# basics). Pulls net-dns/bind; minimal USE to dodge libxml2/krb5/idn.
+net-dns/bind-tools
 # iperf3 — TCP/UDP bandwidth tester (+cJSON). Also the canary for the cross-gcc
 # libatomic.a fix: iperf3 needs 8-byte atomics, which on -march=i486 require
 # libatomic — it failed to static-link until the toolchain built libatomic.a
