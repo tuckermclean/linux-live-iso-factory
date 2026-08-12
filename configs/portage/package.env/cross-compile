@@ -25,6 +25,10 @@ app-arch/tar             libiconv.conf
 
 # Packages that use C++ exceptions — override global -fno-exceptions
 sys-apps/smartmontools   fexceptions.conf
+# gdb's gdbsupport/new-op.cc wraps operator new in try/catch (gdb_exception);
+# the global -fno-exceptions makes the catch clause a hard compile error
+# ("'ex' was not declared" / "exception handling disabled").
+dev-debug/gdb            fexceptions.conf
 
 # shadow installs libsubid to /lib/ (not /usr/lib/); override libdir at configure time
 sys-apps/shadow          shadow-libdir.conf
