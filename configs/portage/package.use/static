@@ -135,10 +135,6 @@ net-misc/whois static
 # traceroute
 net-analyzer/traceroute static
 
-# iperf3 — SCTP support pulls in net-misc/lksctp-tools; not needed for the
-# TCP/UDP bandwidth-testing use case and keeps the dependency set minimal.
-net-misc/iperf -sctp
-
 # mtr — combined ping+traceroute network diagnostic (My TraceRoute). ncurses
 # UI (sys-libs/ncurses is already in world with tinfo+unicode — mtr-0.96-r1
 # ships a Gentoo patch specifically for tinfo-split ncurses, see report).

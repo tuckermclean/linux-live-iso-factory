@@ -88,7 +88,6 @@ net-misc/wget
 net-misc/whois
 net-analyzer/netcat
 net-analyzer/traceroute
-net-misc/iperf:3
 
 # Network clients
 www-client/lynx
