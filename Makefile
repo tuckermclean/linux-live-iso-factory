@@ -18,8 +18,14 @@ IMAGE_NAME := monolith-builder
 # Get absolute path to this directory
 PROJECT_DIR := $(shell pwd)
 
-# Single build epoch — pins stage3 base image and portage snapshot to the same date
+# Runtime portage-snapshot epoch — pins the target package tree used to build
+# the ISO (injected at sync-portage time, NOT baked into the builder image).
 BUILD_EPOCH := $(shell grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
+
+# Toolchain epoch — pins the stage3 base image and the baked portage tree used
+# to build the crossdev toolchain/host tools baked into the builder image.
+# Decoupled from BUILD_EPOCH on purpose: see Dockerfile header comment.
+TOOLCHAIN_EPOCH := $(shell grep '^ARG TOOLCHAIN_EPOCH=' Dockerfile | cut -d= -f2)
 
 # Kernel version — read from versions.lock so targets stay in sync with the pin
 KERNEL_VERSION := $(shell grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2)
@@ -41,11 +47,21 @@ VERSION_ENV := -e BUILD_VERSION=$(BUILD_VERSION)
 REGISTRY ?= ghcr.io/tuckermclean
 REGISTRY_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME),$(IMAGE_NAME))
 
-# Registry tag includes a short Dockerfile hash so any change to the Dockerfile
-# produces a new tag. CI will fail to pull an unknown tag and rebuild from scratch,
-# rather than reusing a stale cached image that predates the change.
-DOCKERFILE_HASH := $(shell sha256sum Dockerfile | cut -c1-12)
-REGISTRY_TAG := $(BUILD_EPOCH)-$(DOCKERFILE_HASH)
+# Registry tag = TOOLCHAIN_EPOCH + a short hash of the Dockerfile with the two
+# runtime-injected pins excluded (ARG BUILD_EPOCH, ENV SOURCE_DATE_EPOCH).
+#
+# Why exclude them: the builder image's filesystem is a function of TOOLCHAIN_EPOCH
+# only — BUILD_EPOCH is injected into the runtime portage volume by sync-portage,
+# and SOURCE_DATE_EPOCH is ENV metadata (not a layer). A routine BUILD_EPOCH bump
+# therefore does NOT change the image, and build-image (correctly) does not push
+# on it. If the tag included BUILD_EPOCH (directly or via the whole-file hash,
+# which a bump perturbs by editing those two lines), every snapshot bump would
+# mint a fresh tag that was never pushed, so the build/attestation jobs'
+# `make pull-image` would 404. Keying the tag on what actually changes the image
+# keeps it stable across snapshot bumps and still rotates on a real Dockerfile or
+# TOOLCHAIN_EPOCH change (→ cache miss → rebuild → push), which is the point.
+DOCKERFILE_HASH := $(shell grep -vE '^ARG BUILD_EPOCH=|^ENV SOURCE_DATE_EPOCH=' Dockerfile | sha256sum | cut -c1-12)
+REGISTRY_TAG := $(TOOLCHAIN_EPOCH)-$(DOCKERFILE_HASH)
 
 # S3 bucket for binary package cache — override with S3_BUCKET=... if needed
 S3_BUCKET ?= themonolith
@@ -222,6 +238,13 @@ CROSSDEV_CONTAINER := monolith-crossdev-build
 # completed crossdev container. The base-tools image ID is stamped as a label on
 # the final image. On subsequent runs, if that label matches the current base-tools
 # ID, the crossdev step is skipped.
+#
+# BASE_HASH (below) is computed from the base-tools image's layers, and that
+# image is now built solely from TOOLCHAIN_EPOCH (Dockerfile FROM + host
+# emerge-webrsync). It intentionally excludes BUILD_EPOCH — the runtime
+# portage snapshot, which is injected later by `make sync-portage`, not baked
+# into this image — so bumping BUILD_EPOCH alone never changes BASE_HASH and
+# never forces a crossdev/toolchain rebuild.
 build-image: ensure-dirs
 	@if [ -n "$(REGISTRY)" ] && docker pull $(REGISTRY_IMAGE):$(REGISTRY_TAG) 2>/dev/null; then \
 		docker tag $(REGISTRY_IMAGE):$(REGISTRY_TAG) $(IMAGE_NAME); \
@@ -230,8 +253,10 @@ build-image: ensure-dirs
 		echo "==> Pulled $(IMAGE_NAME) from $(REGISTRY_IMAGE):$(REGISTRY_TAG)"; \
 	else \
 		[ -n "$(REGISTRY)" ] && echo "==> Registry pull failed — building locally" || true; \
-		echo "==> Building base-tools stage (epoch: $(BUILD_EPOCH))"; \
+		echo "==> Building base-tools stage (toolchain epoch: $(TOOLCHAIN_EPOCH))"; \
 		docker buildx build --target base-tools \
+			--build-arg TOOLCHAIN_EPOCH=$(TOOLCHAIN_EPOCH) \
+			--build-arg BUILD_EPOCH=$(BUILD_EPOCH) \
 			$(if $(REGISTRY),--cache-from $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)) \
 			--cache-from $(BASE_TOOLS_IMAGE) --cache-to type=inline \
 			-t $(BASE_TOOLS_IMAGE) \
@@ -288,18 +313,18 @@ push-image: build-image
 		exit 1; \
 	fi
 	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(REGISTRY_TAG)
-	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(BUILD_EPOCH)
+	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(TOOLCHAIN_EPOCH)
 	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):latest
 	docker push $(REGISTRY_IMAGE):$(REGISTRY_TAG)
-	docker push $(REGISTRY_IMAGE):$(BUILD_EPOCH)
+	docker push $(REGISTRY_IMAGE):$(TOOLCHAIN_EPOCH)
 	docker push $(REGISTRY_IMAGE):latest
 	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)
-	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)
+	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(TOOLCHAIN_EPOCH)
 	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:latest
 	docker push $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)
-	docker push $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)
+	docker push $(REGISTRY_IMAGE)-base-tools:$(TOOLCHAIN_EPOCH)
 	docker push $(REGISTRY_IMAGE)-base-tools:latest
-	@echo "==> Pushed $(REGISTRY_IMAGE):$(REGISTRY_TAG) (+ :$(BUILD_EPOCH) + :latest)"
+	@echo "==> Pushed $(REGISTRY_IMAGE):$(REGISTRY_TAG) (+ :$(TOOLCHAIN_EPOCH) + :latest)"
 
 # Pull builder image from registry and tag locally
 pull-image:
@@ -328,9 +353,16 @@ restore-cache: ensure-dirs ensure-volume
 	aws s3 sync --no-sign-request s3://$(S3_BUCKET)/packages/$(BUILD_EPOCH)/ $(PROJECT_DIR)/output/packages/
 
 # Sync portage tree in volume
+SNAP_MIRROR := $(PROJECT_DIR)/output/portage-mirror
+SNAP_MOUNT  := -v $(SNAP_MIRROR):/var/monolith-portage-mirror
+
 sync-portage: ensure-volume ensure-dirs
-	@echo "==> Syncing portage tree (pinned: $(BUILD_EPOCH))"
-	$(DOCKER_RUN) $(IMAGE_NAME) emerge-webrsync --revert=$(BUILD_EPOCH)
+	@echo "==> Fetching portage snapshot (pinned: $(BUILD_EPOCH)) via self-hosted mirror"
+	@mkdir -p $(SNAP_MIRROR)
+	SYNC_MIRROR_DIR=$(SNAP_MIRROR) BUILD_EPOCH=$(BUILD_EPOCH) sh scripts/sync-portage.sh fetch-only
+	@echo "==> emerge-webrsync from the local mirror"
+	$(DOCKER_RUN) $(SNAP_MOUNT) -e BUILD_EPOCH=$(BUILD_EPOCH) $(IMAGE_NAME) \
+		sh -c 'GENTOO_MIRRORS="file:///var/monolith-portage-mirror https://distfiles.gentoo.org" emerge-webrsync --revert=$(BUILD_EPOCH)'
 
 # Build all packages: kernel, busybox, and userland (with parallel jobs)
 build-packages: ensure-volume ensure-dirs
@@ -484,8 +516,15 @@ check-updates: ensure-volume ensure-dirs
 	@echo "==> Checking for package updates"
 	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/update-versions.sh check
 
-# Update versions.lock with latest portage package versions
-update-versions: ensure-volume ensure-dirs
+# Update versions.lock with latest portage package versions.
+# Depends on sync-portage (not just ensure-volume/ensure-dirs): update-versions.sh
+# queries portageq against the portage tree in the monolith-repos volume, and since
+# the TOOLCHAIN_EPOCH/BUILD_EPOCH split (see docs/version-pinning.md), that tree is
+# no longer refreshed as a side effect of build-image — only sync-portage populates
+# it at the current BUILD_EPOCH. Without this prereq, update-versions could silently
+# resolve versions against a stale (or, on a fresh volume, TOOLCHAIN_EPOCH-baked)
+# tree instead of the runtime BUILD_EPOCH snapshot.
+update-versions: ensure-volume ensure-dirs sync-portage
 	@echo "==> Updating versions.lock"
 	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/update-versions.sh update
 
@@ -498,15 +537,21 @@ update-build-pins:
 update-all: update-build-pins update-versions
 	@echo "==> All pins updated. Run 'make build-image' to rebuild the factory."
 
-# Correctly bump BUILD_EPOCH end to end: unlike `update-all` (which updates
-# versions.lock against whatever image is already local, i.e. the PREVIOUS
-# epoch if the Dockerfile just changed), this rebuilds the image at the NEW
-# epoch *between* the pin bump and the versions.lock regeneration, so
-# versions.lock actually reflects the new epoch's portage tree. This is the
-# same sequence .github/workflows/pin-bump.yml automates in CI — see
-# docs/version-pinning.md. crossdev.lock still intentionally lags by one
-# cycle (queried from the pre-bump image inside update-build-pins.sh); that
-# is documented, existing behavior, not a bug in this target.
+# Correctly bump BUILD_EPOCH end to end: update-versions now depends on
+# sync-portage (see that target), so it always regenerates versions.lock
+# against the freshly-fetched BUILD_EPOCH snapshot regardless of whether
+# build-image ran first — unlike the pre-decoupling design, build-image is
+# no longer what makes versions.lock correct (build-image only rebuilds at
+# TOOLCHAIN_EPOCH, which a BUILD_EPOCH-only bump doesn't touch). build-image
+# is kept in this chain so the sequence still does the right thing if
+# TOOLCHAIN_EPOCH was also bumped by hand; it's a cheap no-op otherwise
+# (base-tools image unchanged, see BASE_HASH note above build-image).
+# `update-all` (update-build-pins + update-versions, no build-image) is now
+# equally correct for a BUILD_EPOCH-only bump for the same reason.
+# crossdev.lock still intentionally lags by one TOOLCHAIN_EPOCH bump cycle
+# (queried from the pre-bump image inside update-build-pins.sh); that is
+# documented, existing behavior, not a bug in this target — see
+# docs/version-pinning.md.
 bump-pins: update-build-pins build-image update-versions
 	@echo "==> BUILD_EPOCH bumped and both locks regenerated against the new epoch."
 	@echo "    Review the diff, then validate with a full 'make all' + 'make attestation'"
