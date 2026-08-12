@@ -71,6 +71,8 @@ overrides:
 
   # --- Libraries ---
   libevent:        "cpe:2.3:a:libevent_project:libevent:*:*:*:*:*:*:*:*"
+  glib:            "cpe:2.3:a:gnome:glib:*:*:*:*:*:*:*:*"
+  libffi:          "cpe:2.3:a:libffi_project:libffi:*:*:*:*:*:*:*:*"
   libiconv:        "cpe:2.3:a:gnu:libiconv:*:*:*:*:*:*:*:*"
   libpcap:         "cpe:2.3:a:tcpdump:libpcap:*:*:*:*:*:*:*:*"
   libpcre:         "cpe:2.3:a:pcre:pcre:*:*:*:*:*:*:*:*"
@@ -86,6 +88,7 @@ overrides:
   # NVD CPE dictionary entry is iputils_project, not plain iputils.
   iputils:         "cpe:2.3:a:iputils_project:iputils:*:*:*:*:*:*:*:*"
   iproute2:        "cpe:2.3:a:iproute2_project:iproute2:*:*:*:*:*:*:*:*"
+  irssi:           "cpe:2.3:a:irssi:irssi:*:*:*:*:*:*:*:*"
   # NVD registers ppp under point-to-point_protocol_project — NOT the Gentoo
   # metadata.xml hint "samba:ppp" (stale) nor the bare Portage atom. Verified
   # live against CVE-2020-8597's CPE match list.

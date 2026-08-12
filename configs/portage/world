@@ -113,6 +113,10 @@ www-client/lynx
 # (net-misc/gsasl) to avoid the cyrus-sasl -> tmpfiles -> Python chain. ncurses
 # UI links with -ltinfo (env/mutt-tinfo.conf) for this repo's tinfo-split ncurses.
 mail-client/mutt
+# irssi — terminal IRC client (no Perl). Pulls dev-libs/glib (+libffi); glib's
+# 8-byte atomics needed libatomic on i486 — was masked for it, now unblocked by
+# the cross-gcc libatomic.a fix (#32).
+net-irc/irssi
 
 # Terminal multiplexer
 app-misc/tmux

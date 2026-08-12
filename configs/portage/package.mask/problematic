@@ -55,12 +55,6 @@ sys-apps/usbutils
 # in package.use/nmap.
 net-analyzer/nmap
 
-# irssi → glib needs libatomic; cross-gcc only has libatomic.so (no libatomic.a).
-# Fix: verify static-libs was correctly applied to the cross-gcc package and
-# that libatomic.a exists at /usr/lib/gcc/i486-linux-musl/<ver>/libatomic.a.
-# Check with: make shell → ls /usr/lib/gcc/i486-linux-musl/*/libatomic*
-net-irc/irssi
-
 # nethack: 5.0.0 needs USE=lua (REQUIRED_USE on lua_single_target_*, unset
 # in this build) and restructured util/Makefile build vars that this repo's
 # bashrc CC_FOR_BUILD cross-compile patch was not written for (see
