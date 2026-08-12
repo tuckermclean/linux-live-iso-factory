@@ -19,6 +19,9 @@ sys-apps/kmod tools
 # our global USE="-*" strips their defaults.
 app-alternatives/* reference
 app-alternatives/tar gnu
+# cpio's alternatives selector has REQUIRED_USE exactly-one-of(gnu libarchive)
+# which the wildcard `reference` above doesn't satisfy — pick GNU cpio.
+app-alternatives/cpio gnu
 
 # Bash - minimal static build
 app-shells/bash static -net -plugins readline
