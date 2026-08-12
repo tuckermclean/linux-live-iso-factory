@@ -271,8 +271,24 @@ mail-client/mutt static ssl imap smtp sasl gsasl -gpgme -autocrypt -idn -kerbero
 # USE="-*" leaves both off). No server, no gnutls/idn/kerberos extras.
 net-misc/gsasl static-libs client -server
 
-# irssi - IRC client with SSL
-net-irc/irssi static ssl -minimal -otr -socks -nls
+# irssi — terminal IRC client. No Perl scripting (project doctrine excludes
+# Perl from the rootfs; perl stays a build-host BDEPEND). No OTR (would pull
+# libotr+libgcrypt) and no built-in proxy/BNC. SSL is NOT a USE flag here —
+# dev-libs/openssl:= is an unconditional RDEPEND (already in world). The old
+# `static ssl -minimal -socks -nls` tokens don't exist on irssi-1.4.5's IUSE.
+net-irc/irssi -perl -otr -proxy
+
+# glib — irssi's crux dependency (RDEPEND). glib's 8-byte atomics needed
+# libatomic on -march=i486, which is why irssi was masked — now fixed by the
+# cross-gcc libatomic.a build (#32). static-libs makes meson build both libs;
+# the generic bashrc meson hook forces =static, and the glib-specific hook
+# disables libmount (else it'd pull util-linux's blkid symbols). The large
+# optional surface is off (no introspection→Python/bison, no dbus/mime/elf/etc).
+dev-libs/glib static static-libs -dbus -debug -doc -elf -introspection -mime -selinux -sysprof -systemtap -test -utils -xattr
+
+# libffi — transitive dep of glib (GObject closure marshalling). Small,
+# dependency-free autotools/libtool; native static-libs IUSE.
+dev-libs/libffi static static-libs -debug -exec-static-trampoline -pax-kernel -test
 
 # figlet - ASCII art text banners
 app-misc/figlet static
