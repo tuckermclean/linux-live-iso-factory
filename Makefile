@@ -328,9 +328,16 @@ restore-cache: ensure-dirs ensure-volume
 	aws s3 sync --no-sign-request s3://$(S3_BUCKET)/packages/$(BUILD_EPOCH)/ $(PROJECT_DIR)/output/packages/
 
 # Sync portage tree in volume
+SNAP_MIRROR := $(PROJECT_DIR)/output/portage-mirror
+SNAP_MOUNT  := -v $(SNAP_MIRROR):/var/monolith-portage-mirror
+
 sync-portage: ensure-volume ensure-dirs
-	@echo "==> Syncing portage tree (pinned: $(BUILD_EPOCH))"
-	$(DOCKER_RUN) $(IMAGE_NAME) emerge-webrsync --revert=$(BUILD_EPOCH)
+	@echo "==> Fetching portage snapshot (pinned: $(BUILD_EPOCH)) via self-hosted mirror"
+	@mkdir -p $(SNAP_MIRROR)
+	SYNC_MIRROR_DIR=$(SNAP_MIRROR) BUILD_EPOCH=$(BUILD_EPOCH) sh scripts/sync-portage.sh fetch-only
+	@echo "==> emerge-webrsync from the local mirror"
+	$(DOCKER_RUN) $(SNAP_MOUNT) -e BUILD_EPOCH=$(BUILD_EPOCH) $(IMAGE_NAME) \
+		sh -c 'GENTOO_MIRRORS="file:///var/monolith-portage-mirror https://distfiles.gentoo.org" emerge-webrsync --revert=$(BUILD_EPOCH)'
 
 # Build all packages: kernel, busybox, and userland (with parallel jobs)
 build-packages: ensure-volume ensure-dirs

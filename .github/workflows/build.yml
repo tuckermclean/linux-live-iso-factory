@@ -201,6 +201,8 @@ jobs:
       - run: make ensure-dirs ensure-volume
 
       - name: Sync portage
+        env:
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
         run: make sync-portage
 
       - name: Purge stale savedconfig binpkgs
