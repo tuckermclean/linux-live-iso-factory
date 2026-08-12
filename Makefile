@@ -506,8 +506,15 @@ check-updates: ensure-volume ensure-dirs
 	@echo "==> Checking for package updates"
 	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/update-versions.sh check
 
-# Update versions.lock with latest portage package versions
-update-versions: ensure-volume ensure-dirs
+# Update versions.lock with latest portage package versions.
+# Depends on sync-portage (not just ensure-volume/ensure-dirs): update-versions.sh
+# queries portageq against the portage tree in the monolith-repos volume, and since
+# the TOOLCHAIN_EPOCH/BUILD_EPOCH split (see docs/version-pinning.md), that tree is
+# no longer refreshed as a side effect of build-image — only sync-portage populates
+# it at the current BUILD_EPOCH. Without this prereq, update-versions could silently
+# resolve versions against a stale (or, on a fresh volume, TOOLCHAIN_EPOCH-baked)
+# tree instead of the runtime BUILD_EPOCH snapshot.
+update-versions: ensure-volume ensure-dirs sync-portage
 	@echo "==> Updating versions.lock"
 	$(DOCKER_RUN) $(IMAGE_NAME) /scripts/update-versions.sh update
 
@@ -520,15 +527,21 @@ update-build-pins:
 update-all: update-build-pins update-versions
 	@echo "==> All pins updated. Run 'make build-image' to rebuild the factory."
 
-# Correctly bump BUILD_EPOCH end to end: unlike `update-all` (which updates
-# versions.lock against whatever image is already local, i.e. the PREVIOUS
-# epoch if the Dockerfile just changed), this rebuilds the image at the NEW
-# epoch *between* the pin bump and the versions.lock regeneration, so
-# versions.lock actually reflects the new epoch's portage tree. This is the
-# same sequence .github/workflows/pin-bump.yml automates in CI — see
-# docs/version-pinning.md. crossdev.lock still intentionally lags by one
-# cycle (queried from the pre-bump image inside update-build-pins.sh); that
-# is documented, existing behavior, not a bug in this target.
+# Correctly bump BUILD_EPOCH end to end: update-versions now depends on
+# sync-portage (see that target), so it always regenerates versions.lock
+# against the freshly-fetched BUILD_EPOCH snapshot regardless of whether
+# build-image ran first — unlike the pre-decoupling design, build-image is
+# no longer what makes versions.lock correct (build-image only rebuilds at
+# TOOLCHAIN_EPOCH, which a BUILD_EPOCH-only bump doesn't touch). build-image
+# is kept in this chain so the sequence still does the right thing if
+# TOOLCHAIN_EPOCH was also bumped by hand; it's a cheap no-op otherwise
+# (base-tools image unchanged, see BASE_HASH note above build-image).
+# `update-all` (update-build-pins + update-versions, no build-image) is now
+# equally correct for a BUILD_EPOCH-only bump for the same reason.
+# crossdev.lock still intentionally lags by one TOOLCHAIN_EPOCH bump cycle
+# (queried from the pre-bump image inside update-build-pins.sh); that is
+# documented, existing behavior, not a bug in this target — see
+# docs/version-pinning.md.
 bump-pins: update-build-pins build-image update-versions
 	@echo "==> BUILD_EPOCH bumped and both locks regenerated against the new epoch."
 	@echo "    Review the diff, then validate with a full 'make all' + 'make attestation'"
