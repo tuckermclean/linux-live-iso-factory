@@ -288,8 +288,6 @@ build-image: ensure-dirs
 				        --binutils "$(CROSS_BINUTILS_VER)" \
 				        --kernel  "$(CROSS_HEADERS_VER)" \
 				        --portage --verbose && \
-				    echo "cross-$$CROSS_TARGET/gcc static-libs" \
-				        > /etc/portage/package.use/cross-gcc-static && \
 				    emerge --update --newuse "cross-$$CROSS_TARGET/gcc" && \
 				    rm -rf /var/cache/distfiles/* && \
 				    mkdir -p \
