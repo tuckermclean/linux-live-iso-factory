@@ -89,6 +89,10 @@ allowlist:
   # ── NAT router helper (SP2) — pending monolith-base ebuild ──────────────────
   - usr/sbin/monolith-router
 
+  # ── Lazy console shell — agetty auto-login target; keeps bash off idle
+  #    consoles (RAM). Hand-installed by build-rootfs.sh. Pending monolith-base.
+  - usr/sbin/monolith-console
+
   # ── Prompt customisation ─────────────────────────────────────────────────────
   - etc/bash/bashrc.d/99-monolith-square.bash
 

@@ -36,11 +36,14 @@ sequence ever changes — this script has no other source of truth):
 Two important, non-obvious facts about this ISO that shape this script:
 
 1. There is no login prompt. /etc/inittab runs
-     agetty -n -l /bin/bash ...
+     agetty -n -l /usr/sbin/monolith-console ...
    on every console (tty1, tty2, ttyS0) — `-n` skips the username/password
-   prompt entirely and execs bash directly as root. "Passwordless root" here
-   means "no authentication step happens at all", not "empty password is
-   accepted at a login: prompt". This script never sends a username.
+   prompt entirely. "Passwordless root" here means "no authentication step
+   happens at all", not "empty password is accepted at a login: prompt". This
+   script never sends a username. monolith-console is a lazy shell: a tiny dash
+   that blocks on `read` and only becomes bash once the console is touched (so
+   idle consoles keep no bash resident — RAM matters on a 486). wait_for_shell()
+   below sends the waking newline before it expects a live shell.
 
 2. BusyBox is initramfs-only. The main squashfs rootfs installs iproute2 +
    dhcpcd (see configs/portage/world, section "replaces BusyBox
@@ -460,8 +463,16 @@ def wait_for_shell(child, timeout=60):
     repeatedly send a unique echo and wait for it to come back — this also
     absorbs the race where agetty flushes pending tty input right before it
     hands off to bash, which would otherwise silently eat an early command.
+
+    The console runs the lazy /usr/sbin/monolith-console stub: a tiny dash that
+    blocks on `read` and only execs bash once a line arrives. The bare newline
+    below is that waking keypress; the stub consumes it (and, at worst, one echo
+    line) and becomes bash, after which the retry loop's echo comes back.
     """
     marker = f"MONOLITH_SHELL_READY_{uuid.uuid4().hex[:8]}"
+    # Wake the lazy console shell: this newline satisfies monolith-console's
+    # `read`, so it exec's bash before we start looking for our echo.
+    child.sendline("")
     deadline = time.time() + timeout
     while time.time() < deadline:
         child.sendline(f"echo {marker}")
