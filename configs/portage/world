@@ -138,6 +138,16 @@ sys-apps/which
 # cpio — extract/create cpio archives; notably the initrd is a newc cpio, so
 # this lets you crack it open on the box itself (same tool the factory uses).
 app-arch/cpio
+# bc — arbitrary-precision calculator (echo '2^10' | bc). GNU impl selected via
+# app-alternatives/bc gnu.
+sys-devel/bc
+# jq — command-line JSON processor.
+app-misc/jq
+# ncdu — ncurses disk-usage explorer. Pinned <2: ncdu 2.x is written in Zig
+# (no Zig toolchain here); 1.22 is the last C release.
+<sys-fs/ncdu-2
+# pv — pipe viewer: progress bars/throughput for shell pipelines.
+sys-apps/pv
 
 # Filesystem tools
 sys-fs/e2fsprogs

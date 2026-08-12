@@ -19,6 +19,7 @@ sys-apps/kmod tools
 # our global USE="-*" strips their defaults.
 app-alternatives/* reference
 app-alternatives/tar gnu
+app-alternatives/bc gnu
 
 # Bash - minimal static build
 app-shells/bash static -net -plugins readline
