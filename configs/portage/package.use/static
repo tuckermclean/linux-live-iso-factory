@@ -135,8 +135,46 @@ net-misc/whois static
 # traceroute
 net-analyzer/traceroute static
 
+# iperf3 — SCTP support pulls in net-misc/lksctp-tools; not needed for the
+# TCP/UDP bandwidth-testing use case and keeps the dependency set minimal.
+net-misc/iperf -sctp
+
+# mtr — combined ping+traceroute network diagnostic (My TraceRoute). ncurses
+# UI (sys-libs/ncurses is already in world with tinfo+unicode — mtr-0.96-r1
+# ships a Gentoo patch specifically for tinfo-split ncurses, see report).
+# JSON output via jansson (new transitive dep — dev-libs/jansson, MIT,
+# static-libs; see .batteries/reports/mtr.md §3). No GTK (-gui avoids
+# pulling glib+gtk+:3).
+# No file capabilities (-filecaps): raw sockets need root/CAP_NET_RAW, and
+# this disc runs everything as root already, so fcaps.eclass's setcap step
+# (and its sys-libs/libcap IDEPEND) is unneeded — same as this rootfs's
+# existing no-cap posture elsewhere. filecaps also already defaults off
+# under the global "USE=-*" reset; the line is kept for self-documentation
+# matching this file's house style (e.g. the kmod/nethack entries above).
+net-analyzer/mtr ncurses jansson -gui -filecaps
+
 # net-tools - ifconfig, netstat, arp, route
 sys-apps/net-tools static -nls
+
+# ethtool — NIC driver/hardware control tool. Netlink interface via
+# net-libs/libmnl (tiny, static-clean; Alpine ships a libmnl-static
+# subpackage as direct evidence static linking is supported upstream).
+# The ioctl fallback for old kernels/drivers stays compiled in regardless —
+# netlink and ioctl are not mutually exclusive in this ebuild.
+# No native IUSE=static on this ebuild (unlike net-tools/curl/wget); static
+# linking here comes entirely from the repo-wide package.env static.conf
+# catch-all (see configs/portage/package.env/cross-compile), same mechanism
+# already relied on by hdparm/dmidecode/smartmontools/tcpdump/etc., which
+# also carry no package.use/static entry of their own. "static" is included
+# here only for documentation parity with dev-libs/openssl and
+# dev-libs/libpcre2 above, which do the same despite lacking IUSE=static too.
+sys-apps/ethtool static netlink
+
+# libmnl — minimalistic netlink library (net-tools/nftables-adjacent code,
+# now also pulled in by ethtool's netlink USE). New transitive dep; see
+# .batteries/reports/ethtool.md §3. static-libs so ethtool links libmnl.a,
+# not a .so this rootfs can't load.
+net-libs/libmnl static static-libs
 
 # tmux - terminal multiplexer
 app-misc/tmux static -minimal
