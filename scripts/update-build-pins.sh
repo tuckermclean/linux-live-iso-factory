@@ -2,18 +2,28 @@
 #
 # update-build-pins.sh - Update Dockerfile build pins
 #
-# Manages the build epoch that pins all build inputs to a single date:
-#   ARG BUILD_EPOCH  — stage3 base image date + portage snapshot date (always equal)
-#   ENV SOURCE_DATE_EPOCH — Unix epoch derived from BUILD_EPOCH
+# Two independent epoch pins (see docs/version-pinning.md "two-pin model"):
+#   ARG BUILD_EPOCH      — runtime portage snapshot date. Cheap to bump: no
+#                           image rebuild, drives ENV SOURCE_DATE_EPOCH.
+#                           This is the routine, auto-mergeable flow
+#                           (.github/workflows/pin-bump.yml).
+#   ARG TOOLCHAIN_EPOCH  — builder image date (stage3 + baked crossdev tree).
+#                           Rare/deliberate: requires `make build-image` and a
+#                           crossdev.lock regen. Human-gated flow
+#                           (.github/workflows/toolchain-bump.yml).
 #
-# Runs on the HOST (no Docker required).
+# Runs on the HOST (no Docker required, except crossdev.lock regeneration
+# under `update-toolchain`, which queries the existing `monolith-builder`
+# image if present and no-ops otherwise).
 #
 # Usage:
-#   update-build-pins.sh check              # Show current pins vs available latest
-#   update-build-pins.sh update              # Fetch latest and update Dockerfile
-#   update-build-pins.sh update YYYYMMDD     # Force a specific target epoch instead
-#                                             # of "latest" (still verified against
-#                                             # distfiles.gentoo.org before applying)
+#   update-build-pins.sh check                     # Show current BUILD_EPOCH pin vs available latest
+#   update-build-pins.sh update                     # Fetch latest and bump BUILD_EPOCH (+ SOURCE_DATE_EPOCH)
+#   update-build-pins.sh update YYYYMMDD            # Force a specific target epoch instead
+#                                                    # of "latest" (still verified against
+#                                                    # distfiles.gentoo.org before applying)
+#   update-build-pins.sh update-toolchain           # Fetch latest and bump TOOLCHAIN_EPOCH
+#   update-build-pins.sh update-toolchain YYYYMMDD  # Force a specific target epoch instead
 
 set -euo pipefail
 
@@ -30,8 +40,11 @@ usage() {
     echo "Usage: $0 <command> [YYYYMMDD]"
     echo ""
     echo "Commands:"
-    echo "  check                Show current pins vs available latest"
-    echo "  update [YYYYMMDD]    Fetch latest (or use the given date) and update Dockerfile"
+    echo "  check                        Show current BUILD_EPOCH pin vs available latest"
+    echo "  update [YYYYMMDD]            Fetch latest (or use the given date) and bump BUILD_EPOCH"
+    echo "                               (runtime snapshot pin — cheap, no image rebuild)"
+    echo "  update-toolchain [YYYYMMDD]  Fetch latest (or use the given date) and bump TOOLCHAIN_EPOCH"
+    echo "                               (builder image pin — rare, requires 'make build-image')"
     exit 1
 }
 
@@ -90,9 +103,15 @@ print(int(dt.timestamp()))
 "
 }
 
+# Read current value of a given ARG pin (e.g. BUILD_EPOCH, TOOLCHAIN_EPOCH) from Dockerfile
+get_current_pin() {
+    local name="$1"
+    grep "^ARG ${name}=" "${DOCKERFILE}" | cut -d= -f2
+}
+
 # Read current BUILD_EPOCH from Dockerfile
 get_current_epoch() {
-    grep '^ARG BUILD_EPOCH=' "${DOCKERFILE}" | cut -d= -f2
+    get_current_pin BUILD_EPOCH
 }
 
 # Read current SOURCE_DATE_EPOCH from Dockerfile
@@ -277,6 +296,14 @@ cmd_update() {
     else
         echo "  Updating BUILD_EPOCH: ${current_epoch} → ${latest_date}"
         sed -i "s/^ARG BUILD_EPOCH=.*/ARG BUILD_EPOCH=${latest_date}/" "${DOCKERFILE}"
+        # Fail closed: never proceed if the sed silently didn't apply
+        # (e.g. the ARG line's format drifted).
+        local applied_epoch
+        applied_epoch=$(get_current_pin BUILD_EPOCH)
+        if [[ "${applied_epoch}" != "${latest_date}" ]]; then
+            echo "ERROR: BUILD_EPOCH sed did not apply — Dockerfile shows '${applied_epoch}', expected '${latest_date}'" >&2
+            exit 1
+        fi
     fi
 
     new_source_epoch=$(date_to_epoch "${latest_date}")
@@ -288,17 +315,86 @@ cmd_update() {
     else
         echo "  Updating SOURCE_DATE_EPOCH: ${current_source_epoch} → ${new_source_epoch}"
         sed -i "s/^ENV SOURCE_DATE_EPOCH=.*/ENV SOURCE_DATE_EPOCH=${new_source_epoch}/" "${DOCKERFILE}"
+        local applied_source_epoch
+        applied_source_epoch=$(get_current_source_epoch)
+        if [[ "${applied_source_epoch}" != "${new_source_epoch}" ]]; then
+            echo "ERROR: SOURCE_DATE_EPOCH sed did not apply — Dockerfile shows '${applied_source_epoch}', expected '${new_source_epoch}'" >&2
+            exit 1
+        fi
+    fi
+
+    echo ""
+    echo "==> Done. This is the cheap runtime-snapshot pin — no image rebuild needed."
+    echo "    Run 'make sync-portage update-versions' to regenerate versions.lock against it."
+}
+
+# Command: update-toolchain [YYYYMMDD]
+# Bumps TOOLCHAIN_EPOCH — the builder-image pin (stage3 base + baked crossdev
+# toolchain tree), NOT BUILD_EPOCH (the runtime snapshot pin, see cmd_update).
+# This is the rare, human-gated flow (.github/workflows/toolchain-bump.yml):
+# after this runs, the image must be rebuilt (`make build-image`) and
+# configs/portage/crossdev.lock regenerated. This does NOT touch
+# SOURCE_DATE_EPOCH — that's derived from BUILD_EPOCH, the runtime snapshot,
+# which a toolchain-only bump does not change.
+cmd_update_toolchain() {
+    echo "==> Updating Dockerfile toolchain pin (TOOLCHAIN_EPOCH)"
+
+    local forced_date="${1:-}"
+    local current_epoch latest_date
+    current_epoch=$(get_current_pin TOOLCHAIN_EPOCH)
+
+    if [[ -n "${forced_date}" ]]; then
+        if ! [[ "${forced_date}" =~ ^[0-9]{8}$ ]]; then
+            echo "ERROR: forced target epoch must be YYYYMMDD, got: ${forced_date}" >&2
+            exit 1
+        fi
+        echo "  Using forced target epoch: ${forced_date}"
+        latest_date="${forced_date}"
+    else
+        echo "  Fetching latest stage3 amd64-openrc tag from Docker Hub..."
+        latest_date=$(fetch_latest_stage3_date)
+
+        if [[ -z "${latest_date}" ]]; then
+            echo "ERROR: Could not fetch latest stage3 date — network issue?" >&2
+            exit 1
+        fi
+    fi
+
+    # Fail-closed guard, mirroring cmd_update: verify a matching portage
+    # snapshot exists too. TOOLCHAIN_EPOCH's own tree is baked from stage3
+    # rather than this snapshot, but both epochs are seeded from the same
+    # date family today, and this keeps the same verified-before-applied
+    # discipline for the toolchain path.
+    echo "  Verifying portage snapshot exists for ${latest_date}..."
+    if ! verify_portage_snapshot "${latest_date}"; then
+        echo "ERROR: No portage snapshot found for ${latest_date} — cannot update TOOLCHAIN_EPOCH" >&2
+        exit 1
+    fi
+
+    if [[ "${current_epoch}" == "${latest_date}" ]]; then
+        echo "  TOOLCHAIN_EPOCH already up to date: ${current_epoch}"
+    else
+        echo "  Updating TOOLCHAIN_EPOCH: ${current_epoch} → ${latest_date}"
+        sed -i "s/^ARG TOOLCHAIN_EPOCH=.*/ARG TOOLCHAIN_EPOCH=${latest_date}/" "${DOCKERFILE}"
+        # Fail closed: assert the sed actually applied before continuing.
+        local applied_epoch
+        applied_epoch=$(get_current_pin TOOLCHAIN_EPOCH)
+        if [[ "${applied_epoch}" != "${latest_date}" ]]; then
+            echo "ERROR: TOOLCHAIN_EPOCH sed did not apply — Dockerfile shows '${applied_epoch}', expected '${latest_date}'" >&2
+            exit 1
+        fi
     fi
 
     echo ""
     update_crossdev_lock
     echo ""
-    echo "==> Done. Run 'make build-image' to rebuild the factory with the new base."
+    echo "==> Done. Run 'make build-image' to rebuild the toolchain image with the new base."
 }
 
 # Main
 case "${1:-}" in
-    check)  cmd_check ;;
-    update) cmd_update "${2:-}" ;;
-    *)      usage ;;
+    check)             cmd_check ;;
+    update)            cmd_update "${2:-}" ;;
+    update-toolchain)  cmd_update_toolchain "${2:-}" ;;
+    *)                 usage ;;
 esac

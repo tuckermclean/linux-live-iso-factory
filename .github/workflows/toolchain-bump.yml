@@ -1,0 +1,316 @@
+name: Toolchain Bump
+
+# Automates the RARE, HUMAN-GATED TOOLCHAIN_EPOCH pin lever documented in
+# docs/version-pinning.md ("two-pin model"). TOOLCHAIN_EPOCH pins the
+# builder image (stage3 base + baked crossdev toolchain tree) — bumping it
+# means a real image rebuild (new gcc/musl cross-toolchain compiled from
+# scratch), unlike the cheap, auto-merged BUILD_EPOCH-only flow in
+# .github/workflows/pin-bump.yml.
+#
+# Manually triggered only (workflow_dispatch). A `schedule:` trigger for
+# regular maintenance cadence is a planned follow-up (see
+# docs/version-pinning.md "Deferred follow-ups") — deliberately NOT added
+# here yet; today someone decides when a toolchain bump is worth the
+# rebuild cost and dispatches this by hand.
+#
+# This:
+#   1. Bumps Dockerfile's TOOLCHAIN_EPOCH (scripts/update-build-pins.sh
+#      update-toolchain) and regenerates configs/portage/crossdev.lock from
+#      the pre-bump image (documented one-cycle lag — see that script).
+#   2. Rebuilds and pushes the builder image at the new TOOLCHAIN_EPOCH
+#      (make push-image, which depends on build-image).
+#   3. Pushes a branch and dispatches build.yml on it for full
+#      build+boot+attestation validation, same as pin-bump.yml — build.yml
+#      is reused as-is, not duplicated.
+#   4. Opens a PR with the pin diff + validation results.
+#
+# UNLIKE pin-bump.yml, this workflow NEVER auto-merges, green or not — a
+# toolchain bump changes what compiler/libc every target package is built
+# with, which is consequential enough to always want a human's eyes before
+# it lands, regardless of automated validation results.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_epoch:
+        description: >-
+          Force a specific TOOLCHAIN_EPOCH (YYYYMMDD) instead of using the
+          latest available stage3 tag. Leave empty for normal behavior.
+        required: false
+        type: string
+
+concurrency:
+  group: toolchain-bump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  bump-and-validate:
+    runs-on: ubuntu-latest
+    # Budget: ~100min for the crossdev image rebuild (new toolchain compiled
+    # from scratch) + lock regeneration, ~240min bounded wait for the
+    # dispatched build.yml validation run, plus slack. GitHub-hosted runners
+    # hard-cap a single job at 360 minutes regardless of this setting — see
+    # the "Wait for validation" step, which degrades to a "timed_out" PR
+    # status rather than being silently killed.
+    timeout-minutes: 355
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate target_epoch input
+        if: inputs.target_epoch != ''
+        run: |
+          if ! [[ "${{ inputs.target_epoch }}" =~ ^[0-9]{8}$ ]]; then
+            echo "::error::target_epoch must be YYYYMMDD, got: ${{ inputs.target_epoch }}"
+            exit 1
+          fi
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Ensure labels exist
+        run: |
+          gh label create "toolchain-bump" --color "5319e7" \
+            --description "Automated TOOLCHAIN_EPOCH pin bump (human-gated)" --force
+          gh label create "needs-fixup" --color "d93f0b" \
+            --description "Automated pin bump failed or could not complete validation" --force
+          gh label create "validated" --color "0e8a16" \
+            --description "Automated pin bump passed full build+CVE+boot validation" --force
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: make ensure-dirs
+
+      - name: Pull current-epoch builder image for cache
+        run: |
+          docker pull "${REGISTRY}/monolith-builder:latest" || true
+          docker tag "${REGISTRY}/monolith-builder:latest" monolith-builder || true
+          docker pull "${REGISTRY}/monolith-builder-base-tools:latest" || true
+          docker tag "${REGISTRY}/monolith-builder-base-tools:latest" monolith-builder-base-tools || true
+
+      - name: Record current TOOLCHAIN_EPOCH
+        id: current
+        run: |
+          echo "epoch=$(grep '^ARG TOOLCHAIN_EPOCH=' Dockerfile | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Bump TOOLCHAIN_EPOCH (+ regenerate crossdev.lock)
+        env:
+          OLD_EPOCH: ${{ steps.current.outputs.epoch }}
+        run: |
+          set -euo pipefail
+          scripts/update-build-pins.sh update-toolchain "${{ inputs.target_epoch }}" 2>&1 | tee /tmp/toolchain-bump-update.log
+          NOW=$(grep '^ARG TOOLCHAIN_EPOCH=' Dockerfile | cut -d= -f2)
+          if [ "$NOW" == "$OLD_EPOCH" ]; then
+            echo "::error::TOOLCHAIN_EPOCH is still $NOW — no update available (or forced value equals current); nothing to bump."
+            exit 1
+          fi
+          echo "NEW_EPOCH=$NOW" >> "$GITHUB_ENV"
+
+      - name: Create branch
+        env:
+          OLD_EPOCH: ${{ steps.current.outputs.epoch }}
+        run: git switch -c "toolchain/bump-${OLD_EPOCH}-${NEW_EPOCH}"
+
+      - name: Rebuild and push builder image (new TOOLCHAIN_EPOCH)
+        id: build-image
+        run: |
+          if make push-image; then
+            echo "rc=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "rc=$?" >> "$GITHUB_OUTPUT"
+            echo "::warning::make push-image failed for TOOLCHAIN_EPOCH ${NEW_EPOCH} — opening PR for manual fixup, same as historical 'Fix musl build pins' follow-ups."
+          fi
+
+      - name: Upload crossdev logs on failure
+        if: steps.build-image.outputs.rc != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crossdev-logs-${{ github.run_id }}
+          path: output/portage-logs/
+          retention-days: 7
+
+      - name: Compute pin diff summary
+        id: diff
+        run: |
+          # crossdev.lock is regenerated inside the builder container (via the
+          # /configs bind mount), so on the host it is owned by root and the
+          # unprivileged runner's `git add` fails to index it ("Permission
+          # denied"). Reclaim ownership before staging.
+          sudo chown -R "$(id -u):$(id -g)" configs/portage
+          git add -A
+          git diff --cached --stat -- Dockerfile configs/portage/crossdev.lock \
+            > /tmp/diffstat.txt || true
+          git diff --cached -- configs/portage/crossdev.lock > /tmp/crossdev.diff || true
+
+      - name: Commit and push
+        env:
+          OLD_EPOCH: ${{ steps.current.outputs.epoch }}
+        run: |
+          git commit -m "chore(pins): bump TOOLCHAIN_EPOCH ${OLD_EPOCH} -> ${NEW_EPOCH}
+
+          Automated by .github/workflows/toolchain-bump.yml (human-gated —
+          never auto-merged; see .github/workflows/pin-bump.yml for the
+          separate cheap, auto-merged BUILD_EPOCH flow).
+          - Dockerfile: TOOLCHAIN_EPOCH
+          - configs/portage/crossdev.lock: regenerated ($( [[ '${{ steps.build-image.outputs.rc }}' == '0' ]] && echo yes || echo 'SKIPPED - see PR body' ))
+          - builder image: rebuilt + pushed ($( [[ '${{ steps.build-image.outputs.rc }}' == '0' ]] && echo yes || echo 'FAILED - see PR body' ))"
+          git push -u origin "toolchain/bump-${OLD_EPOCH}-${NEW_EPOCH}"
+
+      - name: Dispatch full build + validation workflow
+        id: dispatch
+        if: steps.build-image.outputs.rc == '0'
+        env:
+          OLD_EPOCH: ${{ steps.current.outputs.epoch }}
+        run: |
+          set -euo pipefail
+          BRANCH="toolchain/bump-${OLD_EPOCH}-${NEW_EPOCH}"
+          BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run build.yml --ref "${BRANCH}"
+
+          echo "==> Waiting for the dispatched run to register..."
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list --workflow=build.yml --branch "${BRANCH}" \
+              --json databaseId,createdAt,event \
+              --jq "[.[] | select(.event==\"workflow_dispatch\" and .createdAt>=\"${BEFORE}\")] | sort_by(.createdAt) | last | .databaseId // empty")
+            [[ -n "${RUN_ID}" ]] && break
+            sleep 10
+          done
+
+          if [[ -z "${RUN_ID}" ]]; then
+            echo "::warning::Could not find the dispatched build.yml run — check the Actions tab manually."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "found=true"
+              echo "run_id=${RUN_ID}"
+              echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for validation run to complete
+        id: wait
+        if: steps.dispatch.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ steps.dispatch.outputs.run_id }}"
+          DEADLINE=$(( $(date +%s) + 240*60 ))
+          STATUS="in_progress"
+          CONCLUSION=""
+
+          while [[ "$(date +%s)" -lt "${DEADLINE}" ]]; do
+            STATUS=$(gh run view "${RUN_ID}" --json status --jq .status)
+            if [[ "${STATUS}" == "completed" ]]; then
+              CONCLUSION=$(gh run view "${RUN_ID}" --json conclusion --jq .conclusion)
+              break
+            fi
+            sleep 60
+          done
+
+          if [[ "${STATUS}" != "completed" ]]; then
+            echo "conclusion=timed_out" >> "$GITHUB_OUTPUT"
+          else
+            echo "conclusion=${CONCLUSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+          gh run view "${RUN_ID}" --json jobs \
+            --jq '.jobs[] | "- " + .name + ": " + .conclusion' \
+            > /tmp/job-results.txt || echo "(job list unavailable)" > /tmp/job-results.txt
+
+      - name: Assemble PR body
+        id: body
+        env:
+          OLD_EPOCH: ${{ steps.current.outputs.epoch }}
+        run: |
+          {
+            echo "## TOOLCHAIN_EPOCH bump"
+            echo "\`${OLD_EPOCH}\` -> \`${NEW_EPOCH}\`"
+            echo ""
+            echo "## Lock diff summary"
+            echo '```'
+            cat /tmp/diffstat.txt 2>/dev/null || echo "(no diff captured)"
+            echo '```'
+            echo ""
+            echo "<details><summary>configs/portage/crossdev.lock diff</summary>"
+            echo ""
+            echo '```diff'
+            cat /tmp/crossdev.diff 2>/dev/null
+            echo '```'
+            echo "</details>"
+            echo ""
+            echo "## Validation"
+            if [[ "${{ steps.build-image.outputs.rc }}" != "0" ]]; then
+              echo "**BLOCKED** — \`make push-image\` (build-image + push) failed at the new epoch"
+              echo "(rc=${{ steps.build-image.outputs.rc }}). crossdev.lock was regenerated from the"
+              echo "PRE-bump image but the new-epoch image itself did not build. Full"
+              echo "build+CVE+boot validation was NOT run. See the crossdev-logs-* artifact on this"
+              echo "run, and this repo's own history (\"Fix musl build pins\", \"Fix musl build pins 2\")"
+              echo "for the shape of the fix."
+            elif [[ "${{ steps.dispatch.outputs.found }}" != "true" ]]; then
+              echo "**UNKNOWN** — image rebuilt and pushed, but the validation run (\`build.yml\`"
+              echo "dispatched on this branch) could not be located. Check the Actions tab manually."
+            else
+              echo "Full pipeline (build + attestation, which includes the CVE gate — Pillar 3 of"
+              echo "\`scripts/attestation.sh\`) dispatched at: ${{ steps.dispatch.outputs.run_url }}"
+              echo ""
+              echo "Result: **${{ steps.wait.outputs.conclusion }}**"
+              echo ""
+              echo "Per-job results:"
+              cat /tmp/job-results.txt 2>/dev/null || echo "(unavailable)"
+              echo ""
+              if [[ "${{ steps.wait.outputs.conclusion }}" == "timed_out" ]]; then
+                echo "The run did not complete within this workflow's wait budget. It may still be"
+                echo "running — check the link above directly."
+              fi
+            fi
+            echo ""
+            echo "---"
+            echo "This PR was opened automatically by \`.github/workflows/toolchain-bump.yml\`."
+            echo "**A TOOLCHAIN_EPOCH bump is never auto-merged** — a human must review and merge,"
+            echo "even on fully-green validation, since it changes the compiler/libc every target"
+            echo "package is built with. See \`docs/version-pinning.md\` for the fixup loop if"
+            echo "validation failed."
+          } > /tmp/pr-body.md
+
+          LABEL="toolchain-bump"
+          if [[ "${{ steps.build-image.outputs.rc }}" != "0" ]]; then
+            LABEL="${LABEL},needs-fixup"
+          elif [[ "${{ steps.dispatch.outputs.found }}" == "true" && "${{ steps.wait.outputs.conclusion }}" == "success" ]]; then
+            LABEL="${LABEL},validated"
+          else
+            LABEL="${LABEL},needs-fixup"
+          fi
+          echo "labels=${LABEL}" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR
+        env:
+          OLD_EPOCH: ${{ steps.current.outputs.epoch }}
+        run: |
+          gh pr create \
+            --title "chore(pins): bump TOOLCHAIN_EPOCH ${OLD_EPOCH} -> ${NEW_EPOCH}" \
+            --body-file /tmp/pr-body.md \
+            --base master \
+            --head "toolchain/bump-${OLD_EPOCH}-${NEW_EPOCH}" \
+            --label "${{ steps.body.outputs.labels }}"
+          # NOTE: deliberately no `gh pr merge` step here, on any branch of
+          # validation outcome — see the workflow header comment.

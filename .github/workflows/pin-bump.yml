@@ -1,24 +1,40 @@
 name: Pin Bump
 
-# Automates the master BUILD_EPOCH pin lever documented in docs/version-pinning.md.
+# Automates the CHEAP, routine BUILD_EPOCH pin lever documented in
+# docs/version-pinning.md ("two-pin model"). BUILD_EPOCH is the *runtime*
+# portage snapshot pin — bumping it does NOT touch the builder image (that's
+# TOOLCHAIN_EPOCH's job; see .github/workflows/toolchain-bump.yml, the
+# separate HUMAN-GATED flow for that rarer, consequential bump).
 #
 # Weekly (and on manual dispatch) this:
-#   1. Checks whether a newer stage3/portage snapshot is available (host-side, no Docker).
-#      No-ops with a clear log line if already current.
+#   1. Checks whether a newer stage3/portage snapshot date is available
+#      (host-side, no Docker). No-ops with a clear log line if already
+#      current. (The stage3 date tag is used purely as the "is there
+#      something newer" freshness signal shared with TOOLCHAIN_EPOCH;
+#      BUILD_EPOCH itself only pins the runtime portage snapshot.)
 #   2. Bumps Dockerfile's BUILD_EPOCH + SOURCE_DATE_EPOCH.
-#   3. Builds the new-epoch builder image and regenerates configs/portage/crossdev.lock
-#      and configs/portage/versions.lock from it (the same two locks `make build-image`
-#      + `make update-versions` regenerate today, just automated end to end).
-#   4. Pushes a branch and dispatches the existing build.yml workflow on it to run the
-#      full build + attestation (SBOM/license/CVE) pipeline as validation — build.yml
-#      is reused as-is via `gh workflow run`, not duplicated here, so there is exactly
-#      ONE definition of "how to build and validate The Monolith". Any job build.yml
-#      gains later (e.g. a dedicated CVE-gate job, a boot-test job) is picked up
-#      automatically the next time this workflow runs — no changes needed here.
-#   5. Opens a PR with the pin diff + validation results. Never auto-merges — a human
-#      always approves, and a failed validation still produces a PR (labeled for
-#      fixup) rather than silently disappearing, matching this repo's own history of
-#      landing an epoch bump and then following up with "Fix musl build pins" commits.
+#   3. Archives the new portage snapshot to our S3 mirror
+#      (scripts/sync-portage.sh fetch-only) and regenerates
+#      configs/portage/versions.lock from it (make sync-portage
+#      update-versions) — the same two steps `make update-all` runs
+#      locally, automated end to end. Deliberately does NOT run
+#      `make build-image` or regenerate configs/portage/crossdev.lock —
+#      the image is unchanged by a BUILD_EPOCH-only bump, so rebuilding it
+#      would be pure wasted CI time.
+#   4. Pushes a branch and dispatches the existing build.yml workflow on it
+#      to run the full build + attestation (SBOM/license/CVE) pipeline as
+#      validation — build.yml is reused as-is via `gh workflow run`, not
+#      duplicated here, so there is exactly ONE definition of "how to build
+#      and validate The Monolith". Any job build.yml gains later (e.g. a
+#      dedicated CVE-gate job, a boot-test job) is picked up automatically
+#      the next time this workflow runs — no changes needed here.
+#   5. Opens a PR with the pin diff + validation results. On FULLY-GREEN
+#      validation, auto-merges it (`gh pr merge --squash --admin`) — this is
+#      the cheap, routine flow: a snapshot bump that passes the exact same
+#      full build+boot+attestation pipeline as any other change needs no
+#      human in the loop. On any red (or an inconclusive/timed-out
+#      validation run), the PR is left open labeled `needs-fixup` and is
+#      NEVER auto-merged.
 
 on:
   schedule:
@@ -107,12 +123,12 @@ jobs:
     needs: check
     if: needs.check.outputs.update_available == 'true'
     runs-on: ubuntu-latest
-    # Budget: ~100min for the local crossdev image rebuild + lock regeneration,
+    # Budget: ~15min for the snapshot archive + versions.lock regen,
     # ~240min bounded wait for the dispatched build.yml validation run, plus
     # slack. GitHub-hosted runners hard-cap a single job at 360 minutes
     # regardless of this setting — see the "Wait for validation" step, which
     # degrades to a "timed_out" PR status rather than being silently killed.
-    timeout-minutes: 355
+    timeout-minutes: 280
     permissions:
       contents: write
       pull-requests: write
@@ -140,6 +156,13 @@ jobs:
           gh label create "validated" --color "0e8a16" \
             --description "Automated pin bump passed full build+CVE+boot validation" --force
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -149,12 +172,12 @@ jobs:
 
       - run: make ensure-dirs
 
-      - name: Pull current-epoch builder image for cache
-        run: |
-          docker pull "${REGISTRY}/monolith-builder:latest" || true
-          docker tag "${REGISTRY}/monolith-builder:latest" monolith-builder || true
-          docker pull "${REGISTRY}/monolith-builder-base-tools:latest" || true
-          docker tag "${REGISTRY}/monolith-builder-base-tools:latest" monolith-builder-base-tools || true
+      - name: Pull current builder image
+        # Needed to run `make sync-portage`/`make update-versions` (both
+        # `docker run` the builder image) — NOT to rebuild it. This flow
+        # never runs `make build-image`; the image is pulled as-is, matching
+        # what build.yml itself pushed for the current (pre-bump) pins.
+        run: make pull-image
 
       - name: Create branch
         run: git switch -c "pins/bump-${OLD_EPOCH}-${NEW_EPOCH}"
@@ -169,54 +192,52 @@ jobs:
             exit 1
           fi
 
-      - name: Build new-epoch builder image (needed to regenerate locks)
-        id: build-image
+      - name: Archive new portage snapshot to S3
+        env:
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
         run: |
-          if make build-image; then
-            echo "rc=0" >> "$GITHUB_OUTPUT"
-          else
-            echo "rc=$?" >> "$GITHUB_OUTPUT"
-            echo "::warning::make build-image failed for epoch ${NEW_EPOCH} — locks will NOT be regenerated; opening PR for manual fixup, same as historical 'Fix musl build pins' follow-ups."
-          fi
+          set -euo pipefail
+          BUILD_EPOCH="${NEW_EPOCH}" sh scripts/sync-portage.sh fetch-only
 
       - name: Regenerate versions.lock
         id: update-versions
-        if: steps.build-image.outputs.rc == '0'
+        env:
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
         run: |
-          if make update-versions; then
+          if make sync-portage update-versions; then
             echo "rc=0" >> "$GITHUB_OUTPUT"
           else
             echo "rc=$?" >> "$GITHUB_OUTPUT"
-            echo "::warning::make update-versions failed for epoch ${NEW_EPOCH}."
+            echo "::warning::make sync-portage update-versions failed for epoch ${NEW_EPOCH}."
           fi
 
       - name: Compute pin diff summary
         id: diff
         run: |
-          # The lock files are regenerated inside the builder container (via the
-          # /configs bind mount), so on the host they are owned by root and the
-          # unprivileged runner's `git add` fails to index them ("Permission
+          # versions.lock is regenerated inside the builder container (via the
+          # /configs bind mount), so on the host it is owned by root and the
+          # unprivileged runner's `git add` fails to index it ("Permission
           # denied"). Reclaim ownership before staging.
           sudo chown -R "$(id -u):$(id -g)" configs/portage
           git add -A
-          git diff --cached --stat -- Dockerfile configs/portage/crossdev.lock configs/portage/versions.lock \
+          git diff --cached --stat -- Dockerfile configs/portage/versions.lock \
             > /tmp/diffstat.txt || true
-          git diff --cached -- configs/portage/crossdev.lock > /tmp/crossdev.diff || true
           git diff --cached -- configs/portage/versions.lock | head -200 > /tmp/versions.diff || true
 
       - name: Commit and push
         run: |
           git commit -m "chore(pins): bump BUILD_EPOCH ${OLD_EPOCH} -> ${NEW_EPOCH}
 
-          Automated by .github/workflows/pin-bump.yml.
+          Automated by .github/workflows/pin-bump.yml (cheap snapshot flow —
+          no image rebuild; see .github/workflows/toolchain-bump.yml for the
+          separate human-gated TOOLCHAIN_EPOCH flow).
           - Dockerfile: BUILD_EPOCH + SOURCE_DATE_EPOCH
-          - configs/portage/crossdev.lock: regenerated ($( [[ '${{ steps.build-image.outputs.rc }}' == '0' ]] && echo yes || echo 'SKIPPED - build-image failed' ))
           - configs/portage/versions.lock: regenerated ($( [[ '${{ steps.update-versions.outputs.rc }}' == '0' ]] && echo yes || echo 'SKIPPED - see PR body' ))"
           git push -u origin "pins/bump-${OLD_EPOCH}-${NEW_EPOCH}"
 
       - name: Dispatch full build + validation workflow
         id: dispatch
-        if: steps.build-image.outputs.rc == '0' && steps.update-versions.outputs.rc == '0'
+        if: steps.update-versions.outputs.rc == '0'
         run: |
           set -euo pipefail
           BRANCH="pins/bump-${OLD_EPOCH}-${NEW_EPOCH}"
@@ -287,13 +308,6 @@ jobs:
             cat /tmp/diffstat.txt 2>/dev/null || echo "(no diff captured)"
             echo '```'
             echo ""
-            echo "<details><summary>configs/portage/crossdev.lock diff</summary>"
-            echo ""
-            echo '```diff'
-            cat /tmp/crossdev.diff 2>/dev/null
-            echo '```'
-            echo "</details>"
-            echo ""
             echo "<details><summary>configs/portage/versions.lock diff (first 200 lines)</summary>"
             echo ""
             echo '```diff'
@@ -302,16 +316,12 @@ jobs:
             echo "</details>"
             echo ""
             echo "## Validation"
-            if [[ "${{ steps.build-image.outputs.rc }}" != "0" ]]; then
-              echo "**BLOCKED** — \`make build-image\` failed at the new epoch (rc=${{ steps.build-image.outputs.rc }})."
-              echo "Locks were not regenerated. Full build+CVE+boot validation was NOT run."
-              echo "See the crossdev-logs-* artifact on this repo's Actions run, and this repo's own"
-              echo "history (\"Fix musl build pins\", \"Fix musl build pins 2\") for the shape of the fix."
-            elif [[ "${{ steps.update-versions.outputs.rc }}" != "0" ]]; then
-              echo "**BLOCKED** — \`make update-versions\` failed (rc=${{ steps.update-versions.outputs.rc }})."
-              echo "versions.lock was not regenerated. Full build+CVE+boot validation was NOT run."
+            if [[ "${{ steps.update-versions.outputs.rc }}" != "0" ]]; then
+              echo "**BLOCKED** — \`make sync-portage update-versions\` failed for epoch ${NEW_EPOCH}"
+              echo "(rc=${{ steps.update-versions.outputs.rc }}). versions.lock was not regenerated."
+              echo "Full build+CVE+boot validation was NOT run."
             elif [[ "${{ steps.dispatch.outputs.found }}" != "true" ]]; then
-              echo "**UNKNOWN** — locks regenerated, but the validation run (\`build.yml\` dispatched on this"
+              echo "**UNKNOWN** — versions.lock regenerated, but the validation run (\`build.yml\` dispatched on this"
               echo "branch) could not be located. Check the Actions tab manually before merging."
             else
               echo "Full pipeline (build + attestation, which includes the CVE gate — Pillar 3 of"
@@ -326,20 +336,26 @@ jobs:
                 echo "The run did not complete within this workflow's wait budget. It may still be"
                 echo "running — check the link above directly."
               fi
+              if [[ "${{ steps.wait.outputs.conclusion }}" == "success" ]]; then
+                echo ""
+                echo "**This PR will be auto-merged** — fully-green validation on a cheap"
+                echo "BUILD_EPOCH-only bump (no image rebuild) needs no human in the loop."
+              fi
             fi
             echo ""
             echo "---"
             echo "This PR was opened automatically by \`.github/workflows/pin-bump.yml\`."
-            echo "It is never auto-merged. See \`docs/version-pinning.md\` for the fixup loop if"
-            echo "validation failed."
+            echo "It auto-merges on fully-green validation; any red (or unresolved) result leaves"
+            echo "it open, labeled \`needs-fixup\`, for manual follow-up per"
+            echo "\`docs/version-pinning.md\`."
           } > /tmp/pr-body.md
 
           LABEL="pin-bump"
-          if [[ "${{ steps.build-image.outputs.rc }}" != "0" || "${{ steps.update-versions.outputs.rc }}" != "0" ]]; then
+          if [[ "${{ steps.update-versions.outputs.rc }}" != "0" ]]; then
             LABEL="${LABEL},needs-fixup"
           elif [[ "${{ steps.dispatch.outputs.found }}" == "true" && "${{ steps.wait.outputs.conclusion }}" == "success" ]]; then
             LABEL="${LABEL},validated"
-          elif [[ "${{ steps.dispatch.outputs.found }}" == "true" ]]; then
+          else
             LABEL="${LABEL},needs-fixup"
           fi
           echo "labels=${LABEL}" >> "$GITHUB_OUTPUT"
@@ -352,3 +368,29 @@ jobs:
             --base master \
             --head "pins/bump-${OLD_EPOCH}-${NEW_EPOCH}" \
             --label "${{ steps.body.outputs.labels }}"
+
+      - name: Auto-merge on fully-green validation
+        # The whole point of the cheap flow: a BUILD_EPOCH-only bump that
+        # passes the exact same full build+boot+attestation pipeline
+        # (dispatched above) as any other change is safe to land without a
+        # human. Any non-success conclusion (failure, cancelled, timed_out,
+        # or the run not being found at all) leaves the PR open with the
+        # `needs-fixup` label instead — see the "Open PR" step above.
+        #
+        # CAVEAT: `--admin` merges by bypassing branch-protection required
+        # reviews/checks, which requires the invoking token/actor to hold
+        # admin (or an explicit bypass grant) on this repo. The default
+        # `GITHUB_TOKEN` acting as `github-actions[bot]` may NOT have that
+        # unless the repo's branch protection settings explicitly allow it
+        # to bypass. If this step 403s in practice, the PR still exists
+        # (opened above) and just needs a manual merge — nothing is lost,
+        # but the "cheap flow needs no human" property degrades to
+        # "cheap flow still needs one click." Confirm the bypass grant (or
+        # switch to `gh pr merge --squash --auto`, which instead waits on
+        # branch protection's own required checks against the PR) before
+        # relying on this for real.
+        if: steps.wait.outputs.conclusion == 'success'
+        run: |
+          set -euo pipefail
+          echo "==> Validation fully green — auto-merging pins/bump-${OLD_EPOCH}-${NEW_EPOCH}"
+          gh pr merge "pins/bump-${OLD_EPOCH}-${NEW_EPOCH}" --squash --admin --delete-branch
