@@ -99,6 +99,10 @@ net-dialup/ppp
 
 # Network clients
 www-client/lynx
+# mutt — terminal email client. IMAP+SMTP over TLS; SMTP send via USE=gsasl
+# (net-misc/gsasl) to avoid the cyrus-sasl -> tmpfiles -> Python chain. ncurses
+# UI links with -ltinfo (env/mutt-tinfo.conf) for this repo's tinfo-split ncurses.
+mail-client/mutt
 
 # Terminal multiplexer
 app-misc/tmux

@@ -219,7 +219,11 @@ www-client/w3m static ssl -minimal -imlib
 # mutt - email client with SSL/SMTP/IMAP; smtp requires sasl per REQUIRED_USE
 # sasl pulls cyrus-sasl → virtual/tmpfiles → systemd-utils Python trap; drop smtp+sasl
 # imap with ssl still works via IMAP LOGIN without SASL
-mail-client/mutt static ssl imap -smtp -sasl -minimal -berkdb -gdbm -kerberos -nls
+# mutt — email client. IMAP+SMTP over TLS. smtp needs sasl (REQUIRED_USE); use
+# USE=gsasl (net-misc/gsasl) instead of the default cyrus-sasl backend, which
+# would drag in virtual/tmpfiles -> systemd-utils -> Python. ncurses UI links
+# via -ltinfo (env/mutt-tinfo.conf) since this repo's ncurses is tinfo-split.
+mail-client/mutt static ssl imap smtp sasl gsasl -gpgme -autocrypt -idn -kerberos -hcache -doc -nls
 
 # irssi - IRC client with SSL
 net-irc/irssi static ssl -minimal -otr -socks -nls
