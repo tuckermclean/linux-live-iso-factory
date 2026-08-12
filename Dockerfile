@@ -126,10 +126,19 @@ RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace \
 # on every run. The Grype vulnerability database is stored in a separate
 # Docker volume (monolith-grype-db) and updated via `make grype-db-update`.
 RUN emerge dev-python/pyyaml && \
-    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-        | sh -s -- -b /usr/local/bin && \
-    curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-        | sh -s -- -b /usr/local/bin && \
+    for tool in syft grype; do \
+        n=0; \
+        until curl -sSfL "https://raw.githubusercontent.com/anchore/$tool/main/install.sh" \
+                | sh -s -- -b /usr/local/bin; do \
+            n=$((n+1)); \
+            if [ "$n" -ge 6 ]; then \
+                echo "FATAL: $tool install failed after 6 attempts (GitHub release API unreachable)" >&2; \
+                exit 1; \
+            fi; \
+            echo "  $tool install failed (transient GitHub error?) — retry $n/6 in 30s..." >&2; \
+            sleep 30; \
+        done; \
+    done && \
     rm -rf /var/cache/distfiles/*
 
 # Rust toolchain for building games-roguelike/rl144 — a 486-class Rust roguelike.
