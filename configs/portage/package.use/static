@@ -225,6 +225,11 @@ www-client/w3m static ssl -minimal -imlib
 # via -ltinfo (env/mutt-tinfo.conf) since this repo's ncurses is tinfo-split.
 mail-client/mutt static ssl imap smtp sasl gsasl -gpgme -autocrypt -idn -kerberos -hcache -doc -nls
 
+# gsasl — SASL library, pulled by mutt's USE=gsasl for SMTP AUTH. REQUIRED_USE
+# is any-of(client server); mutt is a client, so enable client (the global
+# USE="-*" leaves both off). No server, no gnutls/idn/kerberos extras.
+net-misc/gsasl static-libs client -server
+
 # irssi - IRC client with SSL
 net-irc/irssi static ssl -minimal -otr -socks -nls
 
