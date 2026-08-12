@@ -109,6 +109,10 @@ net-dialup/ppp
 
 # Network clients
 www-client/lynx
+# w3m - text web browser with HTTPS; ncurses UI, no images/X (see
+# .batteries/reports/w3m.md). Pulls dev-libs/boehm-gc (new transitive dep,
+# now linkable static thanks to the cross-gcc libatomic.a fix).
+www-client/w3m
 # mutt — terminal email client. IMAP+SMTP over TLS; SMTP send via USE=gsasl
 # (net-misc/gsasl) to avoid the cyrus-sasl -> tmpfiles -> Python chain. ncurses
 # UI links with -ltinfo (env/mutt-tinfo.conf) for this repo's tinfo-split ncurses.

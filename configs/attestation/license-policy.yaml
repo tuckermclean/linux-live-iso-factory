@@ -67,6 +67,8 @@ allowed_spdx:
   - BSD-with-attribution  # BSD + attribution clause (libpcap)
   - man-pages      # man-pages license (permissive, used by sys-apps/man-pages)
   - lsof           # lsof license (permissive, Purdue/Vic Abell)
+  - Boehm-GC       # dev-libs/boehm-gc, new dep of www-client/w3m
+  - w3m            # www-client/w3m's own license
 
 # Gentoo uses non-SPDX names for many common licenses. This table maps
 # Gentoo names to SPDX identifiers for policy matching.
@@ -127,6 +129,7 @@ gentoo_to_spdx:
   "BSD-with-attribution": "BSD-with-attribution"
   "man-pages":      "man-pages"
   "lsof":           "lsof"
+  "boehm-gc":       "Boehm-GC"
 
 # Licenses that are explicitly prohibited regardless of allowed_spdx.
 # An empty list means no additional denials beyond "not in allowed_spdx".
