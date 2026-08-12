@@ -95,6 +95,13 @@ www-client/lynx
 # w3m - text web browser with HTTPS; ncurses UI, no images/X (see
 # .batteries/reports/w3m.md). Pulls dev-libs/boehm-gc (new transitive dep).
 www-client/w3m
+# mutt - email client. IMAP+SMTP over TLS (dev-libs/openssl, already in
+# world). SMTP send uses USE=gsasl (net-misc/gsasl, new dep — see
+# .batteries/reports/mutt.md §2) instead of the default cyrus-sasl backend,
+# which would otherwise drag in virtual/tmpfiles -> sys-apps/systemd-utils
+# -> Python. No local MTA on this rootfs, so USE=smtp is what makes mail
+# *sending* actually work, not just reading.
+mail-client/mutt
 
 # Terminal multiplexer
 app-misc/tmux

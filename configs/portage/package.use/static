@@ -225,10 +225,34 @@ dev-libs/boehm-gc static-libs
 # Line kept for documentation parity even though there's nothing to toggle.
 dev-libs/libatomic_ops static
 
-# mutt - email client with SSL/SMTP/IMAP; smtp requires sasl per REQUIRED_USE
-# sasl pulls cyrus-sasl → virtual/tmpfiles → systemd-utils Python trap; drop smtp+sasl
-# imap with ssl still works via IMAP LOGIN without SASL
-mail-client/mutt static ssl imap -smtp -sasl -minimal -berkdb -gdbm -kerberos -nls
+# mutt - email client. REQUIRED_USE: imap? (ssl); smtp? (ssl sasl);
+# gsasl? (sasl). ssl uses openssl (already in world) over gnutls to avoid
+# a second TLS stack. imap+smtp cover read+send; hcache/gpgme/idn/kerberos/
+# doc/autocrypt/slang left at the global -* default (see report §2 for why
+# each is skippable) — this rootfs ships no local MTA, so smtp is what makes
+# *sending* mail work at all, not an optional extra.
+#
+# sasl backend: gsasl, not the default cyrus-sasl. cyrus-sasl inherits
+# tmpfiles.eclass -> RDEPEND=virtual/tmpfiles -> (USE=-systemd here) ->
+# sys-apps/systemd-utils[tmpfiles], which is a Python (python-single-r1)
+# package this build has no interest in cross-compiling. The only other
+# virtual/tmpfiles provider, sys-apps/seedfiles, exists in ::gentoo only as
+# a keywordless -9999 live ebuild, which this repo's ACCEPT_KEYWORDS="*"
+# explicitly excludes (see make.conf) -- so gsasl is the clean path, not a
+# workaround. See .batteries/reports/mutt.md §2-3.
+mail-client/mutt static ssl imap smtp sasl gsasl -gpgme -autocrypt -idn -kerberos -hcache -doc -debug -slang -nls
+
+# gsasl - SASL library backing mutt's smtp+sasl support above. New
+# transitive dep (net-misc/gsasl); see .batteries/reports/mutt.md §3.
+# +client +server are REQUIRED_USE'd (|| ( client server )) but global -*
+# would zero both -- client is the only one mutt (a SASL client, never a
+# server) actually needs; -server keeps the build to the minimum mechanism
+# set. gcrypt/gnutls/idn/kerberos/nls/ntlm all left off: none of mutt's
+# SASL auth mechanisms (PLAIN/LOGIN/CRAM-MD5/DIGEST-MD5, negotiated over
+# the already-TLS-secured IMAP/SMTP connection) need them, and leaving them
+# off keeps gsasl's only real dependency at sys-libs/readline (already
+# static, already in world).
+net-misc/gsasl static-libs client -server
 
 # irssi - IRC client with SSL
 net-irc/irssi static ssl -minimal -otr -socks -nls
