@@ -149,6 +149,16 @@ net-analyzer/traceroute static
 # matching this file's house style (e.g. the kmod/nethack entries above).
 net-analyzer/mtr ncurses jansson -gui -filecaps
 
+# ppp (pppd + chat) — dial-up / PPPoE WAN client. No IUSE=static on this
+# ebuild (like ethtool/hdparm); static linking comes from the repo-wide
+# package.env static.conf catch-all. Optional features left at the global
+# USE="-*" default (spelled out for parity): -atm (no linux-atm/DSL hw),
+# -pam (root rootfs, no PAM anywhere in world), -selinux, -systemd, and
+# -activefilter (avoids net-libs/libpcap; also needs kernel CONFIG_PPP_FILTER,
+# left unset). The dlopen plugin subsystem is disabled via EXTRA_ECONF
+# --disable-plugins (env/ppp-no-plugins.conf), not a USE flag.
+net-dialup/ppp static -atm -pam -selinux -systemd -activefilter
+
 # net-tools - ifconfig, netstat, arp, route
 sys-apps/net-tools static -nls
 

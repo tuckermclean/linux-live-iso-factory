@@ -28,3 +28,7 @@ sys-apps/smartmontools   fexceptions.conf
 
 # shadow installs libsubid to /lib/ (not /usr/lib/); override libdir at configure time
 sys-apps/shadow          shadow-libdir.conf
+
+# ppp: disable the dlopen plugin subsystem (dead on a no-dynamic-loader rootfs;
+# its libtool -module .so's also risk the -static+-shared link failure class)
+net-dialup/ppp           ppp-no-plugins.conf
