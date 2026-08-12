@@ -86,6 +86,10 @@ overrides:
   # NVD CPE dictionary entry is iputils_project, not plain iputils.
   iputils:         "cpe:2.3:a:iputils_project:iputils:*:*:*:*:*:*:*:*"
   iproute2:        "cpe:2.3:a:iproute2_project:iproute2:*:*:*:*:*:*:*:*"
+  # NVD registers ppp under point-to-point_protocol_project — NOT the Gentoo
+  # metadata.xml hint "samba:ppp" (stale) nor the bare Portage atom. Verified
+  # live against CVE-2020-8597's CPE match list.
+  ppp:             "cpe:2.3:a:point-to-point_protocol_project:point-to-point_protocol:*:*:*:*:*:*:*:*"
   rsync:           "cpe:2.3:a:samba:rsync:*:*:*:*:*:*:*:*"
   socat:           "cpe:2.3:a:dest-unreach:socat:*:*:*:*:*:*:*:*"
   tcpdump:         "cpe:2.3:a:tcpdump:tcpdump:*:*:*:*:*:*:*:*"

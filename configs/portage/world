@@ -89,6 +89,14 @@ net-misc/whois
 net-analyzer/netcat
 net-analyzer/traceroute
 
+# Dial-up / WAN
+# ppp — pppd (PPP daemon) + chat, for serial and PPPoE WAN links. Kernel PPP
+# is already enabled (CONFIG_PPP=y). Loadable plugins are disabled entirely
+# (--disable-plugins via env/ppp-no-plugins.conf) since this all-static rootfs
+# has no dynamic loader; base pppd/chat are plain static programs. ppp-scripts
+# (ip-up/ip-down) is PDEPEND-pulled automatically, not listed here.
+net-dialup/ppp
+
 # Network clients
 www-client/lynx
 
