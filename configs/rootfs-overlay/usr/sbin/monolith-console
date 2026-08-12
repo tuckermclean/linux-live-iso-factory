@@ -1,0 +1,16 @@
+#!/bin/dash
+# monolith-console — lazy interactive shell for the auto-login consoles.
+#
+# /etc/inittab runs `agetty -n -l /usr/sbin/monolith-console` on every console
+# (tty1, tty2, ttyS0). The old setup exec'd /bin/bash directly, so a ~1 MB bash
+# stayed resident on EVERY idle console — three of them, wasteful on a 486 with
+# little RAM. This featherweight dash sits blocked on `read` until the console
+# is actually touched, then becomes an interactive bash. Net effect: zero
+# resident bash until a console is used; bash appears only on the console you
+# press a key on.
+#
+# The boot-test harness's wait_for_shell() sends a newline to wake this stub
+# before it expects a live shell (see scripts/boot-test.py).
+printf '\n[The Monolith] press Enter for a shell '
+read -r _
+exec /bin/bash

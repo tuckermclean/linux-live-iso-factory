@@ -259,12 +259,13 @@ id:3:initdefault:
 # System initialization
 si::sysinit:/etc/init.d/rcS
 
-# Virtual consoles - bypass login, exec bash directly
-1:2345:respawn:/sbin/agetty -n -l /bin/bash --noclear 38400 tty1
-2:2345:respawn:/sbin/agetty -n -l /bin/bash 38400 tty2
+# Virtual consoles - bypass login; lazy shell (bash only on first keypress,
+# see /usr/sbin/monolith-console) so idle consoles keep no bash resident.
+1:2345:respawn:/sbin/agetty -n -l /usr/sbin/monolith-console --noclear 38400 tty1
+2:2345:respawn:/sbin/agetty -n -l /usr/sbin/monolith-console 38400 tty2
 
-# Serial console - bypass login, exec bash directly
-s0:2345:respawn:/sbin/agetty -n -l /bin/bash -L ttyS0 115200 vt100
+# Serial console - bypass login; same lazy shell as the VTs.
+s0:2345:respawn:/sbin/agetty -n -l /usr/sbin/monolith-console -L ttyS0 115200 vt100
 
 # Ctrl-Alt-Del
 ca:12345:ctrlaltdel:/sbin/reboot
@@ -403,6 +404,12 @@ EOF
     # see configs/rootfs-overlay/usr/sbin/monolith-router + scripts/tests/).
     install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/sbin/monolith-router" \
         "$ROOTFS_DIR/usr/sbin/monolith-router"
+
+    # Install the lazy console shell (agetty auto-login target from /etc/inittab).
+    # Keeps bash off idle consoles until a key is pressed; see the file's header
+    # and configs/rootfs-overlay/usr/sbin/monolith-console.
+    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/sbin/monolith-console" \
+        "$ROOTFS_DIR/usr/sbin/monolith-console"
 
     # /etc/init.d/S35netprobe - reach ISA NICs that can't announce themselves.
     # Runs AFTER rcS coldplug (which self-loads PCI/virtual NICs by modalias) and
