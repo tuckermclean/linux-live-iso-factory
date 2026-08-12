@@ -117,22 +117,22 @@ dev-build/make static -nls
 # gdb — target-native debugger, runs ON the i486 disc (not a cross-host
 # debugger). PROJECT DOCTRINE: Python is excluded from this image, so
 # -python is mandatory here regardless of upstream's +python default.
-# +server: ships gdbserver too — small, standalone, and NOT disabled by the
-# ebuild's is_cross() cross-check (this build's CTARGET defaults to CHOST,
-# so is_cross() is false here, same as every other world package).
-# +xml: parses gdbserver's XML target-description/memory-map exchange and
-# syscall-catchpoint tables; pulls dev-libs/expat, a small new dep (see
-# report §3). +lzma: reads LZMA-compressed separate debuginfo; free, since
-# app-arch/xz-utils is already a static world package. Everything else is
-# left at the global USE="-*" default (off): -debuginfod avoids a new
-# dev-libs/elfutils dep for a live disc with no debuginfod server to talk
-# to; -guile/-source-highlight/-babeltrace/-rocm avoid heavy optional
-# scripting/highlighting/GPU-tracing deps; -multitarget/-cet/-zstd/-xxhash/
-# -sim/-test/-vanilla are pure minimalism calls (see report §2 table).
-# "static" kept for documentation parity though this ebuild has no
-# IUSE=static of its own (static linking comes from the repo-wide
-# package.env static.conf catch-all, same as ethtool/hdparm/etc. above).
-dev-debug/gdb static server xml lzma -python -guile -source-highlight -nls
+# -server: gdbserver's in-process agent (libinproctrap / tdesc-ipa) is built
+# -fPIC as a shared object, which fails under this repo's global -static
+# LDFLAGS ("undefined reference to `main'", the same -static+-shared class
+# that breaks ppp plugins and coreutils' libstdbuf.so). Dropping USE=server
+# builds just gdb — the native ptrace debugger, which is the point on a live
+# disc — and sidesteps the .so entirely. (Reviving gdbserver would need
+# --disable-inprocess-agent wired in; deferred.)
+# +xml: parses XML target descriptions / syscall-catchpoint tables; pulls
+# dev-libs/expat, a small new dep. +lzma: reads LZMA-compressed separate
+# debuginfo; free, since app-arch/xz-utils is already a static world package.
+# Everything else left at the global USE="-*" default (off): -debuginfod
+# avoids a new dev-libs/elfutils dep; -guile/-source-highlight/-babeltrace/
+# -rocm avoid heavy optional deps; -multitarget/-cet/-zstd/-xxhash/-sim/
+# -test/-vanilla are pure minimalism. "static" is documentation parity (no
+# IUSE=static; static linking comes from the repo-wide package.env catch-all).
+dev-debug/gdb static -server xml lzma -python -guile -source-highlight -nls
 
 # gmp — unconditional gdb RDEPEND (arbitrary-precision value arithmetic
 # since gdb ~13); pulled in automatically, no separate world entry needed
