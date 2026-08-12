@@ -29,8 +29,19 @@ fetch_snapshot() {
         # 2) upstream, then archive to S3
         if wget -q -O "$_dst" "$SYNC_UPSTREAM/$_f"; then
             echo "  sync-portage: $_f <- upstream ($SYNC_UPSTREAM)"
-            [ -n "${S3_BUCKET:-}" ] && aws s3 cp "$_dst" "s3://$S3_BUCKET/$SYNC_S3_PREFIX/$_f" >/dev/null 2>&1 \
-                && echo "  sync-portage: archived $_f -> s3://$S3_BUCKET/$SYNC_S3_PREFIX/"
+            # Archive back to our S3 so the next build survives upstream pruning.
+            # The local fetch already succeeded, so a failed archive must NOT fail
+            # the build — but it must be LOUD: a silent miss here means the
+            # pruning-resilience safety net was never laid for this epoch, and we
+            # only discover it much later when upstream has pruned and our S3 also
+            # lacks it. Surface it as a CI ::warning:: instead of swallowing it.
+            if [ -n "${S3_BUCKET:-}" ]; then
+                if aws s3 cp "$_dst" "s3://$S3_BUCKET/$SYNC_S3_PREFIX/$_f" >/dev/null 2>&1; then
+                    echo "  sync-portage: archived $_f -> s3://$S3_BUCKET/$SYNC_S3_PREFIX/"
+                else
+                    echo "::warning::sync-portage: FAILED to archive $_f to s3://$S3_BUCKET/$SYNC_S3_PREFIX/ — pruning-resilience safety net NOT laid for epoch $_epoch" >&2
+                fi
+            fi
             continue
         fi
         rm -f "$_dst"

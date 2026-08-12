@@ -68,12 +68,30 @@ move often.
 
 ### Deferred follow-ups
 
-- **Self-hosting the stage3 base image.** Only the runtime portage snapshot
-  is self-hosted on S3 today. The stage3 base image itself is still pulled
-  straight from `gentoo/stage3` on Docker Hub on every `TOOLCHAIN_EPOCH`
-  bump, so it remains exposed to upstream tag pruning the same way the
-  runtime snapshot used to be. Mirroring stage3 tarballs the way
-  `sync-portage.sh` mirrors portage snapshots is a planned follow-up.
+- **Self-hosting the toolchain-image inputs (stage3 base *and* its baked
+  portage tree).** Only the *runtime* portage snapshot (`BUILD_EPOCH`, via
+  `sync-portage.sh`) is self-hosted on S3 today. Two toolchain-image inputs
+  remain pulled straight from upstream on a `TOOLCHAIN_EPOCH` rebuild, both
+  exposed to the same upstream pruning the runtime snapshot used to be:
+  1. the `gentoo/stage3:amd64-openrc-<TOOLCHAIN_EPOCH>` base image from
+     Docker Hub (`FROM …` in the Dockerfile); and
+  2. the portage tree baked into `base-tools` via the Dockerfile's
+     `emerge-webrsync --revert=${TOOLCHAIN_EPOCH}` — this is a **plain
+     upstream fetch with no S3-first fallback** (`sync-portage.sh`'s
+     resilient path is wired only into the runtime `make sync-portage`
+     step, not the image build).
+
+  In practice this is dampened because the built image is cached in our
+  GHCR and `TOOLCHAIN_EPOCH` bumps are rare and human-gated, so a cold
+  rebuild that actually re-hits upstream is uncommon — but a GHCR
+  eviction, a forced older `TOOLCHAIN_EPOCH`, or a local-dev rebuild will
+  hit it directly, and Success Criterion "builds never fail from upstream
+  pruning" therefore holds only for the runtime snapshot, not the
+  toolchain image. Also note `TOOLCHAIN_EPOCH` must land on a date that has
+  a *published* `gentoo/stage3` tag — those are cut ~weekly (Mondays),
+  unlike the daily portage snapshots, so it will usually lag `BUILD_EPOCH`.
+  Mirroring both stage3 tarballs and the toolchain tree the way
+  `sync-portage.sh` mirrors runtime snapshots is a planned follow-up.
 - **A scheduled `TOOLCHAIN_EPOCH` cadence.** `BUILD_EPOCH` bumps are cheap
   enough to run on a schedule (weekly, via `pin-bump.yml`); `TOOLCHAIN_EPOCH`
   bumps are not (full image rebuild + validation), and there is no dedicated

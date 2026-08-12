@@ -47,11 +47,21 @@ VERSION_ENV := -e BUILD_VERSION=$(BUILD_VERSION)
 REGISTRY ?= ghcr.io/tuckermclean
 REGISTRY_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME),$(IMAGE_NAME))
 
-# Registry tag includes a short Dockerfile hash so any change to the Dockerfile
-# produces a new tag. CI will fail to pull an unknown tag and rebuild from scratch,
-# rather than reusing a stale cached image that predates the change.
-DOCKERFILE_HASH := $(shell sha256sum Dockerfile | cut -c1-12)
-REGISTRY_TAG := $(BUILD_EPOCH)-$(DOCKERFILE_HASH)
+# Registry tag = TOOLCHAIN_EPOCH + a short hash of the Dockerfile with the two
+# runtime-injected pins excluded (ARG BUILD_EPOCH, ENV SOURCE_DATE_EPOCH).
+#
+# Why exclude them: the builder image's filesystem is a function of TOOLCHAIN_EPOCH
+# only — BUILD_EPOCH is injected into the runtime portage volume by sync-portage,
+# and SOURCE_DATE_EPOCH is ENV metadata (not a layer). A routine BUILD_EPOCH bump
+# therefore does NOT change the image, and build-image (correctly) does not push
+# on it. If the tag included BUILD_EPOCH (directly or via the whole-file hash,
+# which a bump perturbs by editing those two lines), every snapshot bump would
+# mint a fresh tag that was never pushed, so the build/attestation jobs'
+# `make pull-image` would 404. Keying the tag on what actually changes the image
+# keeps it stable across snapshot bumps and still rotates on a real Dockerfile or
+# TOOLCHAIN_EPOCH change (→ cache miss → rebuild → push), which is the point.
+DOCKERFILE_HASH := $(shell grep -vE '^ARG BUILD_EPOCH=|^ENV SOURCE_DATE_EPOCH=' Dockerfile | sha256sum | cut -c1-12)
+REGISTRY_TAG := $(TOOLCHAIN_EPOCH)-$(DOCKERFILE_HASH)
 
 # S3 bucket for binary package cache — override with S3_BUCKET=... if needed
 S3_BUCKET ?= themonolith
