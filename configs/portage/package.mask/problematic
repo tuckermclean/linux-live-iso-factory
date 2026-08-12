@@ -60,3 +60,10 @@ net-analyzer/nmap
 # that libatomic.a exists at /usr/lib/gcc/i486-linux-musl/<ver>/libatomic.a.
 # Check with: make shell → ls /usr/lib/gcc/i486-linux-musl/*/libatomic*
 net-irc/irssi
+
+# nethack: 5.0.0 needs USE=lua (REQUIRED_USE on lua_single_target_*, unset
+# in this build) and restructured util/Makefile build vars that this repo's
+# bashrc CC_FOR_BUILD cross-compile patch was not written for (see
+# .batteries/reports/nethack.md). world pins =games-roguelike/nethack-3.6.7-r1;
+# this mask is belt-and-suspenders in case that pin is ever loosened.
+>=games-roguelike/nethack-5.0.0

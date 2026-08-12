@@ -233,5 +233,7 @@ app-misc/sl static
 # gpm - console mouse daemon
 app-misc/gpm static
 
-# nethack - curses roguelike; force ncurses UI, no X11/Qt/GTK
-games-roguelike/nethack -minimal ncurses -X -qt -gtk
+# nethack - curses roguelike; ncurses UI is unconditional in 3.6.x (no USE
+# flag gates it — only X11 is togglable). No qt/gtk/minimal IUSE exists on
+# this package; keep the atom minimal rather than setting no-op flags.
+games-roguelike/nethack -X
