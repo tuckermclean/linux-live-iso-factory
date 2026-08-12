@@ -153,9 +153,13 @@ app-misc/sl
 # rustup nightly + -Zbuild-std (see Dockerfile + configs/overlay/games-roguelike/rl144).
 games-roguelike/rl144
 
-# games-roguelike/nethack  # dropped 2026-08-02: epoch bump pulled nethack-5.0.0
-#   (major jump from 3.6.7), which needs a Lua USE flag and risks a build failure
-#   on i486-musl. Re-add later by pinning 3.6.7 or configuring 5.0.0 + lua.
+# nethack — pinned to the last 3.6.x release. 5.0.0 (current ::gentoo head)
+# requires USE=lua (REQUIRED_USE on lua_single_target_*) and restructured its
+# util/Makefile build-variable names (MYCFLAGS/MYCXXFLAGS vs. this repo's
+# CC_FOR_BUILD patch in configs/portage/bashrc, written for the 3.6.x shape).
+# Pinning with '=' also stops any future epoch bump from silently floating
+# this back up to 5.0.0 the way the unqualified atom did on 2026-08-02.
+=games-roguelike/nethack-3.6.7-r1
 
 # Module tools for the loadable-driver regime — modprobe/lsmod/depmod in the
 # booted GNU rootfs (busybox's module applets are initramfs-only). Also gives
