@@ -41,3 +41,7 @@ net-dialup/ppp           ppp-no-plugins.conf
 # mutt: append -ltinfo so its bare -lncurses static link resolves against this
 # repo's tinfo-split ncurses (else configure reports "no curses library found")
 mail-client/mutt         mutt-tinfo.conf
+
+# w3m: -ltinfo (tinfo-split ncurses) + -latomic_ops -latomic (boehm-gc's static
+# archive references atomic ops the bare -lgc conftest doesn't pull)
+www-client/w3m           w3m-libs.conf
