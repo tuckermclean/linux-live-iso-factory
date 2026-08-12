@@ -138,16 +138,15 @@ sys-apps/which
 # cpio — extract/create cpio archives; notably the initrd is a newc cpio, so
 # this lets you crack it open on the box itself (same tool the factory uses).
 app-arch/cpio
-# bc — arbitrary-precision calculator (echo '2^10' | bc). GNU impl selected via
-# app-alternatives/bc gnu.
-sys-devel/bc
-# jq — command-line JSON processor.
-app-misc/jq
 # ncdu — ncurses disk-usage explorer. Pinned <2: ncdu 2.x is written in Zig
 # (no Zig toolchain here); 1.22 is the last C release.
 <sys-fs/ncdu-2
 # pv — pipe viewer: progress bars/throughput for shell pipelines.
 sys-apps/pv
+# NOTE: bc and jq are wanted too but blocked — both BDEPEND bison, which drags
+# gettext -> dev-libs/libxml2, and libxml2 is masked in package.mask/problematic
+# for a meson/multilib cross-compile failure. Unblocking them needs a libxml2
+# i486-linux-musl meson cross-file (tracked separately).
 
 # Filesystem tools
 sys-fs/e2fsprogs
