@@ -114,8 +114,45 @@ sys-devel/binutils static -nls
 # make - GNU make
 dev-build/make static -nls
 
-# gdb - debugger; disable Python scripting to avoid Python dep
-dev-debug/gdb static -minimal -python -source-highlight -guile -lzma -nls
+# gdb — target-native debugger, runs ON the i486 disc (not a cross-host
+# debugger). PROJECT DOCTRINE: Python is excluded from this image, so
+# -python is mandatory here regardless of upstream's +python default.
+# +server: ships gdbserver too — small, standalone, and NOT disabled by the
+# ebuild's is_cross() cross-check (this build's CTARGET defaults to CHOST,
+# so is_cross() is false here, same as every other world package).
+# +xml: parses gdbserver's XML target-description/memory-map exchange and
+# syscall-catchpoint tables; pulls dev-libs/expat, a small new dep (see
+# report §3). +lzma: reads LZMA-compressed separate debuginfo; free, since
+# app-arch/xz-utils is already a static world package. Everything else is
+# left at the global USE="-*" default (off): -debuginfod avoids a new
+# dev-libs/elfutils dep for a live disc with no debuginfod server to talk
+# to; -guile/-source-highlight/-babeltrace/-rocm avoid heavy optional
+# scripting/highlighting/GPU-tracing deps; -multitarget/-cet/-zstd/-xxhash/
+# -sim/-test/-vanilla are pure minimalism calls (see report §2 table).
+# "static" kept for documentation parity though this ebuild has no
+# IUSE=static of its own (static linking comes from the repo-wide
+# package.env static.conf catch-all, same as ethtool/hdparm/etc. above).
+dev-debug/gdb static server xml lzma -python -guile -source-highlight -nls
+
+# gmp — unconditional gdb RDEPEND (arbitrary-precision value arithmetic
+# since gdb ~13); pulled in automatically, no separate world entry needed
+# (same pattern as cJSON/jansson/libmnl in prior batteries reports).
+# static-libs is already on globally (make.conf USE=static-libs); asm and
+# cpudetection are left at the global -* default (off) so gmp builds its
+# portable C implementation rather than gambling on its i386 hand-tuned
+# assembly paths against this exact musl/i486 cross toolchain — see report
+# §3 for the reasoning.
+dev-libs/gmp static-libs
+
+# mpfr — unconditional gdb RDEPEND alongside gmp; static-libs propagates
+# the same requirement onto gmp above, already satisfied.
+dev-libs/mpfr static-libs
+
+# expat — new dep, only pulled if gdb's xml USE is on (see above). -unicode
+# overrides this repo's global USE=unicode (make.conf), which would
+# otherwise make expat also build a redundant wide-char libexpatw.a that
+# nothing in this image links against — see report §1.
+dev-libs/expat static-libs -unicode
 
 # strace - syscall tracer
 dev-debug/strace static
