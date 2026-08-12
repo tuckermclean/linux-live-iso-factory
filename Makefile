@@ -18,8 +18,14 @@ IMAGE_NAME := monolith-builder
 # Get absolute path to this directory
 PROJECT_DIR := $(shell pwd)
 
-# Single build epoch — pins stage3 base image and portage snapshot to the same date
+# Runtime portage-snapshot epoch — pins the target package tree used to build
+# the ISO (injected at sync-portage time, NOT baked into the builder image).
 BUILD_EPOCH := $(shell grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
+
+# Toolchain epoch — pins the stage3 base image and the baked portage tree used
+# to build the crossdev toolchain/host tools baked into the builder image.
+# Decoupled from BUILD_EPOCH on purpose: see Dockerfile header comment.
+TOOLCHAIN_EPOCH := $(shell grep '^ARG TOOLCHAIN_EPOCH=' Dockerfile | cut -d= -f2)
 
 # Kernel version — read from versions.lock so targets stay in sync with the pin
 KERNEL_VERSION := $(shell grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2)
@@ -222,6 +228,13 @@ CROSSDEV_CONTAINER := monolith-crossdev-build
 # completed crossdev container. The base-tools image ID is stamped as a label on
 # the final image. On subsequent runs, if that label matches the current base-tools
 # ID, the crossdev step is skipped.
+#
+# BASE_HASH (below) is computed from the base-tools image's layers, and that
+# image is now built solely from TOOLCHAIN_EPOCH (Dockerfile FROM + host
+# emerge-webrsync). It intentionally excludes BUILD_EPOCH — the runtime
+# portage snapshot, which is injected later by `make sync-portage`, not baked
+# into this image — so bumping BUILD_EPOCH alone never changes BASE_HASH and
+# never forces a crossdev/toolchain rebuild.
 build-image: ensure-dirs
 	@if [ -n "$(REGISTRY)" ] && docker pull $(REGISTRY_IMAGE):$(REGISTRY_TAG) 2>/dev/null; then \
 		docker tag $(REGISTRY_IMAGE):$(REGISTRY_TAG) $(IMAGE_NAME); \
@@ -230,8 +243,10 @@ build-image: ensure-dirs
 		echo "==> Pulled $(IMAGE_NAME) from $(REGISTRY_IMAGE):$(REGISTRY_TAG)"; \
 	else \
 		[ -n "$(REGISTRY)" ] && echo "==> Registry pull failed — building locally" || true; \
-		echo "==> Building base-tools stage (epoch: $(BUILD_EPOCH))"; \
+		echo "==> Building base-tools stage (toolchain epoch: $(TOOLCHAIN_EPOCH))"; \
 		docker buildx build --target base-tools \
+			--build-arg TOOLCHAIN_EPOCH=$(TOOLCHAIN_EPOCH) \
+			--build-arg BUILD_EPOCH=$(BUILD_EPOCH) \
 			$(if $(REGISTRY),--cache-from $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)) \
 			--cache-from $(BASE_TOOLS_IMAGE) --cache-to type=inline \
 			-t $(BASE_TOOLS_IMAGE) \
@@ -288,18 +303,18 @@ push-image: build-image
 		exit 1; \
 	fi
 	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(REGISTRY_TAG)
-	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(BUILD_EPOCH)
+	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):$(TOOLCHAIN_EPOCH)
 	docker tag $(IMAGE_NAME) $(REGISTRY_IMAGE):latest
 	docker push $(REGISTRY_IMAGE):$(REGISTRY_TAG)
-	docker push $(REGISTRY_IMAGE):$(BUILD_EPOCH)
+	docker push $(REGISTRY_IMAGE):$(TOOLCHAIN_EPOCH)
 	docker push $(REGISTRY_IMAGE):latest
 	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)
-	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)
+	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:$(TOOLCHAIN_EPOCH)
 	docker tag $(BASE_TOOLS_IMAGE) $(REGISTRY_IMAGE)-base-tools:latest
 	docker push $(REGISTRY_IMAGE)-base-tools:$(REGISTRY_TAG)
-	docker push $(REGISTRY_IMAGE)-base-tools:$(BUILD_EPOCH)
+	docker push $(REGISTRY_IMAGE)-base-tools:$(TOOLCHAIN_EPOCH)
 	docker push $(REGISTRY_IMAGE)-base-tools:latest
-	@echo "==> Pushed $(REGISTRY_IMAGE):$(REGISTRY_TAG) (+ :$(BUILD_EPOCH) + :latest)"
+	@echo "==> Pushed $(REGISTRY_IMAGE):$(REGISTRY_TAG) (+ :$(TOOLCHAIN_EPOCH) + :latest)"
 
 # Pull builder image from registry and tag locally
 pull-image:
