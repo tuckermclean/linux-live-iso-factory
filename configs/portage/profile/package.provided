@@ -1,0 +1,17 @@
+# package.provided — atoms Portage treats as already installed, so it neither
+# builds them nor pulls their dependencies.
+#
+# virtual/tmpfiles: net-dialup/ppp (and mail-client/mutt via cyrus-sasl)
+# `inherit tmpfiles`, gaining a dep on virtual/tmpfiles. On this no-systemd
+# image that virtual resolves ONLY to sys-apps/systemd-utils[tmpfiles], whose
+# ebuild REQUIRED_USE demands a python_single_target — but Python is excluded
+# from this image, so emerge aborts at dependency resolution. The only other
+# provider, sys-apps/seedfiles, is a keywordless -9999 live ebuild (bad for a
+# reproducible/attested build); sys-apps/opentmpfiles was removed from ::gentoo.
+#
+# This disc has NO tmpfiles.d processor and its sysvinit does not run one, so the
+# tmpfiles.d snippets ppp/etc. install (e.g. pppd.conf creating a /run dir) are
+# inert regardless — pppd creates its own runtime dirs. Declaring the virtual as
+# provided satisfies the dep without dragging in systemd-utils/Python and without
+# changing any installed file. See memory: tmpfiles-systemd-utils-python-trap.
+virtual/tmpfiles-0-r7
