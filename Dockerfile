@@ -18,8 +18,14 @@
 #     against the runtime snapshot date.
 # Keeping these independent means a pruned/rotated runtime snapshot doesn't
 # force a toolchain image rebuild, and vice versa.
+#
+# TOOLCHAIN_EPOCH must be a date that has a PUBLISHED gentoo/stage3 image tag.
+# Those are cut ~weekly (Mondays), NOT daily, so it will usually lag BUILD_EPOCH
+# (which tracks the daily portage snapshot). 20260810 is the latest weekly stage3
+# tag; 20260811 is the daily runtime snapshot. This intentional 1-day skew is the
+# decoupling working as designed.
 # Update with: make update-build-pins
-ARG TOOLCHAIN_EPOCH=20260811
+ARG TOOLCHAIN_EPOCH=20260810
 ARG BUILD_EPOCH=20260811
 FROM gentoo/stage3:amd64-openrc-${TOOLCHAIN_EPOCH} AS base-tools
 
