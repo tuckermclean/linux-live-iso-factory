@@ -8,23 +8,33 @@
 #   make build-packages     # Cross-compile all packages (kernel, busybox, userland)
 #   make iso                # Build initrd + rootfs + ISO from compiled packages
 
-# Single epoch pins the stage3 base image and portage snapshot to the same date.
-# This is a policy choice for reproducibility and attestation: a single BUILD_EPOCH
-# unambiguously identifies all build inputs (toolchain + ebuilds).
+# Two epochs, decoupled on purpose:
+#   TOOLCHAIN_EPOCH pins the stage3 base image AND the baked portage tree used
+#     to build the crossdev toolchain / host tools baked into this image.
+#   BUILD_EPOCH pins the *runtime* package tree — the portage snapshot used to
+#     resolve target-package versions for the ISO. It is NOT baked into this
+#     image; scripts/sync-portage.sh injects it at build time. It also drives
+#     SOURCE_DATE_EPOCH below so build output timestamps stay reproducible
+#     against the runtime snapshot date.
+# Keeping these independent means a pruned/rotated runtime snapshot doesn't
+# force a toolchain image rebuild, and vice versa.
 # Update with: make update-build-pins
+ARG TOOLCHAIN_EPOCH=20260811
 ARG BUILD_EPOCH=20260811
-FROM gentoo/stage3:amd64-openrc-${BUILD_EPOCH} AS base-tools
+FROM gentoo/stage3:amd64-openrc-${TOOLCHAIN_EPOCH} AS base-tools
 
 LABEL maintainer="monolith-builder"
 LABEL description="Gentoo crossdev environment for i486-linux-musl + ISO tools"
 
-# Reproducibility: clamp all build output timestamps to the stage3 date
+# Reproducibility: clamp all build output timestamps to the runtime snapshot
+# date (BUILD_EPOCH = 20260811 -> 2026-08-11T00:00:00Z)
 ENV SOURCE_DATE_EPOCH=1786406400
 
 ENV CROSS_TARGET=i486-linux-musl
 ENV CROSS_COMPILE=i486-linux-musl-
 
-# Re-declare so the value is available inside this stage
+# Re-declare so the values are available inside this stage (ARGs don't cross FROM)
+ARG TOOLCHAIN_EPOCH
 ARG BUILD_EPOCH
 
 # Verify host gcc has 32-bit multilib support (gcc -m32).
@@ -47,11 +57,15 @@ RUN if ! (echo 'int main(void){return 0;}' | gcc -m32 -xc -o /tmp/m32check -); t
         exit 1; \
     fi && /tmp/m32check && rm -f /tmp/m32check && echo "gcc -m32 multilib: OK"
 
-# Fetch pinned portage snapshot using portage's own tooling.
+# Fetch the toolchain's baked portage tree using portage's own tooling.
 # --revert pins to a specific date for reproducibility; emerge-webrsync handles
 # GPG verification internally using its bundled Gentoo release signing key
 # (DCD05B71EAB94199527F44ACDB6B8C1F96D8BF6D) — build fails if signature invalid.
-RUN emerge-webrsync --revert=${BUILD_EPOCH}
+# This tree is pinned to TOOLCHAIN_EPOCH, not BUILD_EPOCH: it only resolves
+# host build tools and the crossdev toolchain baked into this image. It is
+# NOT the runtime package tree used to build ISO packages — that tree is
+# pinned to BUILD_EPOCH and injected separately by scripts/sync-portage.sh.
+RUN emerge-webrsync --revert=${TOOLCHAIN_EPOCH}
 
 # Install all host tools
 # cmake:   prevents BDEPEND from pulling in cmake-9999 (live ebuild)
@@ -60,12 +74,13 @@ RUN emerge-webrsync --revert=${BUILD_EPOCH}
 #
 # Version pinning: none of these packages carry an explicit version atom.
 # They are host build tools (not shipped in the ISO) and are pinned
-# *indirectly* via BUILD_EPOCH: emerge-webrsync --revert=${BUILD_EPOCH} above
-# fixes the portage snapshot date, which in turn fixes which version of each
-# package is "best visible" here. This is intentional and matches the
-# crossdev toolchain's own pinning story (crossdev.lock + versions.lock
-# still pin exact versions for the *target* toolchain and world packages —
-# see configs/portage/versions.lock, managed by `make update-versions`).
+# *indirectly* via TOOLCHAIN_EPOCH: emerge-webrsync --revert=${TOOLCHAIN_EPOCH}
+# above fixes the baked portage snapshot date, which in turn fixes which
+# version of each package is "best visible" here. This is intentional and
+# matches the crossdev toolchain's own pinning story (crossdev.lock +
+# versions.lock still pin exact versions for the *target* toolchain and
+# world packages — see configs/portage/versions.lock, managed by
+# `make update-versions`).
 # There is deliberately no per-atom pin (e.g. "=sys-boot/syslinux-6.03") for
 # these host tools: that would fight the epoch model by letting a single
 # tool drift ahead of/behind the snapshot it was validated against. If a
