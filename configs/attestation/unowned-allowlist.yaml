@@ -93,6 +93,10 @@ allowlist:
   #    consoles (RAM). Hand-installed by build-rootfs.sh. Pending monolith-base.
   - usr/sbin/monolith-console
 
+  # POSIX-sh `which` — GNU sys-apps/which doesn't build on musl and busybox
+  # isn't in the rootfs. Hand-installed by build-rootfs.sh. Pending monolith-base.
+  - usr/bin/which
+
   # ── Prompt customisation ─────────────────────────────────────────────────────
   - etc/bash/bashrc.d/99-monolith-square.bash
 

@@ -411,6 +411,11 @@ EOF
     install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/sbin/monolith-console" \
         "$ROOTFS_DIR/usr/sbin/monolith-console"
 
+    # Install a POSIX-sh `which` — GNU sys-apps/which doesn't build against musl
+    # and busybox (which has the applet) isn't in the rootfs. See the file header.
+    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/bin/which" \
+        "$ROOTFS_DIR/usr/bin/which"
+
     # /etc/init.d/S35netprobe - reach ISA NICs that can't announce themselves.
     # Runs AFTER rcS coldplug (which self-loads PCI/virtual NICs by modalias) and
     # BEFORE S40network (which DHCPs whatever interfaces exist). Only the SAFE,

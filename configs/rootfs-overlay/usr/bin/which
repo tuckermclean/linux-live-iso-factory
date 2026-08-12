@@ -1,0 +1,56 @@
+#!/bin/sh
+# which — locate a command in PATH.
+#
+# GNU sys-apps/which does not build against musl (its bundled gnulib getopt
+# conflicts with musl's getopt), and busybox — which has a `which` applet — is
+# not installed in this rootfs (initramfs-only). This POSIX-sh implementation
+# is musl-agnostic and covers the everyday use: print the full path of each
+# argument found as an executable in PATH; exit non-zero if any is not found.
+#
+#   which COMMAND...       first match of each COMMAND
+#   which -a COMMAND...    every match in PATH order
+#
+# Note: this resolves executables in $PATH only — not shell builtins, aliases,
+# or functions. For those, use the shell's own `type` / `command -v`.
+
+all=0
+if [ "$1" = "-a" ]; then
+	all=1
+	shift
+fi
+
+if [ "$#" -eq 0 ]; then
+	echo "usage: which [-a] command..." >&2
+	exit 2
+fi
+
+status=0
+for cmd in "$@"; do
+	found=0
+	case "$cmd" in
+	*/*)
+		# Path given explicitly — check it directly, don't search PATH.
+		if [ -f "$cmd" ] && [ -x "$cmd" ]; then
+			printf '%s\n' "$cmd"
+			found=1
+		fi
+		;;
+	*)
+		# Split PATH on ':' (an empty element means the current directory).
+		oldifs=$IFS
+		IFS=:
+		for dir in $PATH; do
+			[ -z "$dir" ] && dir=.
+			if [ -f "$dir/$cmd" ] && [ -x "$dir/$cmd" ]; then
+				printf '%s\n' "$dir/$cmd"
+				found=1
+				[ "$all" -eq 0 ] && break
+			fi
+		done
+		IFS=$oldifs
+		;;
+	esac
+	[ "$found" -eq 0 ] && status=1
+done
+
+exit "$status"
