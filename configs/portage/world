@@ -129,6 +129,15 @@ sys-process/procps
 sys-process/htop
 sys-process/lsof
 app-admin/sysklogd
+# psmisc — killall (kill by name), pstree (process tree), fuser (what's holding
+# a file/socket/mount). procps covers pgrep/pkill/watch; psmisc fills the rest.
+sys-process/psmisc
+# which — locate a command in PATH (busybox's applet is off; bash has
+# type/command -v, but `which` is the muscle-memory one).
+sys-apps/which
+# cpio — extract/create cpio archives; notably the initrd is a newc cpio, so
+# this lets you crack it open on the box itself (same tool the factory uses).
+app-arch/cpio
 
 # Filesystem tools
 sys-fs/e2fsprogs
