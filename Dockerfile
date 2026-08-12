@@ -126,10 +126,19 @@ RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace \
 # on every run. The Grype vulnerability database is stored in a separate
 # Docker volume (monolith-grype-db) and updated via `make grype-db-update`.
 RUN emerge dev-python/pyyaml && \
-    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-        | sh -s -- -b /usr/local/bin && \
-    curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-        | sh -s -- -b /usr/local/bin && \
+    for tool in syft grype; do \
+        n=0; \
+        until curl -sSfL "https://raw.githubusercontent.com/anchore/$tool/main/install.sh" \
+                | sh -s -- -b /usr/local/bin; do \
+            n=$((n+1)); \
+            if [ "$n" -ge 6 ]; then \
+                echo "FATAL: $tool install failed after 6 attempts (GitHub release API unreachable)" >&2; \
+                exit 1; \
+            fi; \
+            echo "  $tool install failed (transient GitHub error?) — retry $n/6 in 30s..." >&2; \
+            sleep 30; \
+        done; \
+    done && \
     rm -rf /var/cache/distfiles/*
 
 # Rust toolchain for building games-roguelike/rl144 — a 486-class Rust roguelike.
@@ -164,7 +173,24 @@ RUN mkdir -p /var/db/repos/crossdev/{profiles,metadata} && \
     mkdir -p /etc/portage/package.accept_keywords && \
     echo '*/* **' > /etc/portage/package.accept_keywords/crossdev-all && \
     echo 'sys-kernel/linux-live **' > /etc/portage/package.accept_keywords/monolith && \
-    echo 'FEATURES="${FEATURES} -strict"' >> /etc/portage/make.conf
+    echo 'FEATURES="${FEATURES} -strict"' >> /etc/portage/make.conf && \
+    mkdir -p /etc/portage/env /etc/portage/package.env && \
+    printf '%s\n' \
+        '# Force libatomic.a (and the other target runtime libs) to be built and' \
+        '# installed statically for the cross-gcc. This is the toolchain-side twin' \
+        '# of configs/portage/env/static.conf: static-libs is NOT a real USE flag on' \
+        '# sys-devel/gcc (toolchain.eclass IUSE never defines it — the old' \
+        '# package.use "static-libs" line was a silent no-op), so EXTRA_ECONF is the' \
+        '# mechanism the eclass actually honors. Without libatomic.a, any package' \
+        '# needing 8-byte atomics on -march=i486 (no cmpxchg8b) fails to link -static' \
+        '# ("attempted static link of dynamic object libatomic.so") — iperf3,' \
+        '# w3m (via boehm-gc), irssi (via glib). Baked here in base-tools so the' \
+        '# crossdev toolchain build (make build-image) picks it up, and so editing' \
+        '# it changes the Dockerfile hash -> REGISTRY_TAG -> forces the rebuild.' \
+        'EXTRA_ECONF="--disable-shared --enable-static"' \
+        > /etc/portage/env/cross-gcc-static.conf && \
+    echo "cross-${CROSS_TARGET}/gcc cross-gcc-static.conf" \
+        > /etc/portage/package.env/cross-gcc-static
 
 # crossdev toolchain build and runtime setup are handled by `make build-image`.
 # Running crossdev via `docker run` (not `docker build`) ensures all portage logs
