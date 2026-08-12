@@ -137,8 +137,18 @@ jobs:
             echo "==> base-tools-hash unchanged, skipping push"
           fi
 
+      # Publish the image tags after EVERY successful build-image, not only when
+      # the toolchain was rebuilt. The `build` and `attestation` jobs run on fresh
+      # runners and get the image solely via `make pull-image` ->
+      # `docker pull $(REGISTRY_IMAGE):$(REGISTRY_TAG)`, so that tag must exist in
+      # the registry on every run. Gating the push on changed=='true' meant a run
+      # where the toolchain was unchanged (a routine BUILD_EPOCH bump, or any run
+      # whose REGISTRY_TAG differs from what was last pushed) never published the
+      # tag, and the build job then 404'd ("manifest unknown"). When the content
+      # is unchanged this is a cheap manifest-only re-push of the same image, so it
+      # cannot clobber :latest with different content. The `image-changed` output
+      # (from the check-hash step) still governs how downstream jobs treat the image.
       - name: Push images
-        if: steps.check-hash.outputs.changed == 'true'
         run: make push-image
         env:
           REGISTRY: ${{ env.REGISTRY }}
