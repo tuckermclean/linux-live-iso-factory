@@ -121,6 +121,21 @@ overrides:
   lynx:            "cpe:2.3:a:lynx:lynx:*:*:*:*:*:*:*:*"
   nethack:         "cpe:2.3:a:nethack:nethack:*:*:*:*:*:*:*:*"
 
+  # --- Debugging ---
+  # Gentoo's own metadata.xml declares this upstream CPE directly
+  # (<upstream><remote-id type="cpe">cpe:/a:gnu:gdb</remote-id></upstream>).
+  gdb:             "cpe:2.3:a:gnu:gdb:*:*:*:*:*:*:*:*"
+
+  # --- Libraries ---
+  # NVD CPE dictionary uses vendor "gmplib", not "gnu" — verified against
+  # CVE-2021-43618 (GMP mpz/inp_raw.c integer overflow), whose CPE match is
+  # cpe:2.3:a:gmplib:gmp:... A naive vendor="gnu" guess (as for gcc/glibc/
+  # coreutils elsewhere in this file) would silently fail to match any CVE.
+  gmp:             "cpe:2.3:a:gmplib:gmp:*:*:*:*:*:*:*:*"
+  # Verified against CVE-2022-40674 (expat use-after-free) — NVD's CPE
+  # dictionary product name is "libexpat", not "expat".
+  expat:           "cpe:2.3:a:libexpat_project:libexpat:*:*:*:*:*:*:*:*"
+
   # --- Bootloaders (embedded in ISO, propagated from builder to target SBOM) ---
   # NVD uses gnu:grub2 for GRUB 2.x releases.
   grub:            "cpe:2.3:a:gnu:grub2:*:*:*:*:*:*:*:*"

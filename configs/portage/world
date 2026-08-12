@@ -53,6 +53,11 @@ sys-devel/binutils
 dev-build/make
 dev-debug/strace
 sys-devel/patch
+# gdb — target-native debugger; runs ON the i486 disc (ptrace-based local
+# process debugging + gdbserver), not a cross-host remote debugger. Pulls
+# dev-libs/gmp + dev-libs/mpfr (unconditional) and dev-libs/expat (USE=xml).
+# See .batteries/reports/gdb.md for the musl thread-debugging caveats.
+dev-debug/gdb
 
 # Scripting languages
 dev-lang/lua
