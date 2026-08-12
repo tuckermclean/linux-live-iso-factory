@@ -92,6 +92,9 @@ net-misc/iperf:3
 
 # Network clients
 www-client/lynx
+# w3m - text web browser with HTTPS; ncurses UI, no images/X (see
+# .batteries/reports/w3m.md). Pulls dev-libs/boehm-gc (new transitive dep).
+www-client/w3m
 
 # Terminal multiplexer
 app-misc/tmux
