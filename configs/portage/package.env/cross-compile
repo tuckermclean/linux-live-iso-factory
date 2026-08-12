@@ -25,6 +25,11 @@ app-arch/tar             libiconv.conf
 
 # Packages that use C++ exceptions — override global -fno-exceptions
 sys-apps/smartmontools   fexceptions.conf
+# gdb: (1) fexceptions — gdbsupport/new-op.cc wraps operator new in try/catch,
+# which the global -fno-exceptions turns into a hard compile error; (2)
+# gdb-lowmem — serialize gdb's internal make (-j1) so its RAM-heavy C++ compile
+# doesn't OOM-kill the CI runner.
+dev-debug/gdb            fexceptions.conf gdb-lowmem.conf
 
 # shadow installs libsubid to /lib/ (not /usr/lib/); override libdir at configure time
 sys-apps/shadow          shadow-libdir.conf
