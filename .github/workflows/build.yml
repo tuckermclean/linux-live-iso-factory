@@ -236,6 +236,19 @@ jobs:
           while true; do echo "=== $(date) ==="; df -h; free -h; echo "---"; sleep 60; done &
           make build-packages JOBS=2 LOAD_AVG=2
 
+      # On a package build failure, upload the per-package portage build logs
+      # (PORTAGE_LOGDIR="/var/log/portage" → output/portage-logs/) so the actual
+      # configure/compiler error is available for diagnosis. Without this only
+      # portage's "econf/emake failed" die message reaches the CI console.
+      - name: Upload portage build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portage-build-logs-${{ github.run_id }}
+          path: output/portage-logs/
+          retention-days: 7
+          if-no-files-found: warn
+
       # Build/ship assertion for the sp1-nic-zoo `=m` NIC drivers (design doc
       # §7). The boot-test NIC-model matrix only proves 6 of the 21 new
       # symbols actually work (the ones QEMU can emulate); this step is the
