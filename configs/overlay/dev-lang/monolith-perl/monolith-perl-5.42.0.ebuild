@@ -120,9 +120,19 @@ src_configure() {
 		-Uusedl -Uusethreads -Duse64bitint -Duselargefiles \
 		-Dman1dir=none -Dman3dir=none \
 		-Accflags="${CFLAGS} -D_GNU_SOURCE" \
-		-Aldflags="${LDFLAGS}" \
+		-Aldflags="${LDFLAGS} -Wl,--allow-multiple-definition" \
 		--all-static \
 		|| die "perl-cross configure failed"
+
+	# -Wl,--allow-multiple-definition (appended to ldflags): the `re` extension
+	# recompiles parts of regcomp.c (as re_comp.c, with -DPERL_EXT_RE_BUILD) and
+	# exports Perl_get_ANYOFHbbm_contents et al. — symbols also present in core
+	# libperl.a(regcomp.o). In a normal -Dusedl perl `re` is a separate re.so, so
+	# they never meet; under -Uusedl --all-static both land in one binary and
+	# modern binutils rejects the duplicate strong symbols. The definitions come
+	# from the SAME source, so taking the first is safe — this is the standard
+	# static-perl workaround (Buildroot's static perl uses it too). Not put in
+	# env/static.conf: it's a perl-static-`re` quirk, not a global doctrine.
 }
 
 # src_compile/src_install: EAPI 8 defaults (emake / emake DESTDIR="${D}"
