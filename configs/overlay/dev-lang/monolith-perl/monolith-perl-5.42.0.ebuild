@@ -113,11 +113,22 @@ src_configure() {
 	# musl isn't "gnulibc" so it doesn't — leaving perl.h/regcomp.c et al. with
 	# implicit declarations, which GCC 14 treats as hard errors. Defining it is
 	# the standard perl-on-musl fix (Buildroot/OpenWrt do the same).
+	#
+	# -Ud_perl_lc_all_uses_name_value_pairs: musl's setlocale(LC_ALL,"") returns
+	# a POSITIONAL composite ("C.UTF-8;C;C;C;C;C" — musl only supports UTF-8 for
+	# LC_CTYPE, the rest stay C), but perl-cross can't RUN a target probe to learn
+	# the format, so it defaults to glibc's name=value assumption
+	# (d_perl_lc_all_uses_name_value_pairs=define). At boot that made perl panic
+	# in locale.c: "'C.UTF-8;C;C;C;C;C' needs an '=' to split name=value". Forcing
+	# the symbol undef selects locale.c's positional LC_ALL parser (the musl/BSD
+	# path). A global LC_ALL=C hammer is deliberately NOT used — it would strip
+	# UTF-8 from every tool on the disc; the fix belongs in perl.
 	./configure \
 		--target="${CHOST}" \
 		--prefix=/usr \
 		-Dcc="${CHOST}-gcc" \
 		-Uusedl -Uusethreads -Duse64bitint -Duselargefiles \
+		-Ud_perl_lc_all_uses_name_value_pairs \
 		-Dman1dir=none -Dman3dir=none \
 		-Accflags="${CFLAGS} -D_GNU_SOURCE" \
 		-Aldflags="${LDFLAGS} -Wl,--allow-multiple-definition" \
