@@ -245,14 +245,26 @@ src_install() {
 	# are actually usable. Runs BEFORE the prune below, so any *.pod these
 	# re-introduce get removed there.
 	local privlib="${ED}/usr/lib/perl5/5.42.0"
+	# perl stages every built module's .pm under ${S}/lib during the build
+	# (core ext/ modules like Fcntl land here, not in a blib/lib); installperl
+	# is meant to copy these to privlib but perl-cross's static install skips the
+	# baked-XS ones. Backfill from BOTH the top-level staging lib and each
+	# CPAN/dist extension's blib/lib to catch every layout.
+	[[ -d "${S}/lib" ]] && cp -a "${S}/lib/." "${privlib}/"
 	local blib
 	while IFS= read -r -d '' blib; do
 		cp -a "${blib}/." "${privlib}/" || die "backfilling ${blib} failed"
 	done < <(find "${S}" -type d -path '*/blib/lib' -print0)
-	# Verify the load-bearing bootstrap modules CGI.pm's File::Temp needs.
+	# Verify the load-bearing bootstrap modules CGI.pm's File::Temp needs; on a
+	# miss, print where the .pm actually lives in the build tree so the fix is
+	# one targeted edit, not another blind cycle.
 	local m
 	for m in Fcntl.pm File/Spec.pm File/Spec/Unix.pm Cwd.pm; do
-		[[ -f "${privlib}/${m}" ]] || die "backfill incomplete: ${m} still missing"
+		if [[ ! -f "${privlib}/${m}" ]]; then
+			eerror "MONOLITH-PERL backfill: ${m} still missing; build-tree candidates:"
+			find "${S}" -name "$(basename "${m}")" -printf '  %p\n' 2>/dev/null | head -10
+			die "backfill incomplete: ${m} still missing"
+		fi
 	done
 	einfo "MONOLITH-PERL: backfilled baked-XS .pm (Fcntl, File::Spec, Cwd, ...) omitted by perl-cross"
 
