@@ -659,6 +659,24 @@ def smoke_perl_utf8(child):
                      "perl -Mutf8 -CS -e 'print uc(qq(\\x{e9}));'", exit_code_only())
 
 
+def smoke_perl_dbi(child):
+    """
+    DBI + DBD::SQLite baked into perl via static_ext (Task 3, no dynamic
+    loader on this disc — both are compiled directly into the perl binary).
+    An in-memory SQLite round-trip (create table, insert, select) proves both
+    the DBI dispatch layer and the DBD::SQLite driver (with its own bundled
+    sqlite amalgamation, 3.51.1 — see monolith-perl ebuild) actually work.
+    """
+    prog = ('my $dbh=DBI->connect("dbi:SQLite:dbname=:memory:","","",'
+            '{RaiseError=>1}); $dbh->do("create table t(a)"); '
+            '$dbh->do("insert into t values(41+1)"); '
+            'print scalar $dbh->selectrow_array("select a from t"),"\\n"')
+    return run_check(
+        child, "perl DBI + DBD::SQLite in-memory query",
+        f"perl -MDBI -e '{prog}'",
+        contains("42"))
+
+
 def smoke_overlay_mount(child):
     return run_check(
         child, "overlay root is mounted", "mount",
@@ -807,6 +825,7 @@ def run_full_smoke_suite(child, expected_kernel):
     results.append(("perl runs and reports its version", *smoke_perl_version(child)))
     results.append(("perl strict+warnings program runs", *smoke_perl_basic(child)))
     results.append(("perl unicode/utf8 tables present", *smoke_perl_utf8(child)))
+    results.append(("perl DBI + DBD::SQLite in-memory query", *smoke_perl_dbi(child)))
     results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
     results.append(("man ls renders (mandoc)", *smoke_man(child)))
     return results

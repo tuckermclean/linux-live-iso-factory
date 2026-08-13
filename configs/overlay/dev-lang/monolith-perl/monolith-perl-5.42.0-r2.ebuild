@@ -3,7 +3,7 @@
 
 EAPI=8
 
-DESCRIPTION="Static, -Uusedl Perl core (via arsv/perl-cross) for the Monolith"
+DESCRIPTION="Static, -Uusedl Perl (via arsv/perl-cross) + DBI/DBD::SQLite static_ext for the Monolith"
 HOMEPAGE="https://www.perl.org https://github.com/arsv/perl-cross"
 
 # STRICT version pairing (spec D1): each perl-cross release ships a per-exact-
@@ -22,9 +22,20 @@ HOMEPAGE="https://www.perl.org https://github.com/arsv/perl-cross"
 # CPAN — pin the exact 5.42.0 + 1.6.4 pair recorded in versions.lock.
 PC_PV="1.6.4"
 
+# DBI + DBD::SQLite (spec D4 / plan Task 3): current stable CPAN releases as
+# of 2026-08-13 (`https://fastapi.metacpan.org/v1/release/DBI` and
+# `.../release/DBD-SQLite`) — DBI 1.651 (HMBRAND, 2026-07-14) and DBD::SQLite
+# 1.78 (ISHIGAKI, 2026-01-02). Both are baked into the perl binary via
+# perl-cross's static_ext mechanism (see src_prepare/src_configure below) —
+# there is no dynamic loader on this disc to `use DBI` a separate .so from.
+DBI_PV="1.651"
+DBD_SQLITE_PV="1.78"
+
 SRC_URI="
 	https://www.cpan.org/src/5.0/perl-${PV}.tar.xz
 	https://github.com/arsv/perl-cross/releases/download/${PC_PV}/perl-cross-${PC_PV}.tar.gz
+	https://www.cpan.org/authors/id/H/HM/HMBRAND/DBI-${DBI_PV}.tgz
+	https://www.cpan.org/authors/id/I/IS/ISHIGAKI/DBD-SQLite-${DBD_SQLITE_PV}.tar.gz
 "
 S="${WORKDIR}/perl-${PV}"
 
@@ -33,10 +44,22 @@ S="${WORKDIR}/perl-${PV}"
 # as the original perl source" per its README, but it is a build-time-only
 # overlay (configure/Makefile/cnf/*) that is never installed into DESTDIR —
 # `emake install` only runs perl's own installperl/installman targets — so it
-# needs no separate LICENSE/SRC_URI accounting here.
+# needs no separate LICENSE/SRC_URI accounting here. DBI and DBD::SQLite are
+# both "the same terms as Perl itself" (Artistic/GPL-1+ dual license, per
+# their own META.json `"license" : [ "perl_5" ]`) — no separate LICENSE line
+# needed.
 LICENSE="|| ( Artistic GPL-1+ )"
 SLOT="0"
 KEYWORDS="~amd64"
+
+# Task 1 (P1): need /usr/${CHOST}/usr/{lib/libsqlite3.a,include/sqlite3.h} in
+# the cross sysroot before this package's src_prepare/src_configure run, in
+# case a future patch flips DBD::SQLite over to linking the system library
+# (see the src_prepare comment on DBD::SQLite's Makefile.PL — the system-link
+# code path is upstream dead code as of 1.78, so this DEPEND is not currently
+# load-bearing for the build itself, but it keeps the ordering correct for
+# when it becomes load-bearing, and documents the intended coupling).
+DEPEND="dev-db/monolith-sqlite"
 
 # Cannot run i486 target binaries in the (x86_64) build container, and
 # perl-cross's own configure never runs target executables either (compile/
@@ -60,6 +83,99 @@ src_prepare() {
 	# tree's contents onto ${S} (cwd here) is the same operation as the
 	# README's --strip-components=1 tar, just adapted to not re-extract.
 	cp -a "${WORKDIR}/perl-cross-${PC_PV}/." . || die "perl-cross overlay onto perl source failed"
+
+	# --- Task 3 (P3): stage DBI + DBD::SQLite as perl-cross static_ext ---
+	#
+	# perl-cross's sanctioned mechanism for third-party (non-core) CPAN
+	# modules, per its own docs (arsv.github.io/perl-cross/modules.html,
+	# "Build process for perl modules" — no equivalent text in README.md):
+	# "To add a module to your build, unpack it into cpan/ directory before
+	# running configure. Check naming scheme there: a module called
+	# Some::Module should be placed in cpan/Some-Module." Verified against
+	# cnf/configure_mods.sh (`for d in ext cpan dist; do extdir $d; done` —
+	# configure walks cpan/ alongside perl's own ext/ and dist/ looking for
+	# *.xs/*.c files to classify as XS modules) and cnf/configure__f.sh's
+	# modsymname() (strips a leading ext|cpan|dist|lib/ path component and
+	# maps `-`/`:`/`/` to `_`, lowercased — i.e. cpan/DBD-SQLite becomes the
+	# symbol "dbd_sqlite" that --static-ext=DBD-SQLite below also resolves
+	# to). This must run AFTER the perl-cross overlay above: perl-cross's
+	# tree only replaces perl's top-level Makefile/configure/cnf machinery,
+	# never touches cpan/ (which still holds perl's OWN bundled CPAN
+	# modules, e.g. cpan/Scalar-List-Utils) — placing DBI/DBD-SQLite here
+	# afterwards is purely additive and cannot be clobbered by the overlay.
+	#
+	# Portage's default src_unpack already extracted both SRC_URI tarballs
+	# into ${WORKDIR} as DBI-${DBI_PV}/ and DBD-SQLite-${DBD_SQLITE_PV}/
+	# (both single-top-level-dir tarballs, confirmed via `tar tzf`); rename
+	# on copy into the cpan/<Some-Module> layout perl-cross's configure
+	# expects.
+	mkdir -p cpan/DBI cpan/DBD-SQLite || die
+	cp -a "${WORKDIR}/DBI-${DBI_PV}/." cpan/DBI/ || die "staging DBI into cpan/DBI failed"
+	cp -a "${WORKDIR}/DBD-SQLite-${DBD_SQLITE_PV}/." cpan/DBD-SQLite/ || die "staging DBD::SQLite into cpan/DBD-SQLite failed"
+
+	# --- System libsqlite3.a vs bundled amalgamation (spec Task 3 Step 5) ---
+	#
+	# The plan's default mechanism for pointing DBD::SQLite at Task 1's
+	# system libsqlite3.a is SQLITE_INC/SQLITE_LIB. Read DBD-SQLite-${DBD_SQLITE_PV}'s
+	# own Makefile.PL before wiring that up, and found the ENTIRE system-
+	# sqlite code path is dead code upstream:
+	#
+	#   my ($sqlite_local, $sqlite_base, $sqlite_lib, $sqlite_inc);
+	#   if ( 0 ) {
+	#       ...SQLITE_LOCATION/USE_LOCAL_SQLITE/SQLITE_INC/SQLITE_LIB parsing...
+	#   } else {
+	#       # Always the bundled one.
+	#       $sqlite_local = 1;
+	#   }
+	#
+	# with the author's own comment directly above it: "Note to Downstream
+	# Packagers: This block is if ( 0 ) to discourage casual users building
+	# against the system SQLite. We expect that anyone sophisticated enough
+	# to use a system sqlite is also sophisticated enough to have a patching
+	# system that can change the if ( 0 ) to if ( 1 )." Three more findings
+	# that matter for that patch: (1) the parser reads raw @ARGV tokens
+	# ("SQLITE_INC=...") from the `perl Makefile.PL` command line, NOT
+	# %ENV — so exporting SQLITE_INC/SQLITE_LIB as plain env vars (as the
+	# plan's representative snippet suggested) would be silently ignored
+	# even with if(1); (2) OBJECT is `$(O_FILES)` (includes the bundled
+	# sqlite3.c's object) when $sqlite_local is true and only drops to
+	# 'SQLite.o dbdimp.o' when false — so a correct system-link patch must
+	# also flip OBJECT or the final link duplicate-defines every sqlite3_*
+	# symbol against the system .a (this disc's `--allow-multiple-definition`
+	# escape hatch, used for perl's own `re` extension, is a same-source
+	# duplicate; two different sqlite3.c's is not the same case and hasn't
+	# been vetted here); (3) this file read + version-number check runs
+	# during miniperl's Makefile.PL execution, which DOES run on the build
+	# host with the cross sysroot mounted, so it isn't blocked by the
+	# "can't run target binaries" constraint — this is a real, fixable
+	# upstream limitation, not a cross-compile wall.
+	#
+	# Patching Makefile.PL plus verifying the OBJECT-list + link-time
+	# consequences is real engineering that this task's instructions
+	# explicitly say not to validate here (no build is run in this step —
+	# CI is the only validator, and a wrong guess burns a full CI cycle,
+	# which has already happened twice on this branch per the revbump
+	# history). Per plan Task 3 Step 5, falling back to DBD::SQLite's
+	# bundled amalgamation is an explicitly sanctioned outcome, not a
+	# failure — so that's the path taken here: SQLITE_INC/SQLITE_LIB are
+	# deliberately left UNSET, DBD::SQLite compiles its own vendored
+	# sqlite3.c exactly as every other unpatched CPAN consumer does.
+	#
+	# SBOM note (spec: "the disc ships no untracked code"): DBD::SQLite
+	# ${DBD_SQLITE_PV}'s bundled sqlite3.h reports `#define SQLITE_VERSION
+	# "3.51.1"` — this disc therefore ships TWO independently-built copies
+	# of SQLite: Task 1's monolith-sqlite 3.53.4 (standalone `sqlite3` CLI +
+	# libsqlite3.a) and this embedded 3.51.1 (compiled directly into the
+	# perl binary, reachable only via `perl -MDBI`). Both are built
+	# THREADSAFE=0 — Task 1 sets it explicitly via CPPFLAGS, and
+	# DBD::SQLite's Makefile.PL sets -DTHREADSAFE=0 itself whenever
+	# `!$Config{usethreads}` (true here: -Uusethreads above) — and both
+	# effectively omit runtime extension loading: DBD::SQLite's Makefile.PL
+	# adds -DSQLITE_OMIT_LOAD_EXTENSION whenever `!$Config{usedl}` (true
+	# here: -Uusedl above), matching Task 1's explicit
+	# -DSQLITE_OMIT_LOAD_EXTENSION=1 without any extra flag needed on our
+	# side — the disc's no-dynamic-loader doctrine falls out of DBD::SQLite's
+	# own $Config-awareness for free.
 }
 
 src_configure() {
@@ -132,6 +248,20 @@ src_configure() {
 	# and perl's internal Unicode (use utf8, -C IO layers, unicore uc()/lc()) is
 	# independent of USE_LOCALE, so the utf8 acceptance smoke still passes. This
 	# single-user disc has no need for locale-aware collation/number formatting.
+	# --static-ext=DBI,DBD-SQLite (spec/plan Task 3): explicit belt-and-
+	# suspenders alongside --all-static above. --all-static (cnf/
+	# configure_mods.sh: `elif [ "$1" = "xs" -a -n "$allstatic" ]`) already
+	# forces every discovered XS module — including third-party ones staged
+	# under cpan/ in src_prepare above — onto the static_ext list, so this
+	# flag changes nothing functionally today. It is added anyway to
+	# document intent directly at the configure call site and to keep DBI +
+	# DBD::SQLite static even if --all-static is ever narrowed later.
+	# Verified spelling against cnf/configure_args.sh's option table:
+	# `static-mod|static-ext|static-modules|static)` accepts a
+	# comma-separated list, each entry run through the same modsymname()
+	# used for module discovery (see src_prepare) — so "DBI" and
+	# "DBD-SQLite" (the cpan/ directory names, not the "::"-form perl
+	# module names) are the correct tokens here.
 	./configure \
 		--target="${CHOST}" \
 		--prefix=/usr \
@@ -141,6 +271,7 @@ src_configure() {
 		-Accflags="${CFLAGS} -D_GNU_SOURCE -DNO_LOCALE" \
 		-Aldflags="${LDFLAGS} -Wl,--allow-multiple-definition" \
 		--all-static \
+		--static-ext=DBI,DBD-SQLite \
 		|| die "perl-cross configure failed"
 
 	# -Wl,--allow-multiple-definition (appended to ldflags): the `re` extension
