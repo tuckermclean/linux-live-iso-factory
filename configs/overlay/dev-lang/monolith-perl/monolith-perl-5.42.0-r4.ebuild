@@ -233,18 +233,6 @@ src_install() {
 	# perl's own core modules — same installperl codepath, no separate step.
 	default
 
-	# --- DIAG (temporary, -r3): boot showed CGI->File::Temp->"Can't locate
-	# File/Spec.pm". List the PathTools/Spec/Temp/Cwd install state right after
-	# `default` (pre-prune) so the build log shows whether File::Spec was ever
-	# installed vs. removed by the prune below. Grep the build log for
-	# MONOLITH-DIAG. Remove once resolved. ---
-	einfo "MONOLITH-DIAG: post-install, pre-prune inventory:"
-	find "${ED}/usr/lib/perl5" \( -name 'Spec.pm' -o -name 'Temp.pm' \
-		-o -name 'Cwd.pm' -o -path '*File/Spec*' \) \
-		-printf 'MONOLITH-DIAG-PRE: %P\n' 2>/dev/null | sort || true
-	einfo "MONOLITH-DIAG: File dir listing:"
-	find "${ED}/usr/lib/perl5" -type d -name File -printf 'MONOLITH-DIAG-DIR: %P\n' 2>/dev/null || true
-
 	# --- Prune pass (spec §3 size budget) ---
 	#
 	# Budget: perl binary (static, -Os, stripped) <= 12 MiB; installed
@@ -295,11 +283,6 @@ src_install() {
 		find "${libdir}" -depth -type d -name Pod -exec rm -rf {} +
 	fi
 
-	# DIAG (temporary, -r3): post-prune inventory — compare against
-	# MONOLITH-DIAG-PRE to see if the prune removed File::Spec.
-	find "${ED}/usr/lib/perl5" \( -name 'Spec.pm' -o -name 'Temp.pm' \
-		-o -name 'Cwd.pm' \) -printf 'MONOLITH-DIAG-POST: %P\n' 2>/dev/null | sort || true
-
 	# 5. h2ph / h2xs — module-AUTHORING utility scripts (h2ph: C headers ->
 	#    perl .ph; h2xs: scaffold a new XS module). Meaningless on a disc
 	#    with no compiler-facing XS workflow at runtime (static, -Uusedl, no
@@ -339,16 +322,29 @@ src_install() {
 		einfo "MONOLITH-PERL-SIZE: /usr/lib/perl5 tree (post-prune) = $(du -sh "${libdir}" | cut -f1) — budget <=35MB"
 	fi
 
-	# DIAG (temporary, -r3): dump the install inventory and DIE so the failing
-	# build uploads portage's build.log (which carries all the einfo/find output
-	# above — it is NOT uploaded on a successful build step). Grep MONOLITH-DIAG.
-	einfo "MONOLITH-DIAG: === ls 5.42.0/ ==="
-	ls -1 "${ED}/usr/lib/perl5/5.42.0/" 2>&1 | sed 's/^/MONOLITH-DIAG-TOP: /' || true
-	einfo "MONOLITH-DIAG: === ls 5.42.0/File/ ==="
-	ls -1 "${ED}/usr/lib/perl5/5.42.0/File/" 2>&1 | sed 's/^/MONOLITH-DIAG-FILE: /' || true
-	einfo "MONOLITH-DIAG: === ls 5.42.0/i486-linux/ (archlib) ==="
-	ls -1 "${ED}/usr/lib/perl5/5.42.0/i486-linux/" 2>&1 | sed 's/^/MONOLITH-DIAG-ARCH: /' || true
-	einfo "MONOLITH-DIAG: === find Spec.pm/Cwd.pm anywhere ==="
-	find "${ED}/usr/lib/perl5" \( -name 'Spec.pm' -o -name 'Cwd.pm' \) -printf 'MONOLITH-DIAG-FOUND: %P\n' 2>&1 || true
-	die "MONOLITH-DIAG: intentional stop to capture the inventory above in build.log"
+	# --- PathTools (File::Spec + Cwd) install fix ---
+	#
+	# perl-cross treats PathTools as a build-bootstrap extension: it bakes Cwd's
+	# XS into libperl.a (PathTools is in the static_ext set under --all-static)
+	# but never installs PathTools' pure-perl .pm (File::Spec*, Cwd.pm) into the
+	# target lib tree — confirmed by inventory: File/Temp.pm present, File/Spec.pm
+	# absent everywhere. Result: `use File::Spec` dies "Can't locate File/Spec.pm",
+	# which breaks File::Temp and therefore CGI.pm (and most path-handling perl).
+	# Install the .pm from the source tree — the XS half is already in the binary,
+	# so the .pm alone completes the module.
+	local privlib="${ED}/usr/lib/perl5/5.42.0"
+	local spec_src
+	spec_src="$(find "${S}" -path '*PathTools*' -path '*File/Spec.pm' 2>/dev/null | head -1)"
+	[[ -n "${spec_src}" ]] || die "PathTools File/Spec.pm not found under ${S} (source layout changed?)"
+	local ptlib="${spec_src%/File/Spec.pm}"          # .../PathTools[/lib]
+	install -d "${privlib}/File"
+	cp -a "${ptlib}/File/Spec.pm" "${privlib}/File/Spec.pm" || die "install File/Spec.pm failed"
+	[[ -d "${ptlib}/File/Spec" ]] && cp -a "${ptlib}/File/Spec" "${privlib}/File/"   # File::Spec::Unix etc.
+	local cwd_src
+	cwd_src="$(find "${S}" -path '*PathTools*' -name 'Cwd.pm' 2>/dev/null | head -1)"
+	[[ -n "${cwd_src}" ]] && cp -a "${cwd_src}" "${privlib}/Cwd.pm"
+	# Verify the load-bearing file landed (File::Temp/CGI depend on it).
+	[[ -f "${privlib}/File/Spec.pm" && -f "${privlib}/File/Spec/Unix.pm" ]] \
+		|| die "PathTools .pm install fix incomplete (File/Spec.pm or File/Spec/Unix.pm missing)"
+	einfo "MONOLITH-PERL: installed PathTools .pm (File::Spec + Cwd) that perl-cross omitted"
 }
