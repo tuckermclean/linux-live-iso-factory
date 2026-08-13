@@ -19,6 +19,7 @@
 - Size budget (spec §3): perl binary ≤ 12 MB stripped; `/usr/lib/perl5` ≤ 35 MB uncompressed. Measure + record.
 - House rules: revbump on ebuild change, pin comments in `configs/portage/world` in the established voice, report to `.batteries/reports/perl.md`, record decision deviations in a `DECISIONS.md` alongside the report.
 - Timebox: 45 min per blocked avenue, then the ladder/fallback. perl-cross version-pairing errors masquerade as deep C failures — check the pairing FIRST. (spec §5)
+- **Overlay keyword gate:** every overlay ebuild carries `KEYWORDS="~amd64"`, which the i486 cross target does NOT accept (`*/* ~x86` is global; `~amd64` is neither). Each overlay package therefore needs an explicit `<cat>/<pkg> **` line in `configs/portage/package.accept_keywords/i486` or it fails with `masked by: missing keyword`. `monolith-sqlite` and `monolith-perl` entries are already added.
 
 ## File Structure
 
