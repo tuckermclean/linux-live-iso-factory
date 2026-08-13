@@ -37,10 +37,14 @@ src_configure() {
 	# -Os comes from the global CFLAGS. econf inherits EXTRA_ECONF
 	# ("--disable-shared --enable-static") from env/static.conf via the
 	# */* catch-all in package.env/cross-compile — do NOT repeat those flags
-	# here. Disable the optional readline/editline-backed CLI line editor (no
-	# such libs wired into this cross sysroot) and dlopen-based extension
-	# loading at the shell level (belt-and-suspenders with the CPPFLAGS above).
-	econf --disable-editline --disable-readline --disable-dynamic-extensions
+	# here (both are valid options in this autosetup configure). Disable the
+	# optional readline/editline-backed CLI line editor (no such libs wired
+	# into this cross sysroot) and dlopen-based extension loading at the
+	# configure level (belt-and-suspenders with SQLITE_OMIT_LOAD_EXTENSION).
+	# NOTE: sqlite-autoconf 3.53.x ships an *autosetup* configure — the option
+	# is --disable-load-extension (NOT the classic autoconf
+	# --disable-dynamic-extensions, which this configure rejects as unknown).
+	econf --disable-editline --disable-readline --disable-load-extension
 }
 
 # src_compile/src_install: EAPI 8 defaults (emake / emake DESTDIR="${D}" install)
