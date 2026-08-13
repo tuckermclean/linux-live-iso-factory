@@ -216,14 +216,23 @@ src_configure() {
 	# env/static.conf: it's a perl-static-`re` quirk, not a global doctrine.
 }
 
-# src_compile: EAPI 8 default (plain `emake`) is sufficient — perl-cross
-# ships a plain top-level GNU Makefile (overlaid in src_prepare) whose
-# default target builds miniperl then the target perl/extensions (including
-# the cpan/CGI nonxs_ext staged above), verified by reading Makefile
-# directly. perl-cross builds its own miniperl from source (no pre-existing
-# host perl required to bootstrap) using the build-host compiler for
-# host-side codegen and ${CHOST}-gcc (set via -Dcc= above) for the target
-# perl binary/extensions.
+src_compile() {
+	# perl-cross builds its own miniperl from source (host compiler for
+	# host-side codegen; ${CHOST}-gcc for the target perl/extensions).
+	emake
+
+	# perl-cross's `all` target LINKS the perl binary (baking every static
+	# extension's XS into libperl.a) but does NOT reliably run each static
+	# extension's `pm_to_blib` — so installperl later ships a perl with the XS
+	# baked in yet the modules' pure-perl .pm MISSING (Fcntl.pm, File::Spec,
+	# Cwd, ... => "Can't locate X.pm in @INC" at runtime, which breaks
+	# File::Temp and therefore CGI.pm). The Makefile's `modules` target
+	# (modules -> extensions -> {nonxs,dynamic,static}_ext -> */pm_to_blib)
+	# stages them; run it explicitly so `default`'s installperl has the .pm to
+	# install. (Confirmed via a DIAG build: Fcntl.pm existed only at
+	# ext/Fcntl/Fcntl.pm, never staged to any blib/.)
+	emake modules
+}
 
 src_install() {
 	# `emake DESTDIR="${D}" install` — chains installperl + installman
