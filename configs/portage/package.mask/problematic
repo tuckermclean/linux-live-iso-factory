@@ -31,6 +31,11 @@ app-misc/mc
 sys-apps/pciutils
 
 
+# zstd: meson builds a test/shared artifact that hits the same -static+-shared
+# crt1.o error; not needed by anything in world. Re-enable with a meson patch
+# like the libxml2 testdso rewrite (configs/portage/bashrc) if a package needs it.
+app-arch/zstd
+
 # libcaca: uses C++ exceptions with -fno-exceptions; toilet depends on libcaca.
 # Fixing requires per-package fexceptions override AND shared lib cross-compile fix.
 media-libs/libcaca

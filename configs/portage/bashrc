@@ -47,6 +47,23 @@ if [[ ${EBUILD_PHASE} == "configure" ]]; then
 			fi
 		fi
 
+		# libxml2: its meson.build builds a test-only loadable module,
+		# `testdso_mod = shared_module('testdso', …)`, for the xmlModule/dlopen
+		# tests. shared_module ignores -Ddefault_library=static, so the .so link
+		# still runs and collides with -static in LDFLAGS (crt1.o "undefined
+		# reference to main"). We don't run tests (USE=-test) and ship no .so, so
+		# rewrite it to static_library() — the meson parse still succeeds and no
+		# shared link happens. Same class/fix as the kmod rewrite above.
+		if [[ ${CATEGORY}/${PN} == "dev-libs/libxml2" ]]; then
+			local xmb="${S}/meson.build"
+			if [[ -f ${xmb} ]] && grep -qE 'testdso[_a-z]*[[:space:]]*=[[:space:]]*shared_module\(' "${xmb}"; then
+				einfo "libxml2: rewriting testdso shared_module() → static_library() for -static"
+				sed -i -E 's/(testdso[_a-z]*[[:space:]]*=[[:space:]]*)shared_module\(/\1static_library(/' "${xmb}"
+			else
+				ewarn "libxml2: expected 'testdso… = shared_module(' not found in ${xmb} — static rewrite skipped (upstream may have changed)"
+			fi
+		fi
+
 		# meson: force static-only library builds so .so link steps never
 		# occur and -static in LDFLAGS never conflicts with -shared.
 		if declare -f meson_src_configure > /dev/null 2>&1; then
