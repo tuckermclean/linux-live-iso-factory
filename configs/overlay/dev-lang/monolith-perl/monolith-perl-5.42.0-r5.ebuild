@@ -233,6 +233,29 @@ src_install() {
 	# perl's own core modules — same installperl codepath, no separate step.
 	default
 
+	# --- Backfill baked-XS .pm that perl-cross omits ---
+	#
+	# perl-cross bakes several bootstrap/core XS extensions (Fcntl, Cwd &
+	# File::Spec via PathTools, and likely others) into libperl.a but does NOT
+	# install their pure-perl .pm into the target lib tree. Without the .pm,
+	# `use Fcntl` / `use File::Spec` die "Can't locate ...", which breaks
+	# File::Temp and therefore CGI.pm — and much path/flag-handling perl in
+	# general. Each built extension staged its .pm under <ext>/blib/lib during
+	# the build; copy every such tree into the install lib so all baked modules
+	# are actually usable. Runs BEFORE the prune below, so any *.pod these
+	# re-introduce get removed there.
+	local privlib="${ED}/usr/lib/perl5/5.42.0"
+	local blib
+	while IFS= read -r -d '' blib; do
+		cp -a "${blib}/." "${privlib}/" || die "backfilling ${blib} failed"
+	done < <(find "${S}" -type d -path '*/blib/lib' -print0)
+	# Verify the load-bearing bootstrap modules CGI.pm's File::Temp needs.
+	local m
+	for m in Fcntl.pm File/Spec.pm File/Spec/Unix.pm Cwd.pm; do
+		[[ -f "${privlib}/${m}" ]] || die "backfill incomplete: ${m} still missing"
+	done
+	einfo "MONOLITH-PERL: backfilled baked-XS .pm (Fcntl, File::Spec, Cwd, ...) omitted by perl-cross"
+
 	# --- Prune pass (spec §3 size budget) ---
 	#
 	# Budget: perl binary (static, -Os, stripped) <= 12 MiB; installed
@@ -322,29 +345,4 @@ src_install() {
 		einfo "MONOLITH-PERL-SIZE: /usr/lib/perl5 tree (post-prune) = $(du -sh "${libdir}" | cut -f1) — budget <=35MB"
 	fi
 
-	# --- PathTools (File::Spec + Cwd) install fix ---
-	#
-	# perl-cross treats PathTools as a build-bootstrap extension: it bakes Cwd's
-	# XS into libperl.a (PathTools is in the static_ext set under --all-static)
-	# but never installs PathTools' pure-perl .pm (File::Spec*, Cwd.pm) into the
-	# target lib tree — confirmed by inventory: File/Temp.pm present, File/Spec.pm
-	# absent everywhere. Result: `use File::Spec` dies "Can't locate File/Spec.pm",
-	# which breaks File::Temp and therefore CGI.pm (and most path-handling perl).
-	# Install the .pm from the source tree — the XS half is already in the binary,
-	# so the .pm alone completes the module.
-	local privlib="${ED}/usr/lib/perl5/5.42.0"
-	local spec_src
-	spec_src="$(find "${S}" -path '*PathTools*' -path '*File/Spec.pm' 2>/dev/null | head -1)"
-	[[ -n "${spec_src}" ]] || die "PathTools File/Spec.pm not found under ${S} (source layout changed?)"
-	local ptlib="${spec_src%/File/Spec.pm}"          # .../PathTools[/lib]
-	install -d "${privlib}/File"
-	cp -a "${ptlib}/File/Spec.pm" "${privlib}/File/Spec.pm" || die "install File/Spec.pm failed"
-	[[ -d "${ptlib}/File/Spec" ]] && cp -a "${ptlib}/File/Spec" "${privlib}/File/"   # File::Spec::Unix etc.
-	local cwd_src
-	cwd_src="$(find "${S}" -path '*PathTools*' -name 'Cwd.pm' 2>/dev/null | head -1)"
-	[[ -n "${cwd_src}" ]] && cp -a "${cwd_src}" "${privlib}/Cwd.pm"
-	# Verify the load-bearing file landed (File::Temp/CGI depend on it).
-	[[ -f "${privlib}/File/Spec.pm" && -f "${privlib}/File/Spec/Unix.pm" ]] \
-		|| die "PathTools .pm install fix incomplete (File/Spec.pm or File/Spec/Unix.pm missing)"
-	einfo "MONOLITH-PERL: installed PathTools .pm (File::Spec + Cwd) that perl-cross omitted"
 }
