@@ -338,4 +338,17 @@ src_install() {
 	if [[ -d "${libdir}" ]]; then
 		einfo "MONOLITH-PERL-SIZE: /usr/lib/perl5 tree (post-prune) = $(du -sh "${libdir}" | cut -f1) — budget <=35MB"
 	fi
+
+	# DIAG (temporary, -r3): dump the install inventory and DIE so the failing
+	# build uploads portage's build.log (which carries all the einfo/find output
+	# above — it is NOT uploaded on a successful build step). Grep MONOLITH-DIAG.
+	einfo "MONOLITH-DIAG: === ls 5.42.0/ ==="
+	ls -1 "${ED}/usr/lib/perl5/5.42.0/" 2>&1 | sed 's/^/MONOLITH-DIAG-TOP: /' || true
+	einfo "MONOLITH-DIAG: === ls 5.42.0/File/ ==="
+	ls -1 "${ED}/usr/lib/perl5/5.42.0/File/" 2>&1 | sed 's/^/MONOLITH-DIAG-FILE: /' || true
+	einfo "MONOLITH-DIAG: === ls 5.42.0/i486-linux/ (archlib) ==="
+	ls -1 "${ED}/usr/lib/perl5/5.42.0/i486-linux/" 2>&1 | sed 's/^/MONOLITH-DIAG-ARCH: /' || true
+	einfo "MONOLITH-DIAG: === find Spec.pm/Cwd.pm anywhere ==="
+	find "${ED}/usr/lib/perl5" \( -name 'Spec.pm' -o -name 'Cwd.pm' \) -printf 'MONOLITH-DIAG-FOUND: %P\n' 2>&1 || true
+	die "MONOLITH-DIAG: intentional stop to capture the inventory above in build.log"
 }
