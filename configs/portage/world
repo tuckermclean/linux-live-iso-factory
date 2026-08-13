@@ -65,13 +65,8 @@ dev-lang/lua
 # perl — static, -Uusedl (no dynamic loader on the disc, so no XS .so loading;
 # XS is baked into the binary via static_ext — see monolith-perl ebuild). Built
 # with arsv/perl-cross driving vanilla perl (Gentoo's dev-lang/perl Configure is
-# cross-hostile). No threads, no CPAN client. DBI 1.651 + DBD::SQLite 1.78 are
-# baked in via the same static_ext mechanism (perl-cross's cpan/ staging
-# convention) — DBD::SQLite links its OWN bundled sqlite amalgamation
-# (3.51.1), not monolith-sqlite's libsqlite3.a, because DBD::SQLite's
-# Makefile.PL keeps the system-sqlite path behind a permanent `if ( 0 )`
-# upstream. CGI.pm shipped separately (removed from perl core in 5.22) for
-# the guestbook.
+# cross-hostile). No threads, no CPAN client. CGI.pm shipped separately (removed
+# from perl core in 5.22) for the guestbook.
 dev-lang/monolith-perl
 
 # Compression utilities
@@ -192,11 +187,7 @@ sys-apps/dmidecode
 # Databases
 # sqlite — static SQLite (CLI + libsqlite3.a) from the amalgamation ebuild, not
 # ::gentoo (which BDEPENDs tcl). THREADSAFE=0, no dlopen extensions, FTS5+JSON1.
-# Also feeds the sysroot dev-lang/monolith-perl DEPENDs on for its DBD::SQLite
-# static_ext bake, though DBD::SQLite currently compiles its OWN bundled
-# sqlite (3.51.1) rather than linking libsqlite3.a here — see the
-# monolith-perl ebuild for why. The CLI sqlite3 binary on the disc IS this
-# package's build (3.53.4), independent of that embedded copy.
+# libsqlite3.a + sqlite3.h feed DBD::SQLite's static_ext bake in monolith-perl.
 dev-db/monolith-sqlite
 
 # Mouse support
