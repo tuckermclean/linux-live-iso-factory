@@ -641,6 +641,24 @@ def smoke_sqlite_cli(child):
         contains("42"))
 
 
+def smoke_perl_version(child):
+    """perl runs and reports its version — proves the perl-cross build pipeline."""
+    return run_check(child, "perl runs and reports its version", "perl -e 'print $];'",
+                     contains("5.0"))  # $] is e.g. 5.042000; tighten to the pinned major once known
+
+
+def smoke_perl_basic(child):
+    """perl strict+warnings program runs — proves a sane, usable interpreter."""
+    return run_check(child, "perl strict+warnings program runs",
+                     "perl -e 'use strict; use warnings; print qq(ok\\n);'", contains("ok"))
+
+
+def smoke_perl_utf8(child):
+    """unicore tables survived pruning: uc() of a non-ASCII char needs Unicode data."""
+    return run_check(child, "perl unicode/utf8 tables present",
+                     "perl -Mutf8 -CS -e 'print uc(qq(\\x{e9}));'", exit_code_only())
+
+
 def smoke_overlay_mount(child):
     return run_check(
         child, "overlay root is mounted", "mount",
@@ -786,6 +804,9 @@ def run_full_smoke_suite(child, expected_kernel):
     smoke_dhcp_lease(child, results)
     results.append(("curl --version executes", *smoke_curl(child)))
     results.append(("sqlite3 CLI evaluates in-memory SQL", *smoke_sqlite_cli(child)))
+    results.append(("perl runs and reports its version", *smoke_perl_version(child)))
+    results.append(("perl strict+warnings program runs", *smoke_perl_basic(child)))
+    results.append(("perl unicode/utf8 tables present", *smoke_perl_utf8(child)))
     results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
     results.append(("man ls renders (mandoc)", *smoke_man(child)))
     return results

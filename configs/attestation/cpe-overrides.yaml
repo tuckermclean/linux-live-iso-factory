@@ -113,6 +113,11 @@ overrides:
 
   # --- Scripting ---
   lua:             "cpe:2.3:a:lua:lua:*:*:*:*:*:*:*:*"
+  # monolith-perl is our custom overlay ebuild (perl-cross-driven static
+  # build, see configs/overlay/dev-lang/monolith-perl), but the shipped
+  # interpreter is upstream Perl verbatim — CVEs are filed against
+  # perl:perl in NVD, not against the overlay package name.
+  perl:            "cpe:2.3:a:perl:perl:*:*:*:*:*:*:*:*"
 
   # --- Databases ---
   # monolith-sqlite is our custom overlay ebuild (amalgamation build, see

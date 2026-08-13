@@ -62,6 +62,13 @@ dev-debug/gdb
 # Scripting languages
 dev-lang/lua
 
+# perl — static, -Uusedl (no dynamic loader on the disc, so no XS .so loading;
+# XS is baked into the binary via static_ext — see monolith-perl ebuild). Built
+# with arsv/perl-cross driving vanilla perl (Gentoo's dev-lang/perl Configure is
+# cross-hostile). No threads, no CPAN client. CGI.pm shipped separately (removed
+# from perl core in 5.22) for the guestbook.
+dev-lang/monolith-perl
+
 # Compression utilities
 app-arch/xz-utils
 app-arch/bzip2
