@@ -416,6 +416,13 @@ EOF
     install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/bin/which" \
         "$ROOTFS_DIR/usr/bin/which"
 
+    # Install the guestbook CGI fixture (SP5 P4 LAMP-invariant boot-test; perl
+    # + CGI.pm + the sqlite3 CLI — DBI/DBD::SQLite are deferred, see
+    # configs/portage/world's monolith-perl comment). See the file's header
+    # and scripts/boot-test.py smoke_guestbook.
+    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/lib/cgi-bin/guestbook.cgi" \
+        "$ROOTFS_DIR/usr/lib/cgi-bin/guestbook.cgi"
+
     # /etc/init.d/S35netprobe - reach ISA NICs that can't announce themselves.
     # Runs AFTER rcS coldplug (which self-loads PCI/virtual NICs by modalias) and
     # BEFORE S40network (which DHCPs whatever interfaces exist). Only the SAFE,

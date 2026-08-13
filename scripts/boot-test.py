@@ -659,6 +659,53 @@ def smoke_perl_utf8(child):
                      "perl -Mutf8 -CS -e 'print uc(qq(\\x{e9}));'", exit_code_only())
 
 
+def smoke_perl_cgi(child):
+    """
+    CGI.pm's param() parses a synthetic query string — proves the pure-perl
+    CGI.pm 4.10 rider (staged into cpan/CGI, see the monolith-perl ebuild)
+    actually landed in the installed /usr/lib/perl5 tree and is importable.
+    """
+    return run_check(
+        child, "CGI.pm param() works",
+        "perl -MCGI -e 'print CGI->new(q(x=42))->param(q(x));'",
+        contains("42"))
+
+
+def smoke_guestbook(child, results):
+    """
+    The LAMP invariant, via CLI (DBI/DBD::SQLite deferred — see
+    configs/portage/world's monolith-perl comment): a guestbook CGI (perl +
+    CGI.pm) shells out to the `sqlite3` CLI to INSERT a row and read it back.
+
+    Two checks, not one: (1) invoke the CGI directly (the httpd-served +
+    curl-POST form is the STRETCH goal per the plan; this direct invocation
+    is the reliable form actually wired here) with a synthetic QUERY_STRING
+    and assert its own response contains the round-tripped row: (2)
+    independently re-query the SAME on-disc sqlite3 db file via the CLI,
+    proving the row was genuinely persisted to disk by the CGI script and
+    not merely echoed back from its own arguments.
+    """
+    # guestbook.cgi's own sqlite3_query1() uses -separator '|' too (see the
+    # fixture), so its printed row is "Ada|Hello from 1996" — same shape as
+    # the independent re-query below.
+    ok1, detail1 = run_check(
+        child, "guestbook.cgi inserts + reads back a row via sqlite3",
+        "rm -f /tmp/guestbook.db; "
+        "REQUEST_METHOD=GET QUERY_STRING='name=Ada&message=Hello+from+1996' "
+        "perl /usr/lib/cgi-bin/guestbook.cgi",
+        contains("Ada|Hello from 1996"),
+    )
+    results.append(("guestbook.cgi inserts + reads back a row via sqlite3", ok1, detail1))
+
+    ok2, detail2 = run_check(
+        child, "guestbook row independently verified via sqlite3 CLI",
+        "sqlite3 -separator '|' /tmp/guestbook.db "
+        "\"select name, message from guestbook order by id desc limit 1;\"",
+        contains("Ada|Hello from 1996"),
+    )
+    results.append(("guestbook row independently verified via sqlite3 CLI", ok2, detail2))
+
+
 def smoke_overlay_mount(child):
     return run_check(
         child, "overlay root is mounted", "mount",
@@ -807,6 +854,8 @@ def run_full_smoke_suite(child, expected_kernel):
     results.append(("perl runs and reports its version", *smoke_perl_version(child)))
     results.append(("perl strict+warnings program runs", *smoke_perl_basic(child)))
     results.append(("perl unicode/utf8 tables present", *smoke_perl_utf8(child)))
+    results.append(("CGI.pm param() works", *smoke_perl_cgi(child)))
+    smoke_guestbook(child, results)
     results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
     results.append(("man ls renders (mandoc)", *smoke_man(child)))
     return results
