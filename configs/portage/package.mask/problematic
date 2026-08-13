@@ -30,11 +30,6 @@ app-misc/mc
 # build system incompatibility with the musl cross-compile toolchain.
 sys-apps/pciutils
 
-# zstd: meson + multilib-minimal eclass fails cross-compilation with same crt1.o error.
-# jq pulls bison → gettext → libxml2 which has the same meson/multilib failure.
-# Re-enable by providing a meson cross-file for i486-linux-musl.
-app-arch/zstd
-dev-libs/libxml2
 
 # libcaca: uses C++ exceptions with -fno-exceptions; toilet depends on libcaca.
 # Fixing requires per-package fexceptions override AND shared lib cross-compile fix.

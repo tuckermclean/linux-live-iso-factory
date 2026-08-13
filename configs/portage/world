@@ -140,10 +140,10 @@ app-arch/cpio
 <sys-fs/ncdu-2
 # pv — pipe viewer: progress bars/throughput for shell pipelines.
 sys-apps/pv
-# NOTE: bc and jq are wanted too but blocked — both BDEPEND bison, which drags
-# gettext -> dev-libs/libxml2, and libxml2 is masked in package.mask/problematic
-# for a meson/multilib cross-compile failure. Unblocking them needs a libxml2
-# i486-linux-musl meson cross-file (tracked separately).
+# bc — arbitrary-precision calculator. GNU impl via app-alternatives/bc gnu.
+sys-devel/bc
+# jq — command-line JSON processor.
+app-misc/jq
 
 # Filesystem tools
 sys-fs/e2fsprogs
