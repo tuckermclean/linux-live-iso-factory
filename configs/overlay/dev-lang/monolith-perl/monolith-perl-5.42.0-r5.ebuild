@@ -221,17 +221,30 @@ src_compile() {
 	# host-side codegen; ${CHOST}-gcc for the target perl/extensions).
 	emake
 
-	# perl-cross's `all` target LINKS the perl binary (baking every static
-	# extension's XS into libperl.a) but does NOT reliably run each static
-	# extension's `pm_to_blib` — so installperl later ships a perl with the XS
-	# baked in yet the modules' pure-perl .pm MISSING (Fcntl.pm, File::Spec,
-	# Cwd, ... => "Can't locate X.pm in @INC" at runtime, which breaks
-	# File::Temp and therefore CGI.pm). The Makefile's `modules` target
-	# (modules -> extensions -> {nonxs,dynamic,static}_ext -> */pm_to_blib)
-	# stages them; run it explicitly so `default`'s installperl has the .pm to
-	# install. (Confirmed via a DIAG build: Fcntl.pm existed only at
-	# ext/Fcntl/Fcntl.pm, never staged to any blib/.)
-	emake modules
+	# Stage every extension's pure-perl .pm into its blib so `default`'s
+	# installperl actually ships them.
+	#
+	# THE BUG: perl-cross builds each STATIC extension via MakeMaker's `static`
+	# target (Makefile line: `$(MAKE) -C dir ... LINKTYPE=static static`), which
+	# compiles the XS into a .a but does NOT run pm_to_blib (the step that copies
+	# the module's .pm into blib/lib). perl-cross then `touch`es a fake
+	# `<dir>/pm_to_blib` stamp, so make believes staging is done. In a normal
+	# usedl=define build this is harmless — modules are DYNAMIC ext, and the
+	# `dynamic` target DOES stage .pm. But this disc is -Uusedl, so EVERY module
+	# is static ext, and NONE of their .pm get staged: installperl ships a perl
+	# with all the XS baked into the binary yet Fcntl.pm / File::Spec / Cwd / ...
+	# missing => "Can't locate X.pm in @INC" (breaks File::Temp, CGI.pm, and most
+	# path/flag-handling perl). Confirmed by DIAG build: Fcntl.pm existed only at
+	# ext/Fcntl/Fcntl.pm, never in any blib.
+	#
+	# FIX: drop the fake stamp and run each module's real MakeMaker `pm_to_blib`
+	# target (a pure .pm copy — no recompile). installperl then finds them.
+	local mk d
+	while IFS= read -r -d '' mk; do
+		d="${mk%/Makefile}"
+		rm -f "${d}/pm_to_blib"
+		emake -C "${d}" PERL_CORE=1 pm_to_blib || ewarn "pm_to_blib staging skipped for ${d#"${S}/"}"
+	done < <(find "${S}/ext" "${S}/dist" "${S}/cpan" -maxdepth 2 -name Makefile -print0 2>/dev/null)
 }
 
 src_install() {
