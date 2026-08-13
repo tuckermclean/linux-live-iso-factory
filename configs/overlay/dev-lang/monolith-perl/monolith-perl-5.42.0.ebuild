@@ -105,13 +105,21 @@ src_configure() {
 	# usedl, unless static_$sym or $allstatic is set. --all-static sets
 	# $allstatic, which is exactly "every XS module baked in, none dynamic"
 	# (global constraint) for the extensions bundled in perl core itself.
+	#
+	# -D_GNU_SOURCE (appended to ccflags): perl-cross link-detects memrchr,
+	# setresuid, setresgid, eaccess (all present in musl) and sets their HAS_*
+	# config symbols, but musl only DECLARES these GNU extensions when
+	# _GNU_SOURCE is defined. On glibc perl adds -D_GNU_SOURCE itself (d_gnulibc);
+	# musl isn't "gnulibc" so it doesn't — leaving perl.h/regcomp.c et al. with
+	# implicit declarations, which GCC 14 treats as hard errors. Defining it is
+	# the standard perl-on-musl fix (Buildroot/OpenWrt do the same).
 	./configure \
 		--target="${CHOST}" \
 		--prefix=/usr \
 		-Dcc="${CHOST}-gcc" \
 		-Uusedl -Uusethreads -Duse64bitint -Duselargefiles \
 		-Dman1dir=none -Dman3dir=none \
-		-Accflags="${CFLAGS}" \
+		-Accflags="${CFLAGS} -D_GNU_SOURCE" \
 		-Aldflags="${LDFLAGS}" \
 		--all-static \
 		|| die "perl-cross configure failed"
