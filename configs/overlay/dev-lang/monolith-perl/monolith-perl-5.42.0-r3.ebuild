@@ -233,6 +233,18 @@ src_install() {
 	# perl's own core modules — same installperl codepath, no separate step.
 	default
 
+	# --- DIAG (temporary, -r3): boot showed CGI->File::Temp->"Can't locate
+	# File/Spec.pm". List the PathTools/Spec/Temp/Cwd install state right after
+	# `default` (pre-prune) so the build log shows whether File::Spec was ever
+	# installed vs. removed by the prune below. Grep the build log for
+	# MONOLITH-DIAG. Remove once resolved. ---
+	einfo "MONOLITH-DIAG: post-install, pre-prune inventory:"
+	find "${ED}/usr/lib/perl5" \( -name 'Spec.pm' -o -name 'Temp.pm' \
+		-o -name 'Cwd.pm' -o -path '*File/Spec*' \) \
+		-printf 'MONOLITH-DIAG-PRE: %P\n' 2>/dev/null | sort || true
+	einfo "MONOLITH-DIAG: File dir listing:"
+	find "${ED}/usr/lib/perl5" -type d -name File -printf 'MONOLITH-DIAG-DIR: %P\n' 2>/dev/null || true
+
 	# --- Prune pass (spec §3 size budget) ---
 	#
 	# Budget: perl binary (static, -Os, stripped) <= 12 MiB; installed
@@ -282,6 +294,11 @@ src_install() {
 		#    Neither CGI.pm 4.10 nor the guestbook CGI use Pod:: at runtime.
 		find "${libdir}" -depth -type d -name Pod -exec rm -rf {} +
 	fi
+
+	# DIAG (temporary, -r3): post-prune inventory — compare against
+	# MONOLITH-DIAG-PRE to see if the prune removed File::Spec.
+	find "${ED}/usr/lib/perl5" \( -name 'Spec.pm' -o -name 'Temp.pm' \
+		-o -name 'Cwd.pm' \) -printf 'MONOLITH-DIAG-POST: %P\n' 2>/dev/null | sort || true
 
 	# 5. h2ph / h2xs — module-AUTHORING utility scripts (h2ph: C headers ->
 	#    perl .ph; h2xs: scaffold a new XS module). Meaningless on a disc
