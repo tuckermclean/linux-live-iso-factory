@@ -114,6 +114,13 @@ overrides:
   # --- Scripting ---
   lua:             "cpe:2.3:a:lua:lua:*:*:*:*:*:*:*:*"
 
+  # --- Databases ---
+  # monolith-sqlite is our custom overlay ebuild (amalgamation build, see
+  # configs/overlay/dev-db/monolith-sqlite), but the shipped bits (sqlite3
+  # CLI + libsqlite3.a) are upstream SQLite verbatim — CVEs are filed against
+  # sqlite:sqlite in NVD, not against the overlay package name.
+  sqlite:          "cpe:2.3:a:sqlite:sqlite:*:*:*:*:*:*:*:*"
+
   # --- Shells ---
   dash:            "cpe:2.3:a:dash_project:dash:*:*:*:*:*:*:*:*"
 

@@ -634,6 +634,13 @@ def smoke_curl(child):
     )
 
 
+def smoke_sqlite_cli(child):
+    """sqlite3 CLI runs and computes — proves the static amalgamation build."""
+    return run_check(
+        child, "sqlite3 CLI evaluates in-memory SQL", "sqlite3 :memory: 'select 41+1;'",
+        contains("42"))
+
+
 def smoke_overlay_mount(child):
     return run_check(
         child, "overlay root is mounted", "mount",
@@ -778,6 +785,7 @@ def run_full_smoke_suite(child, expected_kernel):
     results.append(("eth0 link is up", *smoke_eth0_link(child)))
     smoke_dhcp_lease(child, results)
     results.append(("curl --version executes", *smoke_curl(child)))
+    results.append(("sqlite3 CLI evaluates in-memory SQL", *smoke_sqlite_cli(child)))
     results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
     results.append(("man ls renders (mandoc)", *smoke_man(child)))
     return results
