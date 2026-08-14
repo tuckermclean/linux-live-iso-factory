@@ -1315,13 +1315,28 @@ def run_gui(child, args):
     No X client is involved anywhere in this check — the server paints its
     own root window on startup with no client connected.
     """
-    select_isolinux_label(child, "serial")
+    # "serial" gives console=ttyS0 (pexpect), and appending "vga=788" adds an
+    # 800x600x16 VESA mode so the kernel's vesafb claims a GRAPHICAL /dev/fb0
+    # (the plain serial label boots text-mode 720x400 — vesafb never sets a
+    # graphics mode — and Xfbdev then dies "no screens found"). 788 == 0x314,
+    # the same mode the isolinux `fb800` label uses. select_isolinux_label
+    # forwards any text after the label to that label's APPEND line.
+    select_isolinux_label(child, "serial vga=788")
     expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
     expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
     expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
     expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
     expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
     wait_for_shell(child)
+
+    # Debug (non-gating): confirm vesafb produced a graphical /dev/fb0 at the
+    # expected size/depth — invaluable if Xfbdev still can't find a screen.
+    run_check(
+        child, "/dev/fb0 present + mode (debug)",
+        "ls -l /dev/fb0 2>&1; "
+        "cat /sys/class/graphics/fb0/virtual_size /sys/class/graphics/fb0/bits_per_pixel 2>&1; true",
+        exit_code_only(), timeout=15,
+    )
 
     log("Starting Xfbdev in the background on /dev/fb0 (built-in fonts only, no font files on disc)")
     # TinyX/kdrive Xfbdev takes `-fb <dev>` (defaults to /dev/fb0); `-fbdev` is a
