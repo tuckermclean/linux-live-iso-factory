@@ -42,11 +42,19 @@ src_configure() {
 	# --enable-pcfformat / --enable-bdfformat: the bitmap formats we actually
 	#   serve (terminus PCF, misc-fixed BDF/PCF).
 	# --disable-snfformat: obsolete Sun bitmap format, unused.
+	# --enable-builtins: bakes the built-in bitmap fonts (file_6x13[] +
+	#   file_cursor[]) directly into libXfont, with `fixed` aliased to the
+	#   6x13 built-in — so the TinyX server (Xfbdev) can be started with
+	#   `-fp built-ins` and open its default font/cursor with ZERO font files
+	#   on disc (no /usr/share/fonts, no font server). This is what SP-GUI G1
+	#   Step 3's boot test relies on: Xfbdev paints its default gray-stipple
+	#   root + X cursor with no font path configured at all.
 	# Static / -no-pie / --disable-shared come from env/static.conf via
 	# package.env (*/* -> static.conf); do NOT repeat them here.
 	econf \
 		--disable-freetype \
 		--enable-pcfformat \
 		--enable-bdfformat \
-		--disable-snfformat
+		--disable-snfformat \
+		--enable-builtins
 }

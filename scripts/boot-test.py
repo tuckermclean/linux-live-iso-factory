@@ -72,9 +72,11 @@ proven out by CI logs, not by a local run.
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
+import socket
 import sys
 import time
 import uuid
@@ -322,6 +324,53 @@ def build_nicless_cmd(args):
         "-nic", "none",
         "-nographic",
         "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+    return cmd
+
+
+def build_gui_cmd(args):
+    """
+    SP-GUI G1 Step 3: boot via BIOS/SeaBIOS (same i386/486 pc machine as
+    build_bios_cmd) so SeaBIOS's VBE BIOS is present and the kernel's
+    CONFIG_FB_VESA=y vesafb driver claims it, producing /dev/fb0 — the
+    UEFI/GRUB path uses efifb instead, which this kernel does not carry, so
+    this mode is BIOS-only.
+
+    The serial boot path is BYTE-IDENTICAL to build_bios_cmd — `-nographic
+    -serial mon:stdio` — for a reason: the ISO's isolinux.cfg has NO `SERIAL`
+    directive, so ISOLINUX's `boot:` prompt only reaches the serial console via
+    SeaBIOS's `-nographic` VGA-text-to-serial mirroring. Dropping `-nographic`
+    (e.g. for `-display none`) hides that prompt, ISOLINUX auto-boots its
+    default framebuffer label (no console=ttyS0), and pexpect sees nothing. So
+    we keep the proven `-nographic` path and take the screendump over a SEPARATE
+    QMP monitor socket (`-qmp unix:...`), which coexists fine with the HMP
+    monitor that `-nographic` muxes onto serial stdio — QMP is an independent
+    monitor channel, so it never touches the serial stream pexpect drives.
+    `-vga std` provides the VBE device; `-nographic` opens no host window but the
+    device's VRAM still holds the pixels Xfbdev paints, which QMP `screendump`
+    dumps to a host-side PPM. (efifb/UEFI is avoided: this kernel has FB_VESA=y,
+    not efifb, so /dev/fb0 needs the BIOS+vesafb path.)
+    """
+    qemu = require_binary(args.qemu_i386)
+    sock = args.gui_screendump + ".qmp.sock"
+    args.gui_monitor_sock = sock
+    sock_dir = os.path.dirname(sock) or "."
+    os.makedirs(sock_dir, exist_ok=True)
+    # A stale socket file left behind by a killed prior run makes QEMU's
+    # `server,nowait` bind fail with "Address already in use".
+    if os.path.exists(sock):
+        os.remove(sock)
+    cmd = [
+        qemu,
+        "-cdrom", args.iso,
+        "-m", str(args.ram_mb),
+        "-cpu", "486",
+        "-boot", "d",
+        "-vga", "std",
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-qmp", f"unix:{sock},server,nowait",
         "-no-reboot",
     ]
     return cmd
@@ -949,6 +998,166 @@ def eject_cd_and_verify(child, cdrom_id, timeout=30):
 
 
 # ---------------------------------------------------------------------------
+# GUI mode helpers (SP-GUI G1 Step 3): drive the QEMU HMP monitor over its
+# own unix socket to take a screendump, then parse the resulting PPM
+# host-side to prove the framebuffer isn't uniformly black.
+# ---------------------------------------------------------------------------
+
+def qemu_qmp_screendump(sock_path, out_path, timeout=25):
+    """
+    Take a framebuffer screendump over QEMU's QMP monitor (a dedicated unix
+    socket, separate from the HMP monitor that `-nographic` muxes onto the
+    serial stdio this boot test drives). QMP handshake per protocol: read the
+    greeting, send `qmp_capabilities`, then `screendump` — which returns only
+    after the PPM has been fully written host-side. Returns (ok, detail);
+    never raises (a connect/timeout/protocol failure is a failed check, not a
+    crashed run).
+    """
+    sock = None
+    buf = b""
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        deadline = time.time() + timeout
+        sock.connect(sock_path)
+
+        def recv_msg():
+            # QMP messages are newline-terminated JSON objects; a single recv
+            # may carry several (e.g. an async event before a return), so we
+            # buffer across calls and hand back one parsed object at a time.
+            nonlocal buf
+            while True:
+                nl = buf.find(b"\n")
+                if nl != -1:
+                    line = buf[:nl].strip()
+                    buf = buf[nl + 1:]
+                    if not line:
+                        continue
+                    try:
+                        return json.loads(line.decode("utf-8", "replace"))
+                    except ValueError:
+                        continue  # skip any non-JSON noise
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return None
+                sock.settimeout(remaining)
+                try:
+                    chunk = sock.recv(4096)
+                except socket.timeout:
+                    return None
+                if not chunk:
+                    return None
+                buf += chunk
+
+        greeting = recv_msg()
+        if not greeting or "QMP" not in greeting:
+            return False, f"no QMP greeting within {timeout}s (got {greeting!r})"
+
+        sock.sendall(b'{"execute":"qmp_capabilities"}\n')
+        cap = recv_msg()
+        if not cap or "return" not in cap:
+            return False, f"qmp_capabilities did not return OK (got {cap!r})"
+
+        sock.sendall(
+            json.dumps({"execute": "screendump", "arguments": {"filename": out_path}}).encode("ascii")
+            + b"\n"
+        )
+        # Read until the command's return/error (async QMP events may precede it).
+        while True:
+            msg = recv_msg()
+            if msg is None:
+                return False, f"no reply to 'screendump' within {timeout}s"
+            if "error" in msg:
+                return False, f"QMP screendump error: {msg['error']!r}"
+            if "return" in msg:
+                return True, f"screendump written: {out_path}"
+            # otherwise an async event — keep reading
+    except (OSError, socket.error) as exc:
+        return False, f"QMP screendump failed: {exc!r}"
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
+def ppm_not_black(path, min_fraction=0.005, channel_threshold=16):
+    """
+    Parse a binary P6 PPM (no PIL dependency — QEMU's screendump output is a
+    simple, well-formed P6 with no comments in practice, but comments are
+    tolerated below anyway) and check that a meaningful fraction of pixels
+    are non-black — proof Xfbdev actually painted its default gray-stipple
+    root + cursor rather than leaving the framebuffer at its cleared/black
+    power-on state.
+
+    A pixel counts as "non-black" if ANY channel exceeds `channel_threshold`
+    (default 16, out of 255) — this tolerates dark anti-aliasing/dithering
+    noise near black without requiring bright content. `min_fraction`
+    (default 0.5%) is deliberately low: the TinyX default root is a subtle
+    gray stipple pattern (a sparse dither, not a solid fill), so most pixels
+    can legitimately still be at or near black.
+
+    Returns (ok: bool, detail: str). Never raises.
+    """
+    if not os.path.isfile(path):
+        return False, f"screendump file not found: {path}"
+
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError as exc:
+        return False, f"could not read screendump file {path}: {exc!r}"
+
+    if len(data) < 2 or data[0:1] != b"P" or data[1:2] != b"6":
+        return False, f"not a binary PPM (P6) file: {path} (first bytes: {data[:16]!r})"
+
+    idx = 2
+    tokens = []
+    try:
+        while len(tokens) < 3:
+            while idx < len(data) and data[idx:idx + 1].isspace():
+                idx += 1
+            if idx < len(data) and data[idx:idx + 1] == b"#":
+                while idx < len(data) and data[idx:idx + 1] != b"\n":
+                    idx += 1
+                continue
+            start = idx
+            while idx < len(data) and not data[idx:idx + 1].isspace():
+                idx += 1
+            if start == idx:
+                return False, f"malformed PPM header in {path}: could not parse width/height/maxval"
+            tokens.append(data[start:idx])
+        width, height, maxval = (int(t) for t in tokens)
+        idx += 1  # exactly one whitespace byte separates maxval from pixel data
+    except (ValueError, IndexError) as exc:
+        return False, f"malformed PPM header in {path}: {exc!r}"
+
+    if width <= 0 or height <= 0:
+        return False, f"malformed PPM header in {path}: non-positive dimensions {width}x{height}"
+
+    pixel_bytes = data[idx:]
+    expected = width * height * 3
+    if len(pixel_bytes) < expected:
+        return False, (
+            f"truncated PPM {path}: expected {expected} pixel bytes for "
+            f"{width}x{height}, got {len(pixel_bytes)}"
+        )
+
+    total = width * height
+    nonblack = 0
+    for i in range(0, expected, 3):
+        if (pixel_bytes[i] > channel_threshold
+                or pixel_bytes[i + 1] > channel_threshold
+                or pixel_bytes[i + 2] > channel_threshold):
+            nonblack += 1
+
+    frac = nonblack / total if total else 0.0
+    detail = f"non-black pixels: {frac * 100:.1f}% ({width}x{height})"
+    return frac > min_fraction, detail
+
+
+# ---------------------------------------------------------------------------
 # Mode implementations
 # ---------------------------------------------------------------------------
 
@@ -1087,6 +1296,69 @@ def run_nicless(child, args):
     results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, args.kernel_version)))
     results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
 
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_gui(child, args):
+    """
+    SP-GUI G1 Step 3: boot via BIOS/ISOLINUX (same milestone sequence as
+    run_nicless), start the TinyX Xfbdev server in the background on the
+    booted shell against the vesafb framebuffer with ONLY the libXfont
+    built-in fonts (`-fp built-ins`, no font files on disc), then prove two
+    things: (1) the server is alive with no fatal error in its own log, and
+    (2) a QEMU-monitor screendump of the framebuffer it's driving is not
+    uniformly black — i.e. it actually painted its default gray-stipple root
+    + cursor, not just opened the device and hung/crashed silently.
+
+    No X client is involved anywhere in this check — the server paints its
+    own root window on startup with no client connected.
+    """
+    select_isolinux_label(child, "serial")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, "initramfs /init started")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, "squashfs+overlay mounted")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, "pivot_root complete, executing /sbin/init")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, "sysvinit rcS started")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, "sysvinit rcS completed")
+    wait_for_shell(child)
+
+    log("Starting Xfbdev in the background on /dev/fb0 (built-in fonts only, no font files on disc)")
+    child.sendline("Xfbdev :0 -fbdev /dev/fb0 -fp built-ins >/tmp/xfbdev.log 2>&1 &")
+    time.sleep(1)  # let the shell fork the background job before driving more commands over serial
+    # Give Xfbdev a few seconds to open the framebuffer, init built-in fonts,
+    # and paint its default root + cursor.
+    run_check(child, "settle after backgrounding Xfbdev", "sleep 4", exit_code_only(), timeout=15)
+
+    # Dump the log to the serial console unconditionally (exit code ignored)
+    # so a failure is debuggable straight from the CI serial-log artifact,
+    # without needing a separate mechanism to pull /tmp/xfbdev.log off the guest.
+    run_check(child, "dump /tmp/xfbdev.log (debug)", "cat /tmp/xfbdev.log 2>&1; true", exit_code_only(), timeout=15)
+
+    # A server that failed to open the framebuffer or the built-in fonts
+    # exits immediately, so "is the process still alive" is the most robust
+    # positive signal — corroborated by a negative scan of the log for the
+    # error strings Xfbdev/libXfont actually emit on those failure paths.
+    server_up = run_check(
+        child, "Xfbdev process alive with no fatal error logged",
+        "pgrep -x Xfbdev >/dev/null 2>&1 && "
+        "! grep -Eq 'Fatal|could not open default font|giving up' /tmp/xfbdev.log",
+        exit_code_only(), timeout=15,
+    )
+
+    log("Taking a QEMU QMP screendump of the framebuffer")
+    screendump_out = os.path.abspath(args.gui_screendump)
+    os.makedirs(os.path.dirname(screendump_out) or ".", exist_ok=True)
+    dump_ok, dump_detail = qemu_qmp_screendump(args.gui_monitor_sock, screendump_out)
+    if dump_ok:
+        not_black_ok, not_black_detail = ppm_not_black(screendump_out)
+    else:
+        not_black_ok, not_black_detail = False, f"screendump failed: {dump_detail}"
+
+    results = [
+        ("Xfbdev starts and stays alive on /dev/fb0", *server_up),
+        ("framebuffer screendump is not uniformly black", not_black_ok, not_black_detail),
+    ]
     ok = report_results(results)
     poweroff_and_wait(child)
     return ok
@@ -1294,6 +1566,7 @@ MODE_BUILDERS = {
     "nicless": build_nicless_cmd,
     "nic": build_nic_cmd,
     "nat": build_nat_router_cmd,
+    "gui": build_gui_cmd,
 }
 
 MODE_RUNNERS = {
@@ -1307,6 +1580,7 @@ MODE_RUNNERS = {
     "nicless": run_nicless,
     "nic": run_nic,
     "nat": run_nat,
+    "gui": run_gui,
 }
 
 MODE_DEFAULT_RAM = {
@@ -1320,6 +1594,7 @@ MODE_DEFAULT_RAM = {
     "nicless": 64,  # mirrors bios: same machine type, no extra RAM pressure
     "nic": 256,
     "nat": 256,
+    "gui": 128,
 }
 
 
@@ -1355,6 +1630,10 @@ def parse_args():
     p.add_argument("--nic-model", default=None,
                    choices=["pcnet", "rtl8139", "tulip", "ne2k_pci", "ne2k_isa"],
                    help="QEMU NIC model for --mode nic (pcnet|rtl8139|tulip|ne2k_pci|ne2k_isa)")
+    p.add_argument(
+        "--gui-screendump", default="output/gui-screendump.ppm",
+        help="Host-side path QEMU's HMP 'screendump' writes the framebuffer PPM to (gui mode only)",
+    )
     return p.parse_args()
 
 
