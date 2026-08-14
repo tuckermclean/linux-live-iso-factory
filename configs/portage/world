@@ -230,6 +230,13 @@ app-misc/sl
 # rustup nightly + -Zbuild-std (see Dockerfile + configs/overlay/games-roguelike/rl144).
 games-roguelike/rl144
 
+# GUI — the X server (SP-GUI G1). TinyX/kdrive Xfbdev: static, framebuffer-native,
+# zero-dlopen, built over vesafb. Overlay ebuild pins the tinyx commit and pulls
+# its server-side X libs (xorg-proto, libXfont v1, libfontenc, xtrans) as DEPENDs
+# — they are NOT listed here (only the server is a world member). Bitmap-only, no
+# freetype/fontconfig anywhere. Clients (dwm/st/dmenu) land in later milestones.
+x11-base/monolith-xserver
+
 # nethack — pinned to the last 3.6.x release. 5.0.0 (current ::gentoo head)
 # requires USE=lua (REQUIRED_USE on lua_single_target_*) and restructured its
 # util/Makefile build-variable names (MYCFLAGS/MYCXXFLAGS vs. this repo's
