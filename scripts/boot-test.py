@@ -671,11 +671,33 @@ def smoke_perl_cgi(child):
         contains("42"))
 
 
+def smoke_perl_dbi(child):
+    """
+    DBI + DBD::SQLite baked into perl via static_ext (SP5 P3, un-deferred at
+    -r6 — no dynamic loader on this disc, both are compiled directly into
+    the perl binary; see the monolith-perl ebuild's src_prepare comment for
+    the DBI_PUREPERL build-time unblock). An in-memory SQLite round-trip
+    (create table, insert, select) proves both the DBI dispatch layer and
+    the DBD::SQLite driver (with its own bundled sqlite amalgamation,
+    3.51.1 — see the ebuild) actually work at runtime.
+    """
+    prog = ('my $dbh=DBI->connect("dbi:SQLite:dbname=:memory:","","",'
+            '{RaiseError=>1}); $dbh->do("create table t(a)"); '
+            '$dbh->do("insert into t values(41+1)"); '
+            'print scalar $dbh->selectrow_array("select a from t"),"\\n"')
+    return run_check(
+        child, "perl DBI + DBD::SQLite in-memory query",
+        f"perl -MDBI -e '{prog}'",
+        contains("42"))
+
+
 def smoke_guestbook(child, results):
     """
-    The LAMP invariant, via CLI (DBI/DBD::SQLite deferred — see
-    configs/portage/world's monolith-perl comment): a guestbook CGI (perl +
-    CGI.pm) shells out to the `sqlite3` CLI to INSERT a row and read it back.
+    The LAMP invariant, via CLI (the guestbook itself still shells out to
+    sqlite3 rather than using DBI/DBD::SQLite — see configs/portage/world's
+    monolith-perl comment; DBI's own in-memory acceptance is smoke_perl_dbi
+    above): a guestbook CGI (perl + CGI.pm) shells out to the `sqlite3` CLI
+    to INSERT a row and read it back.
 
     Two checks, not one: (1) invoke the CGI directly (the httpd-served +
     curl-POST form is the STRETCH goal per the plan; this direct invocation
@@ -861,6 +883,7 @@ def run_full_smoke_suite(child, expected_kernel):
     results.append(("perl strict+warnings program runs", *smoke_perl_basic(child)))
     results.append(("perl unicode/utf8 tables present", *smoke_perl_utf8(child)))
     results.append(("CGI.pm param() works", *smoke_perl_cgi(child)))
+    results.append(("perl DBI + DBD::SQLite in-memory query", *smoke_perl_dbi(child)))
     smoke_guestbook(child, results)
     results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
     results.append(("man ls renders (mandoc)", *smoke_man(child)))

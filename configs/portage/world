@@ -72,15 +72,20 @@ dev-lang/lua
 # HTML::Entities, which ships inside the XS HTML-Parser distribution; 4.10 is
 # the newest release with zero XS in its dependency tree (verified against
 # its Makefile.PL and a tarball-wide *.xs/*.c/*.h grep).
-# DBI + DBD::SQLite are DEFERRED, not shipped: this is a hard perl-cross
-# limitation, not a fallback-not-yet-taken. DBD::SQLite's Makefile.PL needs
-# an already-importable DBI at ITS OWN configure time (it calls into
-# DBI::DBD's helper routines), but perl-cross's static_ext bake is a single
-# pass over the whole perl build — DBI is still mid-build, nothing to import
-# yet. There is no dynamic loader on this disc to build DBI first and
-# `use DBI` it into a second pass either. The guestbook therefore talks to
-# SQLite via the on-disc `sqlite3` CLI (dev-db/monolith-sqlite, P1) instead
-# of DBI — shelling out, not linking in.
+# DBI 1.651 + DBD::SQLite 1.78 are baked in via the same static_ext
+# mechanism (SP5 P3, un-deferred at -r6): DBD::SQLite's Makefile.PL needs an
+# already-importable DBI at ITS OWN configure time (it calls into DBI::DBD's
+# helper routines) — unblocked by exporting DBI_PUREPERL=2 during the build,
+# DBI's own sanctioned pure-perl fallback, so miniperl's `require DBI` under
+# Makefile.PL succeeds without dlopen/XSLoader. Build-time only: at boot the
+# real compiled-in DBI XS loads via the same static_ext bootstrap table every
+# other baked module uses. DBD::SQLite links its OWN bundled sqlite
+# amalgamation (3.51.1), not monolith-sqlite's libsqlite3.a, because
+# DBD::SQLite's Makefile.PL keeps the system-sqlite path behind a permanent
+# `if ( 0 )` upstream. The guestbook still talks to SQLite via the on-disc
+# `sqlite3` CLI (dev-db/monolith-sqlite, P1) for its persistence, not DBI —
+# see scripts/boot-test.py's smoke_perl_dbi for DBI's own (separate)
+# in-memory acceptance check.
 dev-lang/monolith-perl
 
 # Compression utilities
@@ -202,10 +207,13 @@ sys-apps/dmidecode
 # sqlite — static SQLite (CLI + libsqlite3.a) from the amalgamation ebuild, not
 # ::gentoo (which BDEPENDs tcl). THREADSAFE=0, no dlopen extensions, FTS5+JSON1.
 # The `sqlite3` CLI is what the guestbook CGI shells out to for its INSERT/
-# SELECT (DBD::SQLite's static_ext bake into monolith-perl was attempted and
-# reverted — see the monolith-perl comment above — so libsqlite3.a/sqlite3.h
-# are not currently consumed by anything in-tree; kept in the sysroot for a
-# future DBD retry).
+# SELECT. Also feeds the sysroot dev-lang/monolith-perl DEPENDs on for its
+# DBD::SQLite static_ext bake (SP5 P3, un-deferred at -r6) — though
+# DBD::SQLite currently compiles its OWN bundled sqlite (3.51.1) rather than
+# linking libsqlite3.a here, so this DEPEND is not load-bearing today; see
+# the monolith-perl ebuild for why (its Makefile.PL keeps the system-sqlite
+# path behind a permanent upstream `if ( 0 )`). The CLI sqlite3 binary on the
+# disc IS this package's build (3.53.4), independent of that embedded copy.
 dev-db/monolith-sqlite
 
 # Mouse support

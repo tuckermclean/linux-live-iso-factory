@@ -129,6 +129,28 @@ overrides:
   # pattern as the sqlite/perl entries above. Historical CGI.pm CVEs (e.g.
   # the CRLF-injection family) are filed against this CPE, not perl:perl.
   cgi:             "cpe:2.3:a:andy_armstrong:cgi.pm:*:*:*:*:*:*:*:*"
+  # DBI + DBD::SQLite are baked into monolith-perl via static_ext (SP5 P3,
+  # un-deferred at -r6, see the monolith-perl ebuild's src_prepare comment
+  # for the DBI_PUREPERL unblock), not separate portage packages — added
+  # here so Syft/Grype have somewhere to attach a CPE if it ever infers a
+  # package name for the bundled module sources.
+  # dbi: verified real NVD entry (`services.nvd.nist.gov/rest/json/cpes/2.0
+  # ?keywordSearch=perl%20DBI`, re-checked 2026-08-14): vendor "perl",
+  # product "dbi".
+  dbi:             "cpe:2.3:a:perl:dbi:*:*:*:*:*:*:*:*"
+  # dbd_sqlite: NVD has NO registered CPE for DBD::SQLite (re-checked
+  # 2026-08-14: `keywordSearch=dbd%3A%3Asqlite` and `dbd_sqlite` both return
+  # zero results) — this file's own header says packages with no NVD
+  # presence should be omitted (they show as a correct gap), but this entry
+  # is kept as a best-effort vendor:product placeholder per explicit
+  # request, so `grep dbd` finds it; treat any CVE match against it as
+  # unverified until a real NVD CPE shows up. NOTE: the shipped copy is
+  # DBD::SQLite's OWN bundled sqlite amalgamation (3.51.1), not
+  # monolith-sqlite (3.53.4) — see the monolith-perl ebuild; a future sqlite
+  # CVE affecting only 3.51.1 would need to be checked against this embedded
+  # copy separately from the `sqlite:` entry below, which only covers the
+  # standalone CLI/libsqlite3.a.
+  dbd_sqlite:      "cpe:2.3:a:dbd_sqlite:dbd_sqlite:*:*:*:*:*:*:*:*"
 
   # --- Databases ---
   # monolith-sqlite is our custom overlay ebuild (amalgamation build, see

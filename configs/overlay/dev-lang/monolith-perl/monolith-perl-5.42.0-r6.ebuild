@@ -3,7 +3,7 @@
 
 EAPI=8
 
-DESCRIPTION="Static, -Uusedl Perl (via arsv/perl-cross) + CGI.pm for the Monolith"
+DESCRIPTION="Static, -Uusedl Perl (via arsv/perl-cross) + CGI.pm + DBI/DBD::SQLite for the Monolith"
 HOMEPAGE="https://www.perl.org https://github.com/arsv/perl-cross"
 
 # STRICT version pairing (spec D1): each perl-cross release ships a per-exact-
@@ -49,10 +49,25 @@ PC_PV="1.6.4"
 # risk below and in the P5 report, not hidden.
 CGI_PV="4.10"
 
+# DBI + DBD::SQLite un-defer (SP5 P3, was deferred at -r2/-r5 — see the
+# reverted commit 3867320 and versions.lock's -r2 history note this replaces).
+# Re-verified current as of 2026-08-14 (`fastapi.metacpan.org/v1/release/DBI`
+# and `.../release/DBD-SQLite`): DBI 1.651 (HMBRAND, 2026-07-14) and
+# DBD::SQLite 1.78 (ISHIGAKI, 2026-01-02) are STILL the newest CPAN releases
+# — no version bump needed, the tarballs and their Manifest hashes below are
+# byte-identical to the reverted attempt (re-fetched and re-hashed to
+# confirm). Both are baked into the perl binary via perl-cross's static_ext
+# mechanism (see src_prepare/src_configure below) — there is no dynamic
+# loader on this disc to `use DBI` a separate .so from.
+DBI_PV="1.651"
+DBD_SQLITE_PV="1.78"
+
 SRC_URI="
 	https://www.cpan.org/src/5.0/perl-${PV}.tar.xz
 	https://github.com/arsv/perl-cross/releases/download/${PC_PV}/perl-cross-${PC_PV}.tar.gz
 	https://cpan.metacpan.org/authors/id/L/LE/LEEJO/CGI-${CGI_PV}.tar.gz
+	https://www.cpan.org/authors/id/H/HM/HMBRAND/DBI-${DBI_PV}.tgz
+	https://www.cpan.org/authors/id/I/IS/ISHIGAKI/DBD-SQLite-${DBD_SQLITE_PV}.tar.gz
 "
 S="${WORKDIR}/perl-${PV}"
 
@@ -61,13 +76,23 @@ S="${WORKDIR}/perl-${PV}"
 # as the original perl source" per its README, but it is a build-time-only
 # overlay (configure/Makefile/cnf/*) that is never installed into DESTDIR —
 # `emake install` only runs perl's own installperl/installman targets — so it
-# needs no separate LICENSE/SRC_URI accounting here. CGI.pm is licensed
-# "under the same terms as Perl itself" per its own META.yml/META.json
-# (`"license" : [ "perl_5" ]`) — same Artistic/GPL-1+ dual license already
-# declared below, no separate LICENSE line needed.
+# needs no separate LICENSE/SRC_URI accounting here. CGI.pm, DBI, and
+# DBD::SQLite are all licensed "under the same terms as Perl itself" per
+# their own META.yml/META.json (`"license" : [ "perl_5" ]`) — same
+# Artistic/GPL-1+ dual license already declared below, no separate LICENSE
+# line needed.
 LICENSE="|| ( Artistic GPL-1+ )"
 SLOT="0"
 KEYWORDS="~amd64"
+
+# Task 1 (P1) produced /usr/${CHOST}/usr/{lib/libsqlite3.a,include/sqlite3.h}
+# in the cross sysroot. DBD::SQLite does NOT currently link against them (see
+# the src_prepare comment below — its Makefile.PL keeps the system-sqlite
+# path behind a permanent upstream `if ( 0 )`), so this DEPEND is not
+# load-bearing for the build today; kept so the sysroot ordering is correct
+# if a future patch flips that dead code on, and to document the intended
+# coupling (same rationale the reverted -r2 attempt recorded).
+DEPEND="dev-db/monolith-sqlite"
 
 # Cannot run i486 target binaries in the (x86_64) build container, and
 # perl-cross's own configure never runs target executables either (compile/
@@ -97,14 +122,12 @@ src_prepare() {
 	# perl-cross's sanctioned mechanism for third-party CPAN modules is to
 	# unpack them into cpan/<Some-Module> before configure runs (see the
 	# module-naming convention documented at arsv.github.io/perl-cross/
-	# modules.html and the DBI/DBD::SQLite precedent this ebuild carried
-	# briefly on this branch — reverted, see world/comment below, but the
-	# staging mechanism itself was sound and is reused here). Portage's
-	# default src_unpack already extracted CGI-${CGI_PV}.tar.gz into
+	# modules.html; the DBI/DBD::SQLite bake below uses the same mechanism).
+	# Portage's default src_unpack already extracted CGI-${CGI_PV}.tar.gz into
 	# ${WORKDIR}/CGI-${CGI_PV}/ (single top-level dir, confirmed via
 	# `tar tzf`); rename on copy into the cpan/CGI layout configure expects.
 	#
-	# Unlike the reverted DBI/DBD::SQLite bake, CGI.pm needs NO --static-ext
+	# Unlike the DBI/DBD::SQLite bake below, CGI.pm needs NO --static-ext
 	# entry: perl-cross's own docs (modules.html) describe cnf/configure_mods.sh
 	# classifying every cpan/ext/dist module into exactly one of $nonxs_ext
 	# (no .xs/.c sources — CGI.pm's tarball has none, verified: `tar tzf
@@ -116,12 +139,118 @@ src_prepare() {
 	# because there is no compiled artifact to link statically OR
 	# dynamically. This is exactly the DBI-mechanism's chicken-and-egg
 	# problem (a static_ext module needing an ALREADY-BUILT sibling module at
-	# ITS OWN configure time) sidestepped: CGI.pm has no such dependency
-	# (its own prereqs are all core perl already present in this same tree,
-	# see the CGI_PV comment above), so plain nonxs_ext discovery is
-	# sufficient and no perl-cross flag is needed at all.
+	# ITS OWN configure time, unblocked below) sidestepped: CGI.pm has no such
+	# dependency (its own prereqs are all core perl already present in this
+	# same tree, see the CGI_PV comment above), so plain nonxs_ext discovery
+	# is sufficient and no perl-cross flag is needed at all.
 	mkdir -p cpan/CGI || die
 	cp -a "${WORKDIR}/CGI-${CGI_PV}/." cpan/CGI/ || die "staging CGI.pm into cpan/CGI failed"
+
+	# --- DBI + DBD::SQLite bake (SP5 P3, un-deferred) ---
+	#
+	# Same cpan/<Some-Module> staging convention as CGI.pm above, but these
+	# ARE static_ext (both ship .xs/.c: DBI.xs, and SQLite.xs + the bundled
+	# sqlite3.c amalgamation — see the SQLite-amalgamation note further down).
+	mkdir -p cpan/DBI cpan/DBD-SQLite || die
+	cp -a "${WORKDIR}/DBI-${DBI_PV}/." cpan/DBI/ || die "staging DBI into cpan/DBI failed"
+	cp -a "${WORKDIR}/DBD-SQLite-${DBD_SQLITE_PV}/." cpan/DBD-SQLite/ || die "staging DBD::SQLite into cpan/DBD-SQLite failed"
+
+	# --- System libsqlite3.a vs bundled amalgamation ---
+	#
+	# Read DBD-SQLite-${DBD_SQLITE_PV}'s own Makefile.PL: the ENTIRE
+	# system-sqlite code path is dead code upstream —
+	#   my ($sqlite_local, $sqlite_base, $sqlite_lib, $sqlite_inc);
+	#   if ( 0 ) { ...SQLITE_LOCATION/USE_LOCAL_SQLITE/SQLITE_INC/SQLITE_LIB... }
+	#   else { $sqlite_local = 1; }  # Always the bundled one.
+	# with the author's own comment above it: "This block is if ( 0 ) to
+	# discourage casual users building against the system SQLite. We expect
+	# that anyone sophisticated enough to use a system sqlite is also
+	# sophisticated enough to have a patching system that can change the
+	# if ( 0 ) to if ( 1 )." SQLITE_INC/SQLITE_LIB are therefore deliberately
+	# left UNSET here: DBD::SQLite compiles its own vendored sqlite3.c exactly
+	# as every other unpatched CPAN consumer does. Patching this Makefile.PL
+	# to flip if(0)->if(1) is real engineering (the OBJECT list and final
+	# link also need adjusting — see the reverted -r2 attempt's longer note
+	# in git history) that is out of scope for this un-defer; the bundled
+	# amalgamation is an explicitly sanctioned fallback per the plan (D4).
+	#
+	# SBOM note (the disc ships no untracked code): DBD::SQLite
+	# ${DBD_SQLITE_PV}'s bundled sqlite3.h reports `#define SQLITE_VERSION
+	# "3.51.1"` — this disc therefore ships TWO independently-built copies of
+	# SQLite: Task 1's monolith-sqlite 3.53.4 (standalone `sqlite3` CLI +
+	# libsqlite3.a) and this embedded 3.51.1 (compiled directly into the perl
+	# binary, reachable only via `perl -MDBI`). Both are built THREADSAFE=0
+	# (Task 1 sets it explicitly; DBD::SQLite's Makefile.PL sets it itself
+	# whenever `!$Config{usethreads}`, true here: -Uusethreads above) and both
+	# omit runtime extension loading (Task 1's explicit
+	# -DSQLITE_OMIT_LOAD_EXTENSION=1; DBD::SQLite's Makefile.PL adds the same
+	# define whenever `!$Config{usedl}`, true here: -Uusedl above) — the
+	# disc's no-dynamic-loader doctrine falls out of DBD::SQLite's own
+	# $Config-awareness for free.
+	#
+	# --- THE UNBLOCK: DBI_PUREPERL (see src_compile) ---
+	#
+	# DBD::SQLite's Makefile.PL needs an importable DBI at ITS OWN configure
+	# time in two places: (1) a version gate — `require DBI; ... DBI->VERSION
+	# < $DBI_required` (>= 1.57) — printed as a hard "please install DBI"
+	# exit(0) [no Makefile generated] on failure; (2) its postamble() (package
+	# MY) calls `require DBI::DBD; DBI::DBD::dbd_postamble(@_)`, which scans
+	# @INC for an ALREADY-STAGED cpan/DBI/.../auto/DBI/Driver.xst (DBI's own
+	# Makefile.PL post_initialize adds every *.h/*.xst file it ships to the
+	# PM hash, so pm_to_blib copies them into $(INST_ARCHAUTODIR) same as any
+	# .pm — under PERL_CORE=1 that resolves to this tree's shared lib/auto/DBI/).
+	#
+	# Under miniperl (no dynamic loader, host-native binary, cannot dlopen a
+	# target-arch .so and has no target XS baked in), a plain `require DBI`
+	# hits DBI.pm's unconditional `XSLoader::load('DBI', $XS_VERSION)` at
+	# require-time (DBI.pm, outside any DBI_PUREPERL check) and dies. BUT
+	# DBI ships its OWN sanctioned pure-perl fallback for exactly this
+	# situation: DBI.pm reads `$ENV{DBI_PUREPERL}` — if truthy, `require
+	# DBI::PurePerl` INSTEAD of XSLoader::load (DBI.pm: `if ($ENV{DBI_PUREPERL})
+	# { ...; require DBI::PurePerl if $@ or $ENV{DBI_PUREPERL} >= 2; } else {
+	# XSLoader::load(...) }`). `$DBI::VERSION` ("1.651") is set unconditionally
+	# at the TOP of DBI.pm, before that branch, so the version gate in (1)
+	# passes regardless of which path loads. DBI::DBD.pm (used for (2)) does
+	# NOT itself `use DBI` or touch XS — it only reads $DBI::VERSION (already
+	# set) and greps @INC for the physically-staged Driver.xst file, which is
+	# independent of how `require DBI` was satisfied. And DBI's OWN
+	# Makefile.PL never hits this at all: DBI::DBD.pm's `require DBI unless
+	# $is_dbi` short-circuits when building DBI itself (`$is_dbi = (-r
+	# 'DBI.pm' && -r 'DBI.xs' && -r 'DBIXS.h')` — all present in cpan/DBI's
+	# own directory), matching the reverted -r2 attempt's observation that
+	# "DBI built fine" (it never needed this path).
+	#
+	# So: exporting DBI_PUREPERL=2 for the `emake` build in src_compile
+	# forces `require DBI` under miniperl to load DBI::PurePerl and skip
+	# XSLoader entirely — no custom stub .pm to author/maintain, no patch to
+	# DBD::SQLite's Makefile.PL to carry across upstream releases. This is
+	# build-time-ONLY: DBI_PUREPERL is not set in the live ISO's runtime
+	# environment, so at boot the REAL compiled-in DBI XS loads via
+	# XSLoader::load — which, for a perl-cross static_ext module, resolves
+	# against the statically-linked bootstrap table (the same mechanism every
+	# other static_ext module here, e.g. Fcntl/POSIX, already relies on) —
+	# not a dlopen, so this all-static -Uusedl perl still has zero .so's.
+	#
+	# --- Build order: DBI before DBD-SQLite ---
+	#
+	# perl-cross's Makefile builds cpan/ modules via a `%/Makefile:
+	# %/Makefile.PL ...` pattern rule with no cross-module ordering by
+	# default; it only has EXPLICIT order-only edges for known circular/
+	# layered deps (e.g. `cpan/List-Util/pm_to_blib: | ext/DynaLoader/pm_to_blib`).
+	# DBD::SQLite's postamble() (above) needs cpan/DBI/pm_to_blib to have
+	# ALREADY run (staging Driver.xst) by the time DBD-SQLite's OWN Makefile
+	# gets generated — and "DBD-SQLite" < "DBI" alphabetically, so nothing
+	# guarantees that order for free. Append the same idiom perl-cross uses
+	# for its own layered deps: an order-only prerequisite on the concrete
+	# `cpan/DBD-SQLite/Makefile` target (GNU make merges this with the
+	# pattern rule's recipe — no conflict, same trick as perl-cross's own
+	# `cpan/Unicode-Normalize/Makefile: lib/unicore/CombiningClass.pl` line).
+	cat >>Makefile <<-EOF || die "appending DBI/DBD-SQLite build-order rule to Makefile failed"
+
+	# SP5 P3 un-defer: DBD::SQLite's Makefile.PL needs cpan/DBI already
+	# staged (Driver.xst, for DBI::DBD::dbd_postamble) — force DBI first.
+	cpan/DBD-SQLite/Makefile: | cpan/DBI/pm_to_blib
+	EOF
 }
 
 src_configure() {
@@ -194,6 +323,19 @@ src_configure() {
 	# and perl's internal Unicode (use utf8, -C IO layers, unicore uc()/lc()) is
 	# independent of USE_LOCALE, so the utf8 acceptance smoke still passes. This
 	# single-user disc has no need for locale-aware collation/number formatting.
+	#
+	# --static-ext=DBI,DBD-SQLite: belt-and-suspenders alongside --all-static
+	# above. --all-static (cnf/configure_mods.sh: `elif [ "$1" = "xs" -a -n
+	# "$allstatic" ]`) already forces every discovered XS module — including
+	# third-party ones staged under cpan/ in src_prepare above — onto the
+	# static_ext list, so this flag changes nothing functionally today. Added
+	# anyway to document intent at the configure call site and to keep DBI +
+	# DBD::SQLite static even if --all-static is ever narrowed later. Verified
+	# spelling against cnf/configure_args.sh's option table:
+	# `static-mod|static-ext|static-modules|static)` accepts a comma-separated
+	# list, each entry run through the same modsymname() used for module
+	# discovery — so "DBI" and "DBD-SQLite" (the cpan/ directory names, not
+	# the "::"-form perl module names) are the correct tokens here.
 	./configure \
 		--target="${CHOST}" \
 		--prefix=/usr \
@@ -203,6 +345,7 @@ src_configure() {
 		-Accflags="${CFLAGS} -D_GNU_SOURCE -DNO_LOCALE" \
 		-Aldflags="${LDFLAGS} -Wl,--allow-multiple-definition" \
 		--all-static \
+		--static-ext=DBI,DBD-SQLite \
 		|| die "perl-cross configure failed"
 
 	# -Wl,--allow-multiple-definition (appended to ldflags): the `re` extension
@@ -217,6 +360,18 @@ src_configure() {
 }
 
 src_compile() {
+	# DBI_PUREPERL=2: the build-time-only unblock for DBD::SQLite's
+	# Makefile.PL `require DBI` (see the long src_prepare comment on the
+	# DBI/DBD-SQLite bake for the full evidence trail). Forces DBI.pm to
+	# `require DBI::PurePerl` instead of `XSLoader::load('DBI', ...)` when
+	# miniperl (host-native, no target XS, no dynamic loader) evaluates any
+	# cpan/ Makefile.PL during this build. Scoped to this emake invocation
+	# only — DBI_PUREPERL is NOT set in the installed image's runtime
+	# environment, so the live ISO's perl loads the REAL compiled-in DBI XS
+	# via the same static_ext bootstrap table every other baked XS module
+	# (Fcntl, POSIX, ...) already uses.
+	export DBI_PUREPERL=2
+
 	# perl-cross builds its own miniperl from source (host compiler for
 	# host-side codegen; ${CHOST}-gcc for the target perl/extensions).
 	emake
@@ -289,6 +444,21 @@ src_install() {
 		fi
 	done
 	einfo "MONOLITH-PERL: backfilled baked-XS .pm (Fcntl, File::Spec, Cwd, ...) omitted by perl-cross"
+
+	# Verify the DBI/DBD::SQLite un-defer (SP5 P3) actually staged, same
+	# hard-die-with-candidates diagnostic as the bootstrap check above — this
+	# is the newest, least-proven part of this ebuild (the DBI_PUREPERL
+	# unblock + the Makefile build-order rule in src_prepare), so a fast,
+	# grep-able build-log failure here beats discovering it only at
+	# boot-test's smoke_perl_dbi.
+	for m in DBI.pm DBI/DBD.pm DBD/SQLite.pm; do
+		if [[ ! -f "${privlib}/${m}" ]]; then
+			eerror "MONOLITH-PERL DBI/DBD::SQLite backfill: ${m} still missing; build-tree candidates:"
+			find "${S}" -name "$(basename "${m}")" -printf '  %p\n' 2>/dev/null | head -10
+			die "DBI/DBD::SQLite backfill incomplete: ${m} still missing"
+		fi
+	done
+	einfo "MONOLITH-PERL: DBI + DBD::SQLite .pm staged (static_ext bake)"
 
 	# --- Prune pass (spec §3 size budget) ---
 	#
