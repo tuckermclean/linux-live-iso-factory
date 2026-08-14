@@ -56,6 +56,19 @@ BDEPEND="
 src_prepare() {
 	default
 	eautoreconf
+
+	# tinyx's mi/miscrinit.c unconditionally does `#define _XSHM_SERVER_;
+	# #include <X11/extensions/XShm.h>` (old-kdrive MIT-SHM pattern). XShm.h
+	# ships in x11-libs/libXext — a CLIENT lib whose dep chain is libX11+libxcb
+	# (the entire G2 stack). We refuse to drag the client stack into the SERVER
+	# build for one header: XShm.h's only two includes (X11/Xfuncproto.h and
+	# X11/extensions/shm.h) both come from x11-base/xorg-proto, already a DEPEND,
+	# and the whole client-side body is behind `#ifndef _XSHM_SERVER_`. So vendor
+	# just the header (MIT, from libXext 1.3.7 — see files/XShm.h) onto the
+	# -I../include path that mi/ already compiles against. This is why libXext is
+	# deliberately NOT a DEPEND here.
+	mkdir -p include/X11/extensions || die
+	cp "${FILESDIR}/XShm.h" include/X11/extensions/XShm.h || die
 }
 
 src_configure() {
