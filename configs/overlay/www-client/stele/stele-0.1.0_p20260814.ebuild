@@ -17,13 +17,13 @@ COMMIT="87d4df9469c4bdfa896bfe0d26d86ef62a8135a7"
 SRC_URI="https://github.com/tuckermclean/stele-browser/archive/${COMMIT}.tar.gz -> ${P}.tar.gz"
 S="${WORKDIR}/stele-browser-${COMMIT}"
 
-# TODO(license): the stele-browser repo currently ships NO LICENSE file and no
-# Cargo.toml `license` field. The monolith's ACCEPT_LICENSE is unset → portage
-# defaults to @FREE, which will REJECT this package at emerge until the repo
-# carries a recognised free license. MIT is assumed here to match rl144; the
-# owner must add a matching LICENSE to the repo (then repin). The compiled-in
-# 8x8 glyph atlas (src/text/glyphs.rs) is separately public-domain.
-LICENSE="MIT"
+# License: GPL-3 (owner's choice, 2026-08-14). GPL-3 is in portage's @FREE set,
+# so this declaration is what actually satisfies the Monolith's ACCEPT_LICENSE
+# gate (unset → @FREE) — the emerge accepts it regardless of a repo file. The
+# owner is adding a matching GPL-3 LICENSE file to the stele-browser repo (for
+# legal correctness + the dodoc below); until it lands, dodoc LICENSE is guarded.
+# The compiled-in 8x8 glyph atlas (src/text/glyphs.rs) is separately public-domain.
+LICENSE="GPL-3"
 SLOT="0"
 KEYWORDS="~amd64"
 
