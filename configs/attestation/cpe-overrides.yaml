@@ -130,7 +130,7 @@ overrides:
   # the CRLF-injection family) are filed against this CPE, not perl:perl.
   cgi:             "cpe:2.3:a:andy_armstrong:cgi.pm:*:*:*:*:*:*:*:*"
   # DBI + DBD::SQLite are baked into monolith-perl via static_ext (SP5 P3,
-  # un-deferred at -r6, see the monolith-perl ebuild's src_prepare comment
+  # un-deferred at -r7, see the monolith-perl ebuild's src_prepare comment
   # for the DBI_PUREPERL unblock), not separate portage packages — added
   # here so Syft/Grype have somewhere to attach a CPE if it ever infers a
   # package name for the bundled module sources.

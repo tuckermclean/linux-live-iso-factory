@@ -82,31 +82,41 @@ sys-apps/kmod:34.2:0
 # separate portage atom, so it has no line of its own here — its version is
 # STRICT-paired with monolith-perl below (spec D1): perl-cross 1.6.4 supports
 # perl 5.42.0 explicitly (cnf/diffs/perl5-5.42.0/ in the 1.6.4 release tree).
-# See configs/overlay/dev-lang/monolith-perl/monolith-perl-5.42.0-r6.ebuild
+# See configs/overlay/dev-lang/monolith-perl/monolith-perl-5.42.0-r7.ebuild
 # (PC_PV="1.6.4") for the pin itself. -r1: NO_LOCALE build fix. -r2: CGI.pm
 # 4.10 rider (pure-perl-only, see the ebuild's CGI_PV comment) + a prune pass
 # + the guestbook boot-test; DBI/DBD::SQLite were attempted at -r2 first and
 # REVERTED — DBD::SQLite's Makefile.PL needs an already-importable DBI at ITS
 # OWN configure time (DBI::DBD helper utilities), which the single-pass
 # perl-cross static_ext build could not provide on a -Uusedl perl without the
-# DBI_PUREPERL unblock below. -r3/-r4: debug markers chasing a missing
+# fix landed at -r7 below. -r3/-r4: debug markers chasing a missing
 # File::Spec under CGI.pm. -r5: the real fix for that class of bug — force a
 # real per-module `pm_to_blib` in src_compile (perl-cross's `static` target
 # fakes the pm_to_blib stamp for static_ext modules, so baked-XS modules'
-# .pm never shipped without this). -r6 (SP5 P3 un-defer): DBI 1.651 +
-# DBD::SQLite 1.78 baked in via the SAME static_ext mechanism, unblocked by
-# exporting DBI_PUREPERL=2 for the build (DBI's own sanctioned pure-perl
-# fallback, so miniperl's `require DBI` inside DBD::SQLite's Makefile.PL
-# succeeds without dlopen/XSLoader) plus an explicit Makefile order-only rule
-# forcing cpan/DBI to build before cpan/DBD-SQLite (see the ebuild's
-# src_prepare comment for the full evidence trail). DBD::SQLite compiles its
-# OWN bundled sqlite amalgamation (3.51.1), not Task 1's system libsqlite3.a
-# — see the ebuild's src_prepare comment for why (DBD::SQLite 1.78's
-# Makefile.PL has the system-sqlite code path behind a permanent `if ( 0 )`,
-# upstream's own "downstream packagers may patch this" dead code). Each
-# revbump is mandatory to bust the S3 --usepkg binpkg cache (portage matches
-# binpkgs on version+USE+deps and ignores ebuild-content changes, so an
-# in-place edit silently reuses the stale binary) — the -r2 label was briefly
-# used for the reverted DBI/DBD attempt and force-pushed over; no -r2 binpkg
-# for that attempt was ever cached, so reusing the label was safe at the time.
-dev-lang/monolith-perl:5.42.0-r6:0
+# .pm never shipped without this). -r6 (SP5 P3 un-defer, first attempt): DBI
+# 1.651 + DBD::SQLite 1.78 baked in via the SAME static_ext mechanism,
+# "unblocked" by exporting DBI_PUREPERL=2 for the build plus an order-only
+# Makefile rule forcing cpan/DBI before cpan/DBD-SQLite — CI proved this
+# INCOMPLETE: DBI's `static` target compiled, but DBD::SQLite's Makefile.PL
+# still died with "DBI 1.57 is required", because `require DBI` couldn't even
+# find DBI.pm on miniperl's @INC (the order-only rule only guaranteed the
+# perl-cross FAKE pm_to_blib stamp, which — same bug the -r5 comment above
+# describes — doesn't actually copy .pm anywhere for static_ext modules). -r7
+# (the actual fix): src_prepare now `cp`s DBI.pm, the cpan/DBI/lib/DBI/*
+# subtree, and DBI's auto/DBI/*.h+*.xst files DIRECTLY into this tree's
+# shared lib/ — straight from the pristine dist tarball, no build step
+# required — so miniperl's `require DBI` (still under DBI_PUREPERL=2) finds
+# real DBI.pm from the FIRST Makefile.PL invocation onward, independent of
+# any cpan/ build ordering. See the ebuild's src_prepare comment for the full
+# evidence trail (both the -r6 failure diagnosis and the -r7 fix). DBD::SQLite
+# compiles its OWN bundled sqlite amalgamation (3.51.1), not Task 1's system
+# libsqlite3.a — see the ebuild's src_prepare comment for why (DBD::SQLite
+# 1.78's Makefile.PL has the system-sqlite code path behind a permanent
+# `if ( 0 )`, upstream's own "downstream packagers may patch this" dead
+# code). Each revbump is mandatory to bust the S3 --usepkg binpkg cache
+# (portage matches binpkgs on version+USE+deps and ignores ebuild-content
+# changes, so an in-place edit silently reuses the stale binary) — the -r2
+# label was briefly used for the reverted DBI/DBD attempt and force-pushed
+# over; no -r2 binpkg for that attempt was ever cached, so reusing the label
+# was safe at the time.
+dev-lang/monolith-perl:5.42.0-r7:0

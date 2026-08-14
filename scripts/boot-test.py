@@ -674,7 +674,7 @@ def smoke_perl_cgi(child):
 def smoke_perl_dbi(child):
     """
     DBI + DBD::SQLite baked into perl via static_ext (SP5 P3, un-deferred at
-    -r6 — no dynamic loader on this disc, both are compiled directly into
+    -r7 — no dynamic loader on this disc, both are compiled directly into
     the perl binary; see the monolith-perl ebuild's src_prepare comment for
     the DBI_PUREPERL build-time unblock). An in-memory SQLite round-trip
     (create table, insert, select) proves both the DBI dispatch layer and

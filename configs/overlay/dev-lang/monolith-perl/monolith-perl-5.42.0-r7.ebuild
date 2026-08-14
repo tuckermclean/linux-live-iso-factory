@@ -188,69 +188,95 @@ src_prepare() {
 	# disc's no-dynamic-loader doctrine falls out of DBD::SQLite's own
 	# $Config-awareness for free.
 	#
-	# --- THE UNBLOCK: DBI_PUREPERL (see src_compile) ---
+	# --- THE UNBLOCK: DBI_PUREPERL + pre-staging DBI's .pm/.h into lib/ ---
 	#
 	# DBD::SQLite's Makefile.PL needs an importable DBI at ITS OWN configure
 	# time in two places: (1) a version gate — `require DBI; ... DBI->VERSION
 	# < $DBI_required` (>= 1.57) — printed as a hard "please install DBI"
 	# exit(0) [no Makefile generated] on failure; (2) its postamble() (package
 	# MY) calls `require DBI::DBD; DBI::DBD::dbd_postamble(@_)`, which scans
-	# @INC for an ALREADY-STAGED cpan/DBI/.../auto/DBI/Driver.xst (DBI's own
-	# Makefile.PL post_initialize adds every *.h/*.xst file it ships to the
-	# PM hash, so pm_to_blib copies them into $(INST_ARCHAUTODIR) same as any
+	# @INC for an ALREADY-STAGED auto/DBI/Driver.xst (DBI's own Makefile.PL
+	# post_initialize adds every top-level *.h/*.xst file it ships to the PM
+	# hash, so pm_to_blib copies them into $(INST_ARCHAUTODIR) same as any
 	# .pm — under PERL_CORE=1 that resolves to this tree's shared lib/auto/DBI/).
 	#
 	# Under miniperl (no dynamic loader, host-native binary, cannot dlopen a
 	# target-arch .so and has no target XS baked in), a plain `require DBI`
 	# hits DBI.pm's unconditional `XSLoader::load('DBI', $XS_VERSION)` at
-	# require-time (DBI.pm, outside any DBI_PUREPERL check) and dies. BUT
-	# DBI ships its OWN sanctioned pure-perl fallback for exactly this
-	# situation: DBI.pm reads `$ENV{DBI_PUREPERL}` — if truthy, `require
-	# DBI::PurePerl` INSTEAD of XSLoader::load (DBI.pm: `if ($ENV{DBI_PUREPERL})
-	# { ...; require DBI::PurePerl if $@ or $ENV{DBI_PUREPERL} >= 2; } else {
+	# require-time (DBI.pm, outside any DBI_PUREPERL check) and dies. DBI
+	# ships its OWN sanctioned pure-perl fallback for exactly this situation:
+	# DBI.pm reads `$ENV{DBI_PUREPERL}` — if truthy, `require DBI::PurePerl`
+	# INSTEAD of XSLoader::load (DBI.pm: `if ($ENV{DBI_PUREPERL}) { ...;
+	# require DBI::PurePerl if $@ or $ENV{DBI_PUREPERL} >= 2; } else {
 	# XSLoader::load(...) }`). `$DBI::VERSION` ("1.651") is set unconditionally
 	# at the TOP of DBI.pm, before that branch, so the version gate in (1)
-	# passes regardless of which path loads. DBI::DBD.pm (used for (2)) does
-	# NOT itself `use DBI` or touch XS — it only reads $DBI::VERSION (already
-	# set) and greps @INC for the physically-staged Driver.xst file, which is
-	# independent of how `require DBI` was satisfied. And DBI's OWN
-	# Makefile.PL never hits this at all: DBI::DBD.pm's `require DBI unless
-	# $is_dbi` short-circuits when building DBI itself (`$is_dbi = (-r
-	# 'DBI.pm' && -r 'DBI.xs' && -r 'DBIXS.h')` — all present in cpan/DBI's
-	# own directory), matching the reverted -r2 attempt's observation that
-	# "DBI built fine" (it never needed this path).
+	# passes regardless of which path loads.
 	#
-	# So: exporting DBI_PUREPERL=2 for the `emake` build in src_compile
-	# forces `require DBI` under miniperl to load DBI::PurePerl and skip
-	# XSLoader entirely — no custom stub .pm to author/maintain, no patch to
-	# DBD::SQLite's Makefile.PL to carry across upstream releases. This is
-	# build-time-ONLY: DBI_PUREPERL is not set in the live ISO's runtime
+	# FIRST ATTEMPT (this ebuild's -r6, CI-tested and WRONG): exporting
+	# DBI_PUREPERL=2 for the `emake` build plus an order-only Makefile rule
+	# forcing `cpan/DBI/pm_to_blib` before `cpan/DBD-SQLite/Makefile`. CI's
+	# actual result: DBI's `static` MakeMaker target compiled fine, but
+	# DBD::SQLite's Makefile.PL STILL died with "DBI 1.57 is required" —
+	# i.e. `require DBI` never even found DBI.pm to evaluate the
+	# DBI_PUREPERL branch in the first place. Root cause: perl-cross invokes
+	# every cpan/ Makefile.PL as `../../miniperl_top -I../../lib Makefile.PL`
+	# — @INC is ONLY this tree's shared lib/ dir. DBI.pm doesn't land there
+	# via `cpan/DBI/pm_to_blib` — that target, for a STATIC extension, is the
+	# documented perl-cross bug this ebuild's src_compile already works
+	# around for Fcntl/File::Spec/Cwd/CGI et al.: `$(static_modules): %/pm_to_blib:
+	# | %/Makefile ...; $(MAKE) -C $(dir $@) ... static; @touch $@` — it only
+	# runs the `static` target (compiles DBI.xs to .a) and then TOUCHES A
+	# FAKE STAMP, it does not actually copy DBI.pm anywhere. The REAL
+	# pm_to_blib re-run that stages .pm files (this ebuild's own src_compile
+	# fix-up loop, `emake -C "${d}" PERL_CORE=1 pm_to_blib`) only happens
+	# AFTER the top-level `emake` — i.e. after cpan/DBD-SQLite already tried
+	# and failed to configure. The order-only Makefile rule was therefore
+	# ordering against a stamp that never did the staging it looked like it did.
+	#
+	# THE ACTUAL FIX: since DBI.pm and its `lib/DBI/*.pm` siblings (DBI::DBD,
+	# DBI::PurePerl, DBI::Const::*, ...) are plain FILES already present in
+	# the pristine DBI-${DBI_PV} dist tree (no build step produces them),
+	# copy them into this tree's shared lib/ DIRECTLY in src_prepare — before
+	# configure or compile ever runs, so they are on miniperl's @INC for
+	# EVERY subsequent Makefile.PL regardless of any build-order question.
+	# Same reasoning for the *.h/*.xst files DBI::DBD::dbd_postamble()'s
+	# dbd_dbi_arch_dir() greps @INC for (auto/DBI/Driver.xst) and that
+	# DBD::SQLite's later C compile itself needs (`-I$(DBI_INSTARCH_DIR)` in
+	# its Makefile.PL, pointing at this same lib/auto/DBI/ dir) — DBIXS.h,
+	# Driver.xst, Driver_xst.h, dbd_xsh.h, dbi_sql.h, dbipport.h, dbivport.h
+	# are the exact 7 top-level *.h/*.xst files in DBI-${DBI_PV} (verified via
+	# `find . -maxdepth 1 \( -name '*.h' -o -name '*.xst' \)` on the fetched
+	# tarball — matches DBI's own post_initialize's File::Find, which prunes
+	# at depth 1 too); dbixs_rev.h is EXCLUDED deliberately — it's a
+	# make-time-generated file (DBI's own `dbixs_rev.h: DBIXS.h Driver_xst.h
+	# dbipport.h dbivport.h dbixs_rev.pl` rule) that doesn't exist in the
+	# pristine tree and is DBI-internal, not `#include`d by DBD::SQLite's
+	# SQLiteXS.h (checked directly).
+	#
+	# This pre-staged lib/DBI.pm (copied straight from cpan/DBI/DBI.pm, the
+	# real dist file, not a stub) is also exactly what installperl ends up
+	# shipping — cpan/DBI's own REAL pm_to_blib re-run in src_compile below
+	# copies the identical content over it again later, a harmless no-op
+	# overwrite. DBI_PUREPERL is still exported for the `emake` build
+	# (src_compile) so `require DBI` — now able to actually LOAD DBI.pm from
+	# lib/ — takes the DBI::PurePerl branch instead of XSLoader::load.
+	# Build-time-ONLY: DBI_PUREPERL is not set in the live ISO's runtime
 	# environment, so at boot the REAL compiled-in DBI XS loads via
 	# XSLoader::load — which, for a perl-cross static_ext module, resolves
 	# against the statically-linked bootstrap table (the same mechanism every
 	# other static_ext module here, e.g. Fcntl/POSIX, already relies on) —
 	# not a dlopen, so this all-static -Uusedl perl still has zero .so's.
 	#
-	# --- Build order: DBI before DBD-SQLite ---
-	#
-	# perl-cross's Makefile builds cpan/ modules via a `%/Makefile:
-	# %/Makefile.PL ...` pattern rule with no cross-module ordering by
-	# default; it only has EXPLICIT order-only edges for known circular/
-	# layered deps (e.g. `cpan/List-Util/pm_to_blib: | ext/DynaLoader/pm_to_blib`).
-	# DBD::SQLite's postamble() (above) needs cpan/DBI/pm_to_blib to have
-	# ALREADY run (staging Driver.xst) by the time DBD-SQLite's OWN Makefile
-	# gets generated — and "DBD-SQLite" < "DBI" alphabetically, so nothing
-	# guarantees that order for free. Append the same idiom perl-cross uses
-	# for its own layered deps: an order-only prerequisite on the concrete
-	# `cpan/DBD-SQLite/Makefile` target (GNU make merges this with the
-	# pattern rule's recipe — no conflict, same trick as perl-cross's own
-	# `cpan/Unicode-Normalize/Makefile: lib/unicore/CombiningClass.pl` line).
-	cat >>Makefile <<-EOF || die "appending DBI/DBD-SQLite build-order rule to Makefile failed"
-
-	# SP5 P3 un-defer: DBD::SQLite's Makefile.PL needs cpan/DBI already
-	# staged (Driver.xst, for DBI::DBD::dbd_postamble) — force DBI first.
-	cpan/DBD-SQLite/Makefile: | cpan/DBI/pm_to_blib
-	EOF
+	# The now-pointless order-only Makefile rule (ordering against a fake
+	# stamp accomplishes nothing here) is DROPPED, not kept as dead
+	# belt-and-suspenders — a comment claiming it does something it
+	# provably doesn't is worse than no comment.
+	mkdir -p lib/auto/DBI || die
+	cp cpan/DBI/DBI.pm lib/DBI.pm || die "pre-staging DBI.pm into lib/ failed"
+	cp -a cpan/DBI/lib/DBI lib/ || die "pre-staging cpan/DBI/lib/DBI/ subtree into lib/DBI/ failed"
+	cp cpan/DBI/DBIXS.h cpan/DBI/Driver.xst cpan/DBI/Driver_xst.h cpan/DBI/dbd_xsh.h \
+		cpan/DBI/dbi_sql.h cpan/DBI/dbipport.h cpan/DBI/dbivport.h lib/auto/DBI/ \
+		|| die "pre-staging DBI's auto/DBI headers into lib/auto/DBI/ failed"
 }
 
 src_configure() {
@@ -362,14 +388,24 @@ src_configure() {
 src_compile() {
 	# DBI_PUREPERL=2: the build-time-only unblock for DBD::SQLite's
 	# Makefile.PL `require DBI` (see the long src_prepare comment on the
-	# DBI/DBD-SQLite bake for the full evidence trail). Forces DBI.pm to
-	# `require DBI::PurePerl` instead of `XSLoader::load('DBI', ...)` when
-	# miniperl (host-native, no target XS, no dynamic loader) evaluates any
-	# cpan/ Makefile.PL during this build. Scoped to this emake invocation
-	# only — DBI_PUREPERL is NOT set in the installed image's runtime
-	# environment, so the live ISO's perl loads the REAL compiled-in DBI XS
-	# via the same static_ext bootstrap table every other baked XS module
-	# (Fcntl, POSIX, ...) already uses.
+	# DBI/DBD-SQLite bake for the full evidence trail — this env var ALONE
+	# was not enough, per -r6's CI failure; it only matters once DBI.pm is
+	# actually findable, which src_prepare's lib/ pre-staging now ensures).
+	# Forces DBI.pm to `require DBI::PurePerl` instead of
+	# `XSLoader::load('DBI', ...)` when miniperl (host-native, no target XS,
+	# no dynamic loader) evaluates any cpan/ Makefile.PL during this build.
+	#
+	# `export` here, NOT an `emake VAR=val` make-macro assignment: this must
+	# be a real process-environment variable so every child `miniperl_top
+	# Makefile.PL` invocation spawned during `emake` inherits it via normal
+	# Unix env inheritance — a make macro would only be visible to make's own
+	# recipe expansion, not to a plain Perl `$ENV{DBI_PUREPERL}` read inside
+	# the Makefile.PL script itself.
+	#
+	# Scoped to this emake invocation only — DBI_PUREPERL is NOT set in the
+	# installed image's runtime environment, so the live ISO's perl loads the
+	# REAL compiled-in DBI XS via the same static_ext bootstrap table every
+	# other baked XS module (Fcntl, POSIX, ...) already uses.
 	export DBI_PUREPERL=2
 
 	# perl-cross builds its own miniperl from source (host compiler for
