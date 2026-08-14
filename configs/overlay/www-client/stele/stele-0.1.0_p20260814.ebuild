@@ -95,7 +95,13 @@ src_install() {
 	exeinto /usr/bin
 	doexe "${bin}"
 
-	# LICENSE dodoc guarded until the repo adds one (see the LICENSE TODO above).
-	dodoc "${S}/LICENSE" 2>/dev/null || ewarn "no LICENSE in the stele-browser repo yet — see the ebuild's license TODO"
-	dodoc "${S}/REPORT.md" "${S}/README.md" 2>/dev/null || true
+	# EAPI-8 dodoc die()s on a missing file (|| can't catch its internal die),
+	# so only ship docs that actually exist. LICENSE is picked up automatically
+	# once the owner adds the GPL-3 file to the repo; Stele has REPORT.md, not a
+	# README. (The repo's stele-charter.md / build-brief are dev docs, skipped.)
+	local d
+	for d in LICENSE REPORT.md DECISIONS.md JOURNAL.md; do
+		[[ -f "${S}/${d}" ]] && dodoc "${S}/${d}"
+	done
+	[[ -f "${S}/LICENSE" ]] || ewarn "no LICENSE file in the stele-browser repo yet (LICENSE=GPL-3 declared) — owner to add it"
 }
