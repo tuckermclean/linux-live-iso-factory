@@ -8,6 +8,14 @@
 # Kernel (cross-compiled via monolith overlay ebuild)
 sys-kernel/monolith-kernel
 
+# Hand-authored rootfs helpers (SP-base): monolith-net (SP1 ISA NIC probe),
+# monolith-router (SP2/SP3 NAT + dnsmasq DHCP/DNS), monolith-console (lazy
+# auto-login shell), a POSIX-sh `which`, the guestbook.cgi boot-test fixture
+# (SP5 P4), the advisory-check login banner, and the prompt square. Owns the
+# files formerly hand-installed by scripts/build-rootfs.sh from
+# configs/rootfs-overlay/ — see configs/overlay/app-misc/monolith-base.
+app-misc/monolith-base
+
 # BusyBox (for initramfs — cross-compiled with savedconfig)
 sys-apps/busybox
 

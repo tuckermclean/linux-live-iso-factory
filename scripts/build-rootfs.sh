@@ -395,39 +395,17 @@ iface lo inet loopback
 #iface eth0 inet dhcp
 EOF
 
-    # Install the monolith-net ISA NIC probe helper (standalone, unit-tested;
-    # see configs/rootfs-overlay/usr/bin/monolith-net + scripts/tests/).
-    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/bin/monolith-net" \
-        "$ROOTFS_DIR/usr/bin/monolith-net"
-
-    # Install the monolith-router NAT helper (standalone, unit-tested;
-    # see configs/rootfs-overlay/usr/sbin/monolith-router + scripts/tests/).
-    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/sbin/monolith-router" \
-        "$ROOTFS_DIR/usr/sbin/monolith-router"
-
-    # Install the lazy console shell (agetty auto-login target from /etc/inittab).
-    # Keeps bash off idle consoles until a key is pressed; see the file's header
-    # and configs/rootfs-overlay/usr/sbin/monolith-console.
-    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/sbin/monolith-console" \
-        "$ROOTFS_DIR/usr/sbin/monolith-console"
-
-    # Install a POSIX-sh `which` — GNU sys-apps/which doesn't build against musl
-    # and busybox (which has the applet) isn't in the rootfs. See the file header.
-    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/bin/which" \
-        "$ROOTFS_DIR/usr/bin/which"
-
-    # Install the guestbook CGI fixture (SP5 P4 LAMP-invariant boot-test; perl
-    # + CGI.pm + the sqlite3 CLI — DBI/DBD::SQLite are deferred, see
-    # configs/portage/world's monolith-perl comment). See the file's header
-    # and scripts/boot-test.py smoke_guestbook.
-    install -D -m 0755 "${CONFIGS_DIR}/rootfs-overlay/usr/lib/cgi-bin/guestbook.cgi" \
-        "$ROOTFS_DIR/usr/lib/cgi-bin/guestbook.cgi"
+    # monolith-net, monolith-router, monolith-console, /usr/bin/which, and the
+    # guestbook.cgi fixture are installed by app-misc/monolith-base (Pillar 4;
+    # see configs/overlay/app-misc/monolith-base) via the sysroot rsync in
+    # install_sysroot() above — no hand-install needed here anymore.
 
     # /etc/init.d/S35netprobe - reach ISA NICs that can't announce themselves.
     # Runs AFTER rcS coldplug (which self-loads PCI/virtual NICs by modalias) and
     # BEFORE S40network (which DHCPs whatever interfaces exist). Only the SAFE,
     # self-identifying ISA path runs automatically; the blind io= sweep is opt-in
-    # via `monolith-net probe`. See configs/rootfs-overlay/usr/bin/monolith-net.
+    # via `monolith-net probe`. See
+    # configs/overlay/app-misc/monolith-base/files/monolith-net.
     cat > "$ROOTFS_DIR/etc/init.d/S35netprobe" << 'EOF'
 #!/bin/sh
 case "$1" in
@@ -537,10 +515,11 @@ exit 0
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/S30gpm"
 
-    # /usr/sbin/monolith-advisory-check - boot-time advisory fetch script
-    install -m 755 \
-        "${CONFIGS_DIR}/overlay/app-misc/monolith-base/files/monolith-advisory-check" \
-        "$ROOTFS_DIR/usr/sbin/monolith-advisory-check"
+    # /usr/sbin/monolith-advisory-check, /etc/profile.d/monolith-advisory.sh,
+    # and /etc/bash/bashrc.d/99-monolith-square.bash are installed by
+    # app-misc/monolith-base (Pillar 4; see
+    # configs/overlay/app-misc/monolith-base) via the sysroot rsync in
+    # install_sysroot() above.
 
     # /etc/init.d/S50advisory - runs after S40network to check for advisories
     cat > "$ROOTFS_DIR/etc/init.d/S50advisory" << 'EOF'
@@ -560,22 +539,6 @@ esac
 exit 0
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/S50advisory"
-
-    # /etc/profile.d/monolith-advisory.sh - login banner for revoked builds
-    mkdir -p "$ROOTFS_DIR/etc/profile.d"
-    install -m 644 \
-        "${CONFIGS_DIR}/overlay/app-misc/monolith-base/files/monolith-advisory.sh" \
-        "$ROOTFS_DIR/etc/profile.d/monolith-advisory.sh"
-
-    # /etc/bash/bashrc.d/99-monolith-square.bash
-    # Runs last in the bashrc.d chain (after 10-gentoo-color.bash sets PS1),
-    # prepending the dark-grey ■ to whatever prompt Gentoo built.
-    # The guard prevents double-prepending if this file is sourced more than once.
-    mkdir -p "$ROOTFS_DIR/etc/bash/bashrc.d"
-    cat > "$ROOTFS_DIR/etc/bash/bashrc.d/99-monolith-square.bash" << 'EOF'
-[[ ${PS1} != *'■'* ]] && PS1='\[\e[90m\]■\[\e[0m\] '"${PS1}"
-EOF
-    chmod 644 "$ROOTFS_DIR/etc/bash/bashrc.d/99-monolith-square.bash"
 
     log_info "/etc configuration files created"
 }
