@@ -113,6 +113,29 @@ overrides:
 
   # --- Scripting ---
   lua:             "cpe:2.3:a:lua:lua:*:*:*:*:*:*:*:*"
+  # monolith-perl is our custom overlay ebuild (perl-cross-driven static
+  # build, see configs/overlay/dev-lang/monolith-perl), but the shipped
+  # interpreter is upstream Perl verbatim — CVEs are filed against
+  # perl:perl in NVD, not against the overlay package name.
+  perl:            "cpe:2.3:a:perl:perl:*:*:*:*:*:*:*:*"
+  # CGI.pm 4.10 rider baked into monolith-perl (pure-perl, see the ebuild's
+  # CGI_PV comment and the world-file pin comment). Best-effort CPE: NVD's
+  # official CPE dictionary registers CGI.pm under vendor "andy_armstrong"
+  # (Andy Armstrong co-maintained CGI.pm through the 3.x era before Lee
+  # Johnson/LEEJO took over on CPAN) — verified via the NVD CPE search API
+  # (services.nvd.nist.gov/rest/json/cpes/2.0?keywordSearch=CGI.pm), which
+  # returns only "andy_armstrong:cgi.pm" as a registered vendor:product pair
+  # (versions 1.x-3.49+ indexed), the same vendor-lags-current-maintainer
+  # pattern as the sqlite/perl entries above. Historical CGI.pm CVEs (e.g.
+  # the CRLF-injection family) are filed against this CPE, not perl:perl.
+  cgi:             "cpe:2.3:a:andy_armstrong:cgi.pm:*:*:*:*:*:*:*:*"
+
+  # --- Databases ---
+  # monolith-sqlite is our custom overlay ebuild (amalgamation build, see
+  # configs/overlay/dev-db/monolith-sqlite), but the shipped bits (sqlite3
+  # CLI + libsqlite3.a) are upstream SQLite verbatim — CVEs are filed against
+  # sqlite:sqlite in NVD, not against the overlay package name.
+  sqlite:          "cpe:2.3:a:sqlite:sqlite:*:*:*:*:*:*:*:*"
 
   # --- Shells ---
   dash:            "cpe:2.3:a:dash_project:dash:*:*:*:*:*:*:*:*"

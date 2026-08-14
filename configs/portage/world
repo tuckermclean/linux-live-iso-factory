@@ -62,6 +62,27 @@ dev-debug/gdb
 # Scripting languages
 dev-lang/lua
 
+# perl — static, -Uusedl (no dynamic loader on the disc, so no XS .so loading;
+# any XS module would need to be baked into the binary via static_ext — see
+# monolith-perl ebuild). Built with arsv/perl-cross driving vanilla perl
+# (Gentoo's dev-lang/perl Configure is cross-hostile). No threads, no CPAN
+# client. CGI.pm 4.10 (removed from perl core in 5.22) is baked in as a
+# PURE-PERL rider for the guestbook's param()/header() — pinned specifically
+# to 4.10 because every CGI.pm release from 4.11 onward hard-depends on
+# HTML::Entities, which ships inside the XS HTML-Parser distribution; 4.10 is
+# the newest release with zero XS in its dependency tree (verified against
+# its Makefile.PL and a tarball-wide *.xs/*.c/*.h grep).
+# DBI + DBD::SQLite are DEFERRED, not shipped: this is a hard perl-cross
+# limitation, not a fallback-not-yet-taken. DBD::SQLite's Makefile.PL needs
+# an already-importable DBI at ITS OWN configure time (it calls into
+# DBI::DBD's helper routines), but perl-cross's static_ext bake is a single
+# pass over the whole perl build — DBI is still mid-build, nothing to import
+# yet. There is no dynamic loader on this disc to build DBI first and
+# `use DBI` it into a second pass either. The guestbook therefore talks to
+# SQLite via the on-disc `sqlite3` CLI (dev-db/monolith-sqlite, P1) instead
+# of DBI — shelling out, not linking in.
+dev-lang/monolith-perl
+
 # Compression utilities
 app-arch/xz-utils
 app-arch/bzip2
@@ -177,7 +198,15 @@ sys-apps/smartmontools
 sys-apps/hdparm
 sys-apps/dmidecode
 
-# Data tools
+# Databases
+# sqlite — static SQLite (CLI + libsqlite3.a) from the amalgamation ebuild, not
+# ::gentoo (which BDEPENDs tcl). THREADSAFE=0, no dlopen extensions, FTS5+JSON1.
+# The `sqlite3` CLI is what the guestbook CGI shells out to for its INSERT/
+# SELECT (DBD::SQLite's static_ext bake into monolith-perl was attempted and
+# reverted — see the monolith-perl comment above — so libsqlite3.a/sqlite3.h
+# are not currently consumed by anything in-tree; kept in the sysroot for a
+# future DBD retry).
+dev-db/monolith-sqlite
 
 # Mouse support
 sys-libs/gpm

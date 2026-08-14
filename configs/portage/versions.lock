@@ -77,3 +77,23 @@ app-misc/cmatrix:2.0-r6:0
 app-misc/sl:5.02-r1:0
 games-roguelike/rl144:0.1.0_p20260805:0
 sys-apps/kmod:34.2:0
+
+# perl-cross is a companion build-time tarball (arsv/perl-cross), not a
+# separate portage atom, so it has no line of its own here — its version is
+# STRICT-paired with monolith-perl below (spec D1): perl-cross 1.6.4 supports
+# perl 5.42.0 explicitly (cnf/diffs/perl5-5.42.0/ in the 1.6.4 release tree).
+# See configs/overlay/dev-lang/monolith-perl/monolith-perl-5.42.0-r2.ebuild
+# (PC_PV="1.6.4") for the pin itself. -r1: NO_LOCALE build fix. -r2: CGI.pm
+# 4.10 rider (pure-perl-only, see the ebuild's CGI_PV comment) + a prune pass
+# + the guestbook boot-test; DBI/DBD::SQLite were attempted at -r2 first and
+# REVERTED — DBD::SQLite's Makefile.PL needs an already-importable DBI at ITS
+# OWN configure time (DBI::DBD helper utilities), which no single-pass
+# perl-cross static_ext build can provide on a -Uusedl perl (nothing to
+# import yet — DBI itself is mid-build). The guestbook instead shells out to
+# the `sqlite3` CLI (dev-db/monolith-sqlite, P1) directly. Every revbump here
+# is mandatory to bust the S3 --usepkg binpkg cache (portage matches binpkgs
+# on version+USE+deps and ignores ebuild-content changes, so an in-place edit
+# silently reuses the stale binary) — this label (-r2) was briefly used for
+# the reverted DBI/DBD attempt and force-pushed over; no -r2 binpkg for that
+# attempt was ever cached, so reusing the label here is safe.
+dev-lang/monolith-perl:5.42.0-r5:0

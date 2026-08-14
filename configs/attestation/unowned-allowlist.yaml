@@ -97,6 +97,15 @@ allowlist:
   # isn't in the rootfs. Hand-installed by build-rootfs.sh. Pending monolith-base.
   - usr/bin/which
 
+  # ── Guestbook CGI fixture (SP5 P4) — pending monolith-base ebuild ───────────
+  # perl + CGI.pm + the sqlite3 CLI LAMP-invariant boot-test fixture (DBI/
+  # DBD::SQLite deferred, see configs/portage/world). Hand-installed by
+  # build-rootfs.sh from configs/rootfs-overlay/usr/lib/cgi-bin/. See
+  # scripts/boot-test.py smoke_guestbook. The dir itself is `install -D`-created
+  # and thus also unowned until the planned monolith-base ebuild owns it.
+  - usr/lib/cgi-bin
+  - usr/lib/cgi-bin/guestbook.cgi
+
   # ── Prompt customisation ─────────────────────────────────────────────────────
   - etc/bash/bashrc.d/99-monolith-square.bash
 
