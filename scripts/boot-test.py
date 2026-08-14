@@ -699,7 +699,13 @@ def smoke_guestbook(child, results):
 
     ok2, detail2 = run_check(
         child, "guestbook row independently verified via sqlite3 CLI",
-        "sqlite3 -separator '|' /tmp/guestbook.db "
+        # -list is REQUIRED: sqlite 3.53's CLI defaults to "box" mode (a
+        # UTF-8 ╭──┬──╮ table) when stdout is a tty — and the boot-test shell
+        # IS a tty — so -separator alone (which only applies to list mode) is
+        # ignored and the row prints as box art, not "Ada|Hello from 1996".
+        # The guestbook.cgi's own query pipes sqlite3 (not a tty) so it gets
+        # list mode implicitly; here we force it.
+        "sqlite3 -list -separator '|' /tmp/guestbook.db "
         "\"select name, message from guestbook order by id desc limit 1;\"",
         contains("Ada|Hello from 1996"),
     )
