@@ -230,6 +230,13 @@ app-misc/sl
 # rustup nightly + -Zbuild-std (see Dockerfile + configs/overlay/games-roguelike/rl144).
 games-roguelike/rl144
 
+# GUI — the X server (SP-GUI G1). TinyX/kdrive Xfbdev: static, framebuffer-native,
+# zero-dlopen, built over vesafb. Overlay ebuild pins the tinyx commit and pulls
+# its server-side X libs (xorg-proto, libXfont v1, libfontenc, xtrans) as DEPENDs
+# — they are NOT listed here (only the server is a world member). Bitmap-only, no
+# freetype/fontconfig anywhere. Clients (dwm/st/dmenu) land in later milestones.
+x11-base/monolith-xserver
+
 # Stele — a document-web browser for the 486 (Rust, one static binary, NO
 # JavaScript by construction). Renders straight to /dev/fb0 (backend/fb.rs) with
 # a compiled-in 8x8 bitmap font — needs neither X nor fonts on the disc. Cross-

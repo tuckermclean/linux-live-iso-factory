@@ -416,6 +416,64 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  # SP-GUI G1 Step 3: boots BIOS/ISOLINUX (same i386 pc machine as nicless —
+  # SeaBIOS VBE -> vesafb -> /dev/fb0, no OVMF needed), starts the TinyX
+  # Xfbdev server against /dev/fb0 with ONLY libXfont's built-in fonts, and
+  # proves it painted its default gray-stipple root + cursor via a QEMU HMP
+  # screendump asserted to be non-black. See run_gui in scripts/boot-test.py.
+  gui:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
+
+      - name: Boot test — GUI (Xfbdev on vesafb, BIOS/ISOLINUX)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode gui \
+            --ram-mb 128 \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --gui-screendump output/gui-screendump.ppm \
+            --log-file output/boot-test-gui.log
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-gui-${{ github.run_id }}
+          path: output/boot-test-gui.log
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload framebuffer screendump
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-gui-screendump-${{ github.run_id }}
+          path: output/gui-screendump.ppm
+          retention-days: 14
+          if-no-files-found: warn
+
   # NIC-model matrix: BIOS/ISOLINUX boot with each QEMU NIC model in turn.
   # PCI models (pcnet/rtl8139/tulip/ne2k_pci) assert coldplug via modalias;
   # ne2k_isa has no modalias, so it asserts the `monolith-net probe` path

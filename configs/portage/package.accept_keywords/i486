@@ -12,4 +12,6 @@ games-roguelike/rl144 **
 dev-db/monolith-sqlite **
 dev-lang/monolith-perl **
 app-misc/monolith-base **
+x11-libs/libXfont **
+x11-base/monolith-xserver **
 www-client/stele **
