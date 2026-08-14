@@ -101,7 +101,9 @@ allowlist:
   # perl + CGI.pm + the sqlite3 CLI LAMP-invariant boot-test fixture (DBI/
   # DBD::SQLite deferred, see configs/portage/world). Hand-installed by
   # build-rootfs.sh from configs/rootfs-overlay/usr/lib/cgi-bin/. See
-  # scripts/boot-test.py smoke_guestbook.
+  # scripts/boot-test.py smoke_guestbook. The dir itself is `install -D`-created
+  # and thus also unowned until the planned monolith-base ebuild owns it.
+  - usr/lib/cgi-bin
   - usr/lib/cgi-bin/guestbook.cgi
 
   # ── Prompt customisation ─────────────────────────────────────────────────────
