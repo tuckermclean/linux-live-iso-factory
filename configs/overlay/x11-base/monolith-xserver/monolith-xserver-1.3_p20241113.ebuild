@@ -3,7 +3,7 @@
 
 EAPI=8
 
-inherit autotools
+inherit autotools flag-o-matic
 
 DESCRIPTION="TinyX/kdrive Xfbdev — static, framebuffer-native, zero-dlopen X server"
 HOMEPAGE="https://github.com/tinycorelinux/tinyx"
@@ -57,18 +57,30 @@ src_prepare() {
 	default
 	eautoreconf
 
-	# tinyx's mi/miscrinit.c unconditionally does `#define _XSHM_SERVER_;
-	# #include <X11/extensions/XShm.h>` (old-kdrive MIT-SHM pattern). XShm.h
-	# ships in x11-libs/libXext — a CLIENT lib whose dep chain is libX11+libxcb
-	# (the entire G2 stack). We refuse to drag the client stack into the SERVER
-	# build for one header: XShm.h's only two includes (X11/Xfuncproto.h and
-	# X11/extensions/shm.h) both come from x11-base/xorg-proto, already a DEPEND,
-	# and the whole client-side body is behind `#ifndef _XSHM_SERVER_`. So vendor
-	# just the header (MIT, from libXext 1.3.7 — see files/XShm.h) onto the
-	# -I../include path that mi/ already compiles against. This is why libXext is
-	# deliberately NOT a DEPEND here.
+	# Vendored server-side X headers. tinyx (2007-era kdrive) reuses a handful
+	# of CLIENT headers that ::gentoo ships only in libX11/libXext/libXau/
+	# libXdmcp — the client stack the GUI spec keeps OUT of the minimal server.
+	# Each is a self-contained struct/proto header whose sub-includes ALL resolve
+	# from x11-base/xorg-proto (already a DEPEND); the server supplies the
+	# implementations itself (or a `_*_SERVER_` guard blanks the client body), so
+	# NOT ONE client library is linked (verified by the readelf check below and
+	# by tinyx PKG_CHECK-ing only xfont/fontenc). We drop them on the -I../include
+	# search path the tree already compiles with (belt-and-suspenders global -I in
+	# src_configure). MIT-licensed, from libXext 1.3.7 / libXau 1.0.11 /
+	# libXdmcp 1.1.5; XTest.h is a server-mode stub (see files/XTest.h).
+	#   extensions/XShm.h  (libXext)  — mi/miscrinit.c    (#define _XSHM_SERVER_)
+	#   extensions/sync.h  (libXext)  — Xext/sync.c
+	#   extensions/XTest.h (stub)     — mi/miinitext.c    (#define _XTEST_SERVER_)
+	#   Xauth.h            (libXau)   — os/auth.c, xauembed.c (xauembed = embedded
+	#                                   Xau impl, so header-only, no libXau link)
+	#   Xdmcp.h            (libXdmcp) — os/osdep.h (header-only; XDMCP disabled →
+	#                                   xdmauth.c body is #ifdef HASXDMAUTH → no link)
+	# Xpoll.h is deliberately absent: x11-base/xorg-proto generates and installs
+	# it from Xpoll.h.in, so os/ finds it in the sysroot already.
 	mkdir -p include/X11/extensions || die
-	cp "${FILESDIR}/XShm.h" include/X11/extensions/XShm.h || die
+	cp "${FILESDIR}"/XShm.h "${FILESDIR}"/sync.h "${FILESDIR}"/XTest.h \
+		include/X11/extensions/ || die
+	cp "${FILESDIR}"/Xauth.h "${FILESDIR}"/Xdmcp.h include/X11/ || die
 }
 
 src_configure() {
@@ -79,6 +91,16 @@ src_configure() {
 	#   proto/lib deps; --disable-xdmcp drops the libXdmcp link entirely).
 	# --disable-install-setuid: this rock boots as root; no setuid Xfbdev.
 	# Static / -no-pie / --disable-shared arrive via env/static.conf (*/*).
+	#
+	# tinyx is 2007-era kdrive C. Modern GCC (14+) promotes several K&R-isms
+	# from warnings to HARD ERRORS by default — independent of -Werror (we
+	# already pass --disable-werror). Demote exactly those back to warnings so
+	# the ancient-but-correct code compiles. The global -I keeps the vendored
+	# server headers (staged in src_prepare) on the search path for every subdir
+	# regardless of that subdir's own -I flags.
+	append-flags -Wno-error=implicit-int -Wno-error=implicit-function-declaration
+	append-flags -Wno-error=int-conversion -Wno-error=incompatible-pointer-types
+	append-cppflags -I"${S}/include"
 	econf \
 		--enable-kdrive \
 		--disable-xvesa \
