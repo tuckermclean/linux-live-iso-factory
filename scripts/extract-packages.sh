@@ -87,6 +87,24 @@ ${EMERGE_CMD} \
     --verbose \
     "${ATOMS[@]}"
 
+# Belt-and-suspenders for the nondeterministic acct-user/dnsmasq UID collision.
+# The sysroot is pre-populated with users (e.g. rl144's gamestat), so
+# acct-user/dnsmasq can lose an auto-assigned-UID race and DIE at its pre-merge
+# check; --keep-going above then silently DROPS its dependent net-dns/dnsmasq,
+# shipping a dnsmasq-less ISO (boot-test/nat-router fails "dnsmasq: not found").
+# The dnsmasq binary itself always builds fine and runs as `nobody` at runtime
+# (monolith-router default), so its system user is unused here. If dnsmasq got
+# dropped, force-install just the binary (--nodeps sidesteps the acct-user dep).
+# Gated on the binary being absent so this is a no-op on the common (green) path.
+DNSMASQ_BIN="/usr/${CROSS_TARGET}/usr/sbin/dnsmasq"
+if [[ ! -x "${DNSMASQ_BIN}" ]]; then
+    echo "==> net-dns/dnsmasq absent after main emerge (acct-user/dnsmasq UID race?) — force-installing the binary"
+    ${EMERGE_CMD} --usepkgonly --nodeps --oneshot --verbose net-dns/dnsmasq || true
+    [[ -x "${DNSMASQ_BIN}" ]] \
+        && echo "==> dnsmasq binary recovered via --nodeps force-install" \
+        || echo "==> WARNING: dnsmasq still absent after force-install — nat-router will fail"
+fi
+
 echo ""
 echo "==> Populating ${SYSROOT_DIR} from live sysroot"
 rm -rf "${SYSROOT_DIR}"
