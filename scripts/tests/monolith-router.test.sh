@@ -3,7 +3,7 @@
 # the ip_forward file — no root, no real netfilter.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
-SCRIPT="$HERE/../../configs/rootfs-overlay/usr/sbin/monolith-router"
+SCRIPT="$HERE/../../configs/overlay/app-misc/monolith-base/files/monolith-router"
 fails=0
 has() { if printf '%s' "$2" | grep -qF "$1"; then echo "  ok: $3"; else echo "  FAIL: $3 (wanted '$1')"; echo "$2"; fails=$((fails+1)); fi; }
 

@@ -76,38 +76,12 @@ allowlist:
   - etc/monolith-release
   - etc/os-release
 
-  # ── Advisory scripts (pending proper ebuilds) ───────────────────────────────
-  - usr/sbin/monolith-advisory-check
-  - etc/profile.d/monolith-advisory.sh
-
-  # ── Network helper (SP1) — pending monolith-base ebuild ─────────────────────
-  # monolith-net wakes pre-Plug-and-Play ISA NICs that emit no modalias; hand-
-  # installed by build-rootfs.sh from configs/rootfs-overlay/usr/bin/. Grouped
-  # with etc/init.d/S35netprobe above under the SP-base ownership task.
-  - usr/bin/monolith-net
-
-  # ── NAT router helper (SP2) — pending monolith-base ebuild ──────────────────
-  - usr/sbin/monolith-router
-
-  # ── Lazy console shell — agetty auto-login target; keeps bash off idle
-  #    consoles (RAM). Hand-installed by build-rootfs.sh. Pending monolith-base.
-  - usr/sbin/monolith-console
-
-  # POSIX-sh `which` — GNU sys-apps/which doesn't build on musl and busybox
-  # isn't in the rootfs. Hand-installed by build-rootfs.sh. Pending monolith-base.
-  - usr/bin/which
-
-  # ── Guestbook CGI fixture (SP5 P4) — pending monolith-base ebuild ───────────
-  # perl + CGI.pm + the sqlite3 CLI LAMP-invariant boot-test fixture (DBI/
-  # DBD::SQLite deferred, see configs/portage/world). Hand-installed by
-  # build-rootfs.sh from configs/rootfs-overlay/usr/lib/cgi-bin/. See
-  # scripts/boot-test.py smoke_guestbook. The dir itself is `install -D`-created
-  # and thus also unowned until the planned monolith-base ebuild owns it.
-  - usr/lib/cgi-bin
-  - usr/lib/cgi-bin/guestbook.cgi
-
-  # ── Prompt customisation ─────────────────────────────────────────────────────
-  - etc/bash/bashrc.d/99-monolith-square.bash
+  # NOTE: monolith-advisory-check, monolith-advisory.sh, monolith-net,
+  # monolith-router, monolith-console, /usr/bin/which, the guestbook.cgi
+  # fixture (+ its usr/lib/cgi-bin dir), and the prompt square are now owned
+  # by app-misc/monolith-base (see configs/overlay/app-misc/monolith-base) —
+  # removed from this allowlist. Pillar 4 sees them via the package's VDB
+  # CONTENTS instead.
 
   # ── Root home — bash skel files copied by build-rootfs.sh ───────────────────
   - root/.bash_profile

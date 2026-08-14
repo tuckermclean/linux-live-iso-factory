@@ -3,7 +3,7 @@
 # script at a fake sysfs so no real hardware or root is required.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
-SCRIPT="$HERE/../../configs/rootfs-overlay/usr/bin/monolith-net"
+SCRIPT="$HERE/../../configs/overlay/app-misc/monolith-base/files/monolith-net"
 fails=0
 check() { # desc, expected_substr, actual
     if printf '%s' "$3" | grep -qF "$2"; then echo "  ok: $1"

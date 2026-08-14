@@ -24,7 +24,7 @@ jobs:
         run: |
           set -euo pipefail
           rc=0
-          for f in scripts/*.sh scripts/tests/*.sh configs/rootfs-overlay/usr/bin/monolith-net configs/rootfs-overlay/usr/sbin/monolith-router; do
+          for f in scripts/*.sh scripts/tests/*.sh configs/overlay/app-misc/monolith-base/files/monolith-net configs/overlay/app-misc/monolith-base/files/monolith-router; do
             bash -n "$f" || { echo "::error file=$f::bash -n failed"; rc=1; }
           done
           exit $rc
@@ -56,7 +56,7 @@ jobs:
           ./actionlint -color -shellcheck=
 
       - name: Shell lint (shellcheck, errors only)
-        run: shellcheck --severity=error scripts/*.sh scripts/tests/*.sh configs/rootfs-overlay/usr/bin/monolith-net configs/rootfs-overlay/usr/sbin/monolith-router
+        run: shellcheck --severity=error scripts/*.sh scripts/tests/*.sh configs/overlay/app-misc/monolith-base/files/monolith-net configs/overlay/app-misc/monolith-base/files/monolith-router
 
       - name: Shell unit tests (scripts/tests/*.sh)
         run: |
