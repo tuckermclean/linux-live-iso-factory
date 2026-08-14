@@ -101,6 +101,17 @@ src_configure() {
 	append-flags -Wno-error=implicit-int -Wno-error=implicit-function-declaration
 	append-flags -Wno-error=int-conversion -Wno-error=incompatible-pointer-types
 	append-cppflags -I"${S}/include"
+
+	# -DKDRIVESERVER: tinyx's shipped include/dix-config.h.in is STALE — it has
+	# no `#undef KDRIVESERVER` placeholder, so configure's AC_DEFINE(KDRIVESERVER)
+	# under --enable-kdrive silently never lands in dix-config.h (autoheader
+	# doesn't regenerate it here). Without it, dix/dixfonts.c compiles out
+	# `BuiltinRegisterFpeFunctions()`, so the libXfont "built-ins" FPE is never
+	# registered — and the on-disk FontFile FPE then mis-claims the "built-ins"
+	# path and dies "could not open default font 'fixed'". Force the define so
+	# Xfbdev can start fontless via `-fp built-ins` (SP-GUI G1 Step 3). -r1 is a
+	# pure revbump to rebuild against this (Step-2's binpkg predates the fix).
+	append-cppflags -DKDRIVESERVER
 	econf \
 		--enable-kdrive \
 		--disable-xvesa \
