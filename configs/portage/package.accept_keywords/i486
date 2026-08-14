@@ -12,3 +12,4 @@ games-roguelike/rl144 **
 dev-db/monolith-sqlite **
 dev-lang/monolith-perl **
 app-misc/monolith-base **
+www-client/stele **

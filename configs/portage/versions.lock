@@ -77,6 +77,9 @@ app-misc/figlet:2.2.5-r2:0
 app-misc/cmatrix:2.0-r6:0
 app-misc/sl:5.02-r1:0
 games-roguelike/rl144:0.1.0_p20260805:0
+# Stele browser — pinned to a HEAD commit, REPINNED each build while it churns
+# (bump the ebuild COMMIT+_pDATE+Manifest and this line together).
+www-client/stele:0.1.0_p20260814:0
 sys-apps/kmod:34.2:0
 
 # perl-cross is a companion build-time tarball (arsv/perl-cross), not a

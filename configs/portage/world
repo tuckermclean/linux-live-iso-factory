@@ -230,6 +230,13 @@ app-misc/sl
 # rustup nightly + -Zbuild-std (see Dockerfile + configs/overlay/games-roguelike/rl144).
 games-roguelike/rl144
 
+# Stele — a document-web browser for the 486 (Rust, one static binary, NO
+# JavaScript by construction). Renders straight to /dev/fb0 (backend/fb.rs) with
+# a compiled-in 8x8 bitmap font — needs neither X nor fonts on the disc. Cross-
+# built via the overlay ebuild with rustup nightly + -Zbuild-std (Dockerfile +
+# configs/overlay/www-client/stele). Actively developed → REPIN each build.
+www-client/stele
+
 # nethack — pinned to the last 3.6.x release. 5.0.0 (current ::gentoo head)
 # requires USE=lua (REQUIRED_USE on lua_single_target_*) and restructured its
 # util/Makefile build-variable names (MYCFLAGS/MYCXXFLAGS vs. this repo's
