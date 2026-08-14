@@ -1324,7 +1324,9 @@ def run_gui(child, args):
     wait_for_shell(child)
 
     log("Starting Xfbdev in the background on /dev/fb0 (built-in fonts only, no font files on disc)")
-    child.sendline("Xfbdev :0 -fbdev /dev/fb0 -fp built-ins >/tmp/xfbdev.log 2>&1 &")
+    # TinyX/kdrive Xfbdev takes `-fb <dev>` (defaults to /dev/fb0); `-fbdev` is a
+    # DIFFERENT server's flag and makes Xfbdev die "Unrecognized option: -fbdev".
+    child.sendline("Xfbdev :0 -fb /dev/fb0 -fp built-ins >/tmp/xfbdev.log 2>&1 &")
     time.sleep(1)  # let the shell fork the background job before driving more commands over serial
     # Give Xfbdev a few seconds to open the framebuffer, init built-in fonts,
     # and paint its default root + cursor.
