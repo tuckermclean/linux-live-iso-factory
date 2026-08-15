@@ -51,8 +51,13 @@ src_compile() {
 	# emits the full transitive set (-lX11 -lxcb -lXau -lXdmcp -lXext ...).
 	# Only X11/Xext + their deps — no -lXft, no fontconfig/freetype anywhere.
 	# +openpty lives in musl libc but keep -lutil (empty musl compat stub).
+	# st's config.mk hardcodes `CC = c99`, which resolves to the HOST compiler
+	# (x86-64 default + -fcf-protection) and ignores the cross toolchain — it
+	# dies "CPU does not support x86-64" on the -march=i486 CFLAGS. Force the
+	# cross CC (i486-linux-musl-gcc) so st builds for the target.
 	local pc="$(tc-getPKG_CONFIG)"
 	emake \
+		CC="$(tc-getCC)" \
 		INCS="$(${pc} --cflags x11 xext)" \
 		LIBS="$(${pc} --static --libs x11 xext) -lutil"
 }
