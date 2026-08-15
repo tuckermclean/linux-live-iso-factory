@@ -237,6 +237,27 @@ games-roguelike/rl144
 # freetype/fontconfig anywhere. Clients (dwm/st/dmenu) land in later milestones.
 x11-base/monolith-xserver
 
+# GUI — the X CLIENT stack (SP-GUI G2). The §2 client libs, cross+static, and
+# NOTHING ELSE: xorg-proto (headers) + libxcb (+xcb-proto BDEPEND) + libX11 +
+# libXext. dwm/st/dmenu link ONLY these — no Xt/Xaw/Xmu/ICE/SM, no Xft (bitmap
+# core fonts only). libxcb/libXau/libXdmcp are pulled transitively by libX11 but
+# listed here per spec §2 for intent. Each distinct client statically bakes its
+# own libX11 (~1MB) — fewer resident clients = less RAM.
+x11-base/xorg-proto
+x11-libs/libxcb
+x11-libs/libX11
+x11-libs/libXext
+
+# GUI — st, the suckless terminal (first §2 client). Ported off Xft/
+# fontconfig/freetype entirely onto core X11 bitmap fonts (XLoadQueryFont /
+# XChar2b / XDrawString16) — see configs/overlay/x11-terms/monolith-st and its
+# files/st-0.9.2-core-fonts.patch. Links only libX11 + libXext. Uses the font
+# name "fixed" — the libXfont builtin 6x13 the Xfbdev server already carries
+# (-fp built-ins, no font files on disc, iso8859-1/Latin-1; ample for an ASCII
+# TTY). A Unicode iso10646-1 fixed (media-fonts/font-misc-misc) + terminus are
+# later polish; NO font package is needed for `startx → a term`.
+x11-terms/monolith-st
+
 # Stele — a document-web browser for the 486 (Rust, one static binary, NO
 # JavaScript by construction). Renders straight to /dev/fb0 (backend/fb.rs) with
 # a compiled-in 8x8 bitmap font — needs neither X nor fonts on the disc. Cross-

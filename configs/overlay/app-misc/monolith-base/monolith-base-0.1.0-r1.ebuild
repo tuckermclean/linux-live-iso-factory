@@ -25,6 +25,10 @@ src_install() {
 	exeinto /usr/bin
 	doexe "${FILESDIR}/monolith-net"
 	doexe "${FILESDIR}/which"
+	# startx (SP-GUI G2): brings up Xfbdev (built-in fonts) + a terminal (st) on
+	# the framebuffer. Hand-authored → owned here so it isn't an unowned rootfs
+	# file (attestation Pillar 4). See files/startx.
+	doexe "${FILESDIR}/startx"
 
 	# /usr/sbin — monolith-router (SP2/SP3 NAT + dnsmasq DHCP/DNS helper,
 	# unit-tested: scripts/tests/monolith-router.test.sh), monolith-console

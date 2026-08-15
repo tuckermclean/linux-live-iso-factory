@@ -1303,17 +1303,16 @@ def run_nicless(child, args):
 
 def run_gui(child, args):
     """
-    SP-GUI G1 Step 3: boot via BIOS/ISOLINUX (same milestone sequence as
-    run_nicless), start the TinyX Xfbdev server in the background on the
-    booted shell against the vesafb framebuffer with ONLY the libXfont
-    built-in fonts (`-fp built-ins`, no font files on disc), then prove two
-    things: (1) the server is alive with no fatal error in its own log, and
-    (2) a QEMU-monitor screendump of the framebuffer it's driving is not
-    uniformly black — i.e. it actually painted its default gray-stipple root
-    + cursor, not just opened the device and hung/crashed silently.
+    SP-GUI G2: boot via BIOS/ISOLINUX (same milestone sequence as run_nicless)
+    into a graphical vesafb framebuffer, then run the user-facing `startx`
+    (app-misc/monolith-base) — which brings up the TinyX Xfbdev server (libXfont
+    built-in fonts, `-fp built-ins`, no font files on disc) plus the de-Xft'd
+    core-font terminal `st` — and prove two things: (1) both Xfbdev AND st are
+    alive with no fatal error in the X log, and (2) a QEMU-monitor screendump of
+    the framebuffer is not uniformly black — i.e. a terminal actually rendered.
 
-    No X client is involved anywhere in this check — the server paints its
-    own root window on startup with no client connected.
+    (G1 Step 3 originally screendumped the bare server root with no client;
+    this now exercises the whole server+client `startx → a term` path.)
     """
     # "serial" gives console=ttyS0 (pexpect), and appending "vga=788" adds an
     # 800x600x16 VESA mode so the kernel's vesafb claims a GRAPHICAL /dev/fb0
@@ -1338,28 +1337,31 @@ def run_gui(child, args):
         exit_code_only(), timeout=15,
     )
 
-    log("Starting Xfbdev in the background on /dev/fb0 (built-in fonts only, no font files on disc)")
-    # TinyX/kdrive Xfbdev takes `-fb <dev>` (defaults to /dev/fb0); `-fbdev` is a
-    # DIFFERENT server's flag and makes Xfbdev die "Unrecognized option: -fbdev".
-    child.sendline("Xfbdev :0 -fb /dev/fb0 -fp built-ins >/tmp/xfbdev.log 2>&1 &")
-    time.sleep(1)  # let the shell fork the background job before driving more commands over serial
-    # Give Xfbdev a few seconds to open the framebuffer, init built-in fonts,
-    # and paint its default root + cursor.
-    run_check(child, "settle after backgrounding Xfbdev", "sleep 4", exit_code_only(), timeout=15)
+    log("Running `startx` (Xfbdev + st terminal) on the framebuffer")
+    # startx (app-misc/monolith-base): stops gpm, launches Xfbdev with the
+    # libXfont built-in fonts (-fp built-ins, no font files on disc), waits for
+    # :0, then launches st. This exercises the whole user-facing `startx → a
+    # term` path — the server AND the de-Xft'd core-font terminal.
+    child.sendline("startx >/tmp/startx.log 2>&1 &")
+    time.sleep(1)  # let the shell fork the background job before driving serial
+    # startx's own loop waits for Xfbdev to listen (~2-4s) then execs st; give
+    # the terminal time to connect, load the 'fixed' built-in font, and paint.
+    run_check(child, "settle after backgrounding startx", "sleep 8", exit_code_only(), timeout=20)
 
-    # Dump the log to the serial console unconditionally (exit code ignored)
-    # so a failure is debuggable straight from the CI serial-log artifact,
-    # without needing a separate mechanism to pull /tmp/xfbdev.log off the guest.
-    run_check(child, "dump /tmp/xfbdev.log (debug)", "cat /tmp/xfbdev.log 2>&1; true", exit_code_only(), timeout=15)
+    # Dump both logs to serial for CI debuggability (a failure here is otherwise
+    # opaque — the framebuffer isn't on the serial console).
+    run_check(child, "dump Xfbdev + startx logs (debug)",
+              "echo '--- Xfbdev.log ---'; cat /tmp/Xfbdev.log 2>&1; "
+              "echo '--- startx.log ---'; cat /tmp/startx.log 2>&1; true",
+              exit_code_only(), timeout=15)
 
-    # A server that failed to open the framebuffer or the built-in fonts
-    # exits immediately, so "is the process still alive" is the most robust
-    # positive signal — corroborated by a negative scan of the log for the
-    # error strings Xfbdev/libXfont actually emit on those failure paths.
+    # Both the server AND the terminal must be alive: a server that couldn't
+    # open the fb/fonts, or an st that couldn't connect or load its font, exits
+    # immediately. Corroborate with a negative scan of the X log for fatals.
     server_up = run_check(
-        child, "Xfbdev process alive with no fatal error logged",
-        "pgrep -x Xfbdev >/dev/null 2>&1 && "
-        "! grep -Eq 'Fatal|could not open default font|giving up' /tmp/xfbdev.log",
+        child, "startx: Xfbdev + st both alive, no fatal X error",
+        "pgrep -x Xfbdev >/dev/null 2>&1 && pgrep -x st >/dev/null 2>&1 && "
+        "! grep -Eq 'Fatal|could not open default font|giving up' /tmp/Xfbdev.log",
         exit_code_only(), timeout=15,
     )
 
@@ -1373,8 +1375,8 @@ def run_gui(child, args):
         not_black_ok, not_black_detail = False, f"screendump failed: {dump_detail}"
 
     results = [
-        ("Xfbdev starts and stays alive on /dev/fb0", *server_up),
-        ("framebuffer screendump is not uniformly black", not_black_ok, not_black_detail),
+        ("startx brings up Xfbdev + st on the framebuffer", *server_up),
+        ("framebuffer screendump is not uniformly black (a terminal is drawn)", not_black_ok, not_black_detail),
     ]
     ok = report_results(results)
     poweroff_and_wait(child)

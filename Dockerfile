@@ -141,6 +141,18 @@ RUN emerge dev-python/pyyaml && \
     done && \
     rm -rf /var/cache/distfiles/*
 
+# HOST build tool for the X client stack (SP-GUI G2). libX11 -> libxcb builds
+# with python-any-r1: libxcb's BDEPEND is x11-base/xcb-proto[python], a
+# BUILD-TIME-ONLY codegen tool (xcbgen emits C from XML). Like pkg-config/pyyaml
+# above, it must be present in the builder image (host /) so the cross-emerge
+# satisfies the BDEPEND host-side; otherwise crossdev tries to build it INTO the
+# i486 target, which drags target dev-lang/python -> app-arch/zstd (masked,
+# cross-broken) and fails. Installed with the host's own python (stage3 default
+# python3_14) — nothing python reaches the i486 disc (xcb-proto never enters the
+# target sysroot). Keeps "Python stays out" of the RUNTIME image intact.
+RUN emerge x11-base/xcb-proto && \
+    rm -rf /var/cache/distfiles/*
+
 # Rust toolchain for building games-roguelike/rl144 — a 486-class Rust roguelike.
 # rl144 needs nightly + -Zbuild-std to compile Rust's std for the custom
 # i486-unknown-linux-musl target (i486 has no prebuilt Rust std). Installed via
