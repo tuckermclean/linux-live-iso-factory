@@ -14,4 +14,5 @@ dev-lang/monolith-perl **
 app-misc/monolith-base **
 x11-libs/libXfont **
 x11-base/monolith-xserver **
+x11-base/xcb-proto **
 www-client/stele **
