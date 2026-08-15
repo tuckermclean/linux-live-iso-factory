@@ -41,6 +41,18 @@ BDEPEND="virtual/pkgconfig"
 
 PATCHES=( "${FILESDIR}/st-0.9.2-core-fonts.patch" )
 
+src_prepare() {
+	default
+	# Point st at the font NAME "fixed" — the libXfont builtin 6x13 the Xfbdev
+	# server already carries via `-fp built-ins` (no font files on the disc).
+	# The patch defaults to an iso10646-1 XLFD that only media-fonts/font-misc-misc
+	# provides; "fixed" (iso8859-1/Latin-1) needs no font package and is plenty
+	# for an ASCII/Latin TTY. -r1 revbump busts the -r0 binpkg cache.
+	sed -i 's|^static char \*font = .*|static char *font = "fixed";|' config.def.h \
+		|| die "failed to repoint st font to the builtin 'fixed'"
+	grep -q 'char \*font = "fixed";' config.def.h || die "font sed did not take"
+}
+
 src_compile() {
 	# config.mk's X11INC/X11LIB default to legacy /usr/X11R6/{include,lib}
 	# paths that don't exist in this Gentoo cross sysroot. Drive the flags from
