@@ -248,6 +248,17 @@ x11-libs/libxcb
 x11-libs/libX11
 x11-libs/libXext
 
+# GUI — st, the suckless terminal (first §2 client). Ported off Xft/
+# fontconfig/freetype entirely onto core X11 bitmap fonts (XLoadQueryFont /
+# XDrawImageString16) — see configs/overlay/x11-terms/monolith-st and its
+# files/st-0.9.2-core-fonts.patch. Links only libX11 + libXext, per the G2
+# client-stack posture above. font-misc-misc supplies the default XLFD
+# ("-misc-fixed-medium-r-normal--13-120-75-75-c-70-iso10646-1", 6x13 "fixed"
+# in iso10646-1/Unicode) at runtime — st itself does not need it to build.
+x11-terms/monolith-st
+# media-fonts/font-misc-misc  # DEFERRED: added back after st's de-Xft compile is
+# validated in isolation (runtime font only; separate cross concern — mkfontdir).
+
 # Stele — a document-web browser for the 486 (Rust, one static binary, NO
 # JavaScript by construction). Renders straight to /dev/fb0 (backend/fb.rs) with
 # a compiled-in 8x8 bitmap font — needs neither X nor fonts on the disc. Cross-
