@@ -88,4 +88,34 @@ OUT="$(printf '%s\n' "$LISTING6" | bash "$SCRIPT" prune-predicate 2>/dev/null)"
 check "malformed entry never appears in the delete list" KEEP "not-a-valid-path"
 check "valid sibling entry still processed normally"      KEEP "net-dns/dnsmasq/dnsmasq-2.90-6.gpkg.tar"
 
+# --- pull-is-benign-miss: classify an `oras pull` stderr capture ---
+# benign() / genuine() feed a fixture error string into the pull-is-benign-miss
+# subcommand and assert its exit code (0 = benign/fail-open, 1 = genuine error).
+benign() {
+    printf '%s' "$1" | bash "$SCRIPT" pull-is-benign-miss
+    if [ $? -ne 0 ]; then
+        echo "FAIL: expected benign (fail-open) classification for: $1"
+        fails=$((fails + 1))
+    fi
+}
+genuine() {
+    printf '%s' "$1" | bash "$SCRIPT" pull-is-benign-miss
+    if [ $? -eq 0 ]; then
+        echo "FAIL: expected genuine-error classification for: $1"
+        fails=$((fails + 1))
+    fi
+}
+
+benign  'Error: not found'
+benign  'Error response from registry: manifest unknown'
+benign  'GET https://ghcr.io/v2/foo/monolith-binpkgs/manifests/20260818: name unknown'
+benign  'server message: 404 page not found'
+# GHCR's real bootstrap quirk: a never-pushed repository 401s, not 404s.
+benign  'Error: GET https://ghcr.io/v2/foo/monolith-binpkgs/manifests/20260818: unauthorized: authentication required'
+benign  'Error: failed to resolve reference: denied: requested access to the resource is denied'
+benign  'Error response from registry: 401 Unauthorized'
+
+genuine 'dial tcp: connection refused'
+genuine 'context deadline exceeded'
+
 [ "$fails" -eq 0 ] && echo ALL PASS || { echo "$fails FAILED"; exit 1; }

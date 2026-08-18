@@ -94,6 +94,9 @@ Commands:
   prune  [pkgdir] [versions-lock]        delete superseded gpkgs, invalidate the Packages index
   prune-predicate [versions-lock]        pure function: reads a gpkg path listing on stdin,
                                           prints the paths that would be deleted (testing hook)
+  pull-is-benign-miss                    pure function: reads an `oras pull` stderr capture on
+                                          stdin, exits 0 if it's a benign "nothing published yet"
+                                          miss (fail-open) or 1 for a genuine error (testing hook)
 
 Config defaults come from env: GHCR_OWNER, BUILD_EPOCH, PKGDIR, VERSIONS_LOCK, BINPKG_TARBALL.
 EOF
@@ -316,6 +319,25 @@ prune_predicate() {
     done
 }
 
+# --- pull error classification (pure) -----------------------------------------
+
+# _bp_pull_is_benign_miss ERR_TEXT — pure predicate: exit 0 if ERR_TEXT (an
+# `oras pull` stderr capture) represents a benign "nothing published for this
+# epoch yet" condition that `pull` should fail OPEN on (warn + empty PKGDIR +
+# exit 0); exit 1 for a genuine error that should propagate non-zero.
+#
+# GHCR's well-known quirk: pulling a tag from a package repository that has
+# NEVER been pushed to returns 401 Unauthorized / "denied", NOT 404 — and
+# that unauthorized/denied response is exactly the first-build-of-a-new-epoch
+# bootstrap this fail-open path exists to protect. So unauthorized/denied/401
+# must classify as benign here alongside the more conventional
+# not-found/manifest-unknown/name-unknown/404 tokens, or the very first CI
+# pull of a brand new epoch would hit the genuine-error branch instead and
+# break the "compile from source on an empty store" guarantee.
+_bp_pull_is_benign_miss() {
+    printf '%s' "$1" | grep -qiE 'not found|manifest unknown|name unknown|404|unauthorized|denied|401'
+}
+
 # --- filesystem-facing subcommands -------------------------------------------
 
 cmd_prune() {
@@ -417,7 +439,7 @@ cmd_pull() {
     local err rc
     err="$(oras pull "$ref" -o "$workdir" 2>&1)"; rc=$?
     if [[ $rc -ne 0 ]]; then
-        if echo "$err" | grep -qiE 'not found|manifest unknown|name unknown|404'; then
+        if _bp_pull_is_benign_miss "$err"; then
             echo "binpkg-store: pull: no store for epoch ${epoch} yet (${ref}) — starting from an empty cache (fail-open, build compiles from source)"
             return 0
         fi
@@ -450,5 +472,6 @@ case "$CMD" in
     pull)             cmd_pull "$@" ;;
     prune)            cmd_prune "$@" ;;
     prune-predicate)  prune_predicate "$@" ;;
+    pull-is-benign-miss) _bp_pull_is_benign_miss "$(cat)" ;;
     *)                usage; exit 2 ;;
 esac
