@@ -47,17 +47,28 @@ src_prepare() {
 src_compile() {
 	# config.mk defaults X11INC/X11LIB to legacy /usr/X11R6 paths absent from
 	# this cross sysroot and hard-links -lXft -lfontconfig -lXinerama. Drive the
-	# flags from the CROSS pkg-config instead, X11-only. `--static` is required:
-	# this rootfs links everything static (env/static.conf */* → -static) and a
-	# static libX11.a does NOT auto-pull its deps — --static emits the full
-	# transitive set (-lX11 -lxcb -lXau -lXdmcp). XINERAMAFLAGS= drops -DXINERAMA
-	# (no libXinerama on the disc). CC: the Makefile hardcodes `cc` (the HOST
-	# x86-64 compiler); force the cross toolchain so dwm builds for i486.
+	# flags from the CROSS pkg-config instead, X11-only. `--static` on pkg-config
+	# is required: a static libX11.a does NOT auto-pull its deps — --static emits
+	# the full transitive set (-lX11 -lxcb -lXau -lXdmcp). XINERAMAFLAGS= drops
+	# -DXINERAMA (no libXinerama on the disc). CC: the Makefile hardcodes `cc`
+	# (the HOST x86-64 compiler); force the cross toolchain so dwm builds i486.
+	#
+	# -r1: FORCE `-static` on the link explicitly. dwm's Makefile hard-assigns
+	# `LDFLAGS = ${LIBS}`, which SHADOWS the environment's injected -static
+	# (env/static.conf */* → -static) — unlike st, whose Makefile references
+	# $(LDFLAGS) and so keeps it. Without this override dwm links DYNAMIC and, on
+	# the all-static rootfs (no ld.so / libc.so), fails at boot as `dwm: not
+	# found` (exit 127) — the GUI boot-test's black screen, and the lone hit in
+	# static-audit's "found 1 dynamically linked". Overriding LDFLAGS on the
+	# emake command line wins over config.mk's assignment; carry the libs in it
+	# too, since the link rule is `${CC} -o dwm ${OBJ} ${LDFLAGS}`.
 	local pc="$(tc-getPKG_CONFIG)"
+	local xlibs="$(${pc} --static --libs x11)"
 	emake \
 		CC="$(tc-getCC)" \
 		INCS="$(${pc} --cflags x11)" \
-		LIBS="$(${pc} --static --libs x11)" \
+		LIBS="${xlibs}" \
+		LDFLAGS="-static ${xlibs}" \
 		XINERAMAFLAGS=
 }
 
