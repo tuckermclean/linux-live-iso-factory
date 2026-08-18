@@ -67,7 +67,19 @@ status=$?
 ERR=$(cat "$ERRFILE"); rm -f "$ERRFILE"
 
 if [ "$status" -ne 0 ]; then
-    if printf '%s' "$ERR" | grep -q '404'; then
+    # GitHub's API deliberately returns 404 for permission-denied/inaccessible
+    # resources too (info-disclosure mitigation), not only for genuinely
+    # missing packages. Treating every 404 as benign would let a scope
+    # regression (bad GH_TOKEN, wrong OWNER, org policy change) silently
+    # no-op the GC forever with no failure signal. So: auth/permission-shaped
+    # errors are a HARD failure first; only a message that actually carries
+    # not-found semantics is swallowed as benign. When in doubt, fail loud —
+    # a noisy GC failure is recoverable, a silently dead GC is not.
+    if printf '%s' "$ERR" | grep -Eqi 'bad credentials|resource not accessible|must have admin|HTTP 403|403 Forbidden'; then
+        echo "ghcr-gc: ABORT — auth/permission error listing package versions (check GH_TOKEN scope / packages:write): $ERR" >&2
+        exit 1
+    fi
+    if printf '%s' "$ERR" | grep -Eqi 'Not Found|Package .* not found|HTTP 404'; then
         echo "ghcr-gc: package $PKG not found (404) — nothing to GC yet." >&2
         exit 0
     fi

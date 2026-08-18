@@ -80,4 +80,60 @@ else
 fi
 rm -rf "$TMPBIN"
 
+# permission/auth error listing versions must be a HARD failure, NOT treated as
+# the benign "not pushed yet" 404 case — a scope regression must not silently
+# no-op the weekly GC forever.
+TMPBIN=$(mktemp -d)
+cat > "$TMPBIN/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+    *"/versions"*) echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1 ;;
+esac
+exit 0
+STUB
+chmod +x "$TMPBIN/gh"
+PATH="$TMPBIN:$PATH" KEEP_EPOCH=20260803 GITHUB_REPOSITORY_OWNER=Owner sh "$HERE/../ghcr-gc.sh" >/dev/null 2>&1
+[ $? -eq 1 ] && echo "  ok: permission-denied listing is a hard failure (exit 1), not silently benign" || { echo "  FAIL: permission-denied listing did not exit 1"; fails=$((fails+1)); }
+rm -rf "$TMPBIN"
+
+# a bare digit-string "404" elsewhere in an error message must NOT be enough
+# to classify as benign not-found (regression guard for the old loose grep)
+TMPBIN=$(mktemp -d)
+cat > "$TMPBIN/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+    *"/versions"*) echo "gh: Bad credentials (HTTP 401), request id 404abc" >&2; exit 1 ;;
+esac
+exit 0
+STUB
+chmod +x "$TMPBIN/gh"
+PATH="$TMPBIN:$PATH" KEEP_EPOCH=20260803 GITHUB_REPOSITORY_OWNER=Owner sh "$HERE/../ghcr-gc.sh" >/dev/null 2>&1
+[ $? -eq 1 ] && echo "  ok: bad-credentials error is a hard failure even with a stray '404' substring" || { echo "  FAIL: bad-credentials error did not exit 1"; fails=$((fails+1)); }
+rm -rf "$TMPBIN"
+
+# positive --apply test: DELETE must actually be called for a condemned
+# old-epoch-only version, and must NOT be called for the current-epoch version.
+TMPBIN=$(mktemp -d)
+MARKER="$TMPBIN/deleted.log"
+cat > "$TMPBIN/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+    *"--method DELETE"*)
+        for a in "$@"; do last="$a"; done
+        echo "$last" >> "$MARKER"
+        exit 0 ;;
+    *"/versions"*) printf '1\t20260803\n9\t20260727\n'; exit 0 ;;
+esac
+exit 0
+STUB
+chmod +x "$TMPBIN/gh"
+PATH="$TMPBIN:$PATH" MARKER="$MARKER" KEEP_EPOCH=20260803 GITHUB_REPOSITORY_OWNER=Owner sh "$HERE/../ghcr-gc.sh" --apply >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$MARKER" ] && grep -q '/versions/9$' "$MARKER" && ! grep -q '/versions/1$' "$MARKER"; then
+    echo "  ok: --apply calls DELETE for the condemned version only"
+else
+    echo "  FAIL: --apply delete-call assertion failed (rc=$rc marker=$(cat "$MARKER" 2>/dev/null))"; fails=$((fails+1))
+fi
+rm -rf "$TMPBIN"
+
 [ "$fails" -eq 0 ] && echo ALL PASS || { echo "$fails FAILED"; exit 1; }
