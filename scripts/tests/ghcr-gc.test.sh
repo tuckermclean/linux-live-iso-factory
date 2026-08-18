@@ -136,4 +136,26 @@ else
 fi
 rm -rf "$TMPBIN"
 
+# empty listing (0 versions, no error) must still exit 0 (fail-open, e.g. the
+# legitimate not-pushed-yet bootstrap case) but must emit a loud NOTE to
+# stderr — this is the masked-permission-miss guard: a GH_TOKEN lacking
+# packages access can surface as a plain empty array rather than 403/404.
+TMPBIN=$(mktemp -d)
+cat > "$TMPBIN/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+    *"/versions"*) printf ''; exit 0 ;;
+esac
+exit 0
+STUB
+chmod +x "$TMPBIN/gh"
+OUT=$(PATH="$TMPBIN:$PATH" KEEP_EPOCH=20260803 GITHUB_REPOSITORY_OWNER=Owner sh "$HERE/../ghcr-gc.sh" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$OUT" | grep -q "0 package versions"; then
+    echo "  ok: empty listing exits 0 and emits the 0-versions NOTE"
+else
+    echo "  FAIL: empty listing should exit 0 with a NOTE (rc=$rc out=$OUT)"; fails=$((fails+1))
+fi
+rm -rf "$TMPBIN"
+
 [ "$fails" -eq 0 ] && echo ALL PASS || { echo "$fails FAILED"; exit 1; }

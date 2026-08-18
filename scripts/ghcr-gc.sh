@@ -103,6 +103,16 @@ if [ "$total" -gt 0 ] && [ "$keep" -eq 0 ]; then
     exit 1
 fi
 
+# A genuinely empty listing (0 versions, no error) is indistinguishable here
+# from a masked permission problem: GITHUB_TOKEN lacking authority over
+# /user/packages/container/... can surface as a plain empty array rather than
+# the 403/404 caught above, so the GC would otherwise exit 0 having silently
+# done nothing, forever, with no signal. Stay fail-open (exit 0 still covers
+# the legitimate not-pushed-yet bootstrap case) but make it loud.
+if [ "$total" -eq 0 ]; then
+    echo "ghcr-gc: NOTE — 0 package versions returned for $PKG (owner=$OWNER). If versions were expected, verify GH_TOKEN has packages access (delete:packages) and OWNER is correct. Run a manual 'gh api /user/packages/container/$PKG/versions' to confirm." >&2
+fi
+
 # Delete pass — same captured listing, so it's consistent with the count above.
 del=0
 while IFS="$TAB" read -r id tags_csv; do

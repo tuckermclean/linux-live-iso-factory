@@ -124,6 +124,22 @@ jobs:
         if: steps.gate.outputs.image-exists != 'true'
         run: make ensure-dirs
 
+      # Warm buildx's LOCAL --cache-from tags before a real build. `make
+      # build-image` (Makefile) passes --cache-from monolith-builder-base-tools
+      # (IMAGE_NAME/BASE_TOOLS_IMAGE) — a purely local docker tag, not the
+      # registry image — so without this pull+retag the base-tools/toolchain
+      # stage rebuilds with zero layer cache on every Dockerfile-changing
+      # build (the only path that reaches here now that the gate above
+      # short-circuits the unchanged case). Gated to the build path so the
+      # gate's short-circuit win on the unchanged case is preserved.
+      - name: Warm docker layer cache from :latest (build path only)
+        if: steps.gate.outputs.image-exists != 'true'
+        run: |
+          docker pull ${{ env.REGISTRY }}/monolith-builder:latest || true
+          docker tag ${{ env.REGISTRY }}/monolith-builder:latest monolith-builder || true
+          docker pull ${{ env.REGISTRY }}/monolith-builder-base-tools:latest || true
+          docker tag ${{ env.REGISTRY }}/monolith-builder-base-tools:latest monolith-builder-base-tools || true
+
       - name: Build image
         if: steps.gate.outputs.image-exists != 'true'
         run: make build-image
