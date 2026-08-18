@@ -372,7 +372,8 @@ jobs:
           if [ -f output/vmlinuz ]; then
             cp output/vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
             aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz
-            aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
+            # server-side copy — no runner egress
+            aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
           fi
 
       - name: Build rootfs
@@ -389,7 +390,8 @@ jobs:
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.squashfs ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs
-            aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
+            # server-side copy — no runner egress
+            aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
           fi
 
       - name: Save initrd to S3
@@ -397,7 +399,8 @@ jobs:
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.initrd ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd
-            aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
+            # server-side copy — no runner egress
+            aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
           fi
 
       - name: Build ISO
@@ -413,7 +416,8 @@ jobs:
         if: env.PUBLISH_LATEST == 'true'
         run: |
           aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.iso
-          aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
+          # server-side copy — no runner egress
+          aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
           echo "==> Uploaded versioned + latest ISO"
 
   # Actually boots the ISO in QEMU (BIOS, UEFI, and toram+eject) and proves it
