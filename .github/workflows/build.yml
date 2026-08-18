@@ -86,7 +86,7 @@ jobs:
       contents: read
       packages: write
     outputs:
-      image-changed: ${{ steps.check-hash.outputs.changed }}
+      image-changed: ${{ steps.gate.outputs.image-exists == 'true' && 'false' || 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -97,58 +97,56 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull existing images for cache
+      # Cheap change-detection: instead of pulling the (multi-GB) builder image
+      # just to inspect a label, ask the registry for the manifest of the exact
+      # tag `make build-image` would produce (`docker manifest inspect` fetches
+      # only the manifest, not the layers). If the Dockerfile didn't change AND
+      # that tag already exists, the image we'd build is byte-identical to what's
+      # already published, so we can skip straight past ensure-dirs/build/push.
+      # TAG comes from `make print-registry-tag` (not re-derived here) so the
+      # hash logic has exactly one source of truth: Makefile's REGISTRY_TAG.
+      - name: Gate on whether the image already exists
+        id: gate
         run: |
-          docker pull ${{ env.REGISTRY }}/monolith-builder:latest || true
-          docker tag ${{ env.REGISTRY }}/monolith-builder:latest monolith-builder || true
-          docker pull ${{ env.REGISTRY }}/monolith-builder-base-tools:latest || true
-          docker tag ${{ env.REGISTRY }}/monolith-builder-base-tools:latest monolith-builder-base-tools || true
+          set -euo pipefail
+          TAG=$(make -s print-registry-tag REGISTRY="${{ env.REGISTRY }}")
+          echo "==> Resolved registry tag: $TAG"
+          if [ "${{ needs.changes.outputs.dockerfile }}" != "true" ] && \
+             docker manifest inspect "${{ env.REGISTRY }}/monolith-builder:$TAG" >/dev/null 2>&1; then
+            echo "==> Dockerfile unchanged and $TAG already exists in the registry — skipping build"
+            echo "image-exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "==> Dockerfile changed or $TAG not found in the registry — building"
+            echo "image-exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Capture pre-build hash
-        id: pre-hash
-        run: |
-          echo "hash=$(docker inspect --format='{{index .Config.Labels "base-tools-hash"}}' monolith-builder 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
-
-      - run: make ensure-dirs
+      - name: ensure-dirs
+        if: steps.gate.outputs.image-exists != 'true'
+        run: make ensure-dirs
 
       - name: Build image
+        if: steps.gate.outputs.image-exists != 'true'
         run: make build-image
         env:
           REGISTRY: ${{ env.REGISTRY }}
 
       - name: Upload crossdev logs on failure
-        if: failure()
+        if: failure() && steps.gate.outputs.image-exists != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: crossdev-logs-${{ github.run_id }}
           path: output/portage-logs/
           retention-days: 7
 
-      - name: Check if image changed
-        id: check-hash
-        run: |
-          NEW_HASH=$(docker inspect --format='{{index .Config.Labels "base-tools-hash"}}' monolith-builder)
-          OLD_HASH="${{ steps.pre-hash.outputs.hash }}"
-          if [ "$NEW_HASH" != "$OLD_HASH" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "==> base-tools-hash changed: $OLD_HASH -> $NEW_HASH"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "==> base-tools-hash unchanged, skipping push"
-          fi
-
       # Publish the image tags after EVERY successful build-image, not only when
       # the toolchain was rebuilt. The `build` and `attestation` jobs run on fresh
       # runners and get the image solely via `make pull-image` ->
       # `docker pull $(REGISTRY_IMAGE):$(REGISTRY_TAG)`, so that tag must exist in
-      # the registry on every run. Gating the push on changed=='true' meant a run
-      # where the toolchain was unchanged (a routine BUILD_EPOCH bump, or any run
-      # whose REGISTRY_TAG differs from what was last pushed) never published the
-      # tag, and the build job then 404'd ("manifest unknown"). When the content
-      # is unchanged this is a cheap manifest-only re-push of the same image, so it
-      # cannot clobber :latest with different content. The `image-changed` output
-      # (from the check-hash step) still governs how downstream jobs treat the image.
+      # the registry on every run. When the gate above finds the tag already
+      # published, this step (and the build it would push) is skipped entirely —
+      # the tag is already there, which is precisely why we short-circuited.
       - name: Push images
+        if: steps.gate.outputs.image-exists != 'true'
         run: make push-image
         env:
           REGISTRY: ${{ env.REGISTRY }}

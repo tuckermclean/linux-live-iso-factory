@@ -136,7 +136,7 @@ GITHUB_ENV := \
 	-e STAGE3_DIGEST \
 	-e S3_BUCKET
 
-.PHONY: help build-image push-image pull-image restore-cache \
+.PHONY: help build-image push-image pull-image print-registry-tag restore-cache \
         sync-portage build-packages build-packages-resume \
         extract build-rootfs \
         menuconfig-kernel menuconfig-busybox \
@@ -303,6 +303,12 @@ build-image: ensure-dirs
 			echo "==> Image $(IMAGE_NAME) ready"; \
 		fi; \
 	fi
+
+# Print the resolved REGISTRY_TAG (epoch-hash) — lets CI obtain the exact tag
+# used by build-image/push-image/pull-image without re-deriving the Dockerfile
+# hash logic inline in workflow YAML.
+print-registry-tag:
+	@echo $(REGISTRY_TAG)
 
 # Push builder image to registry
 push-image: build-image
