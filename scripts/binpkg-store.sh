@@ -412,7 +412,16 @@ cmd_push() {
 
     local ref="ghcr.io/${owner}/${IMAGE_REPO}:${epoch}"
     echo "binpkg-store: push: pushing ${tarball} -> ${ref}"
-    oras push "$ref" "${tarball}:application/vnd.oci.image.layer.v1.tar+zstd"
+    # oras rejects an ABSOLUTE file path by default ("absolute file path
+    # detected") — the path becomes the layer's title annotation, and an
+    # absolute one would make `pull` try to restore outside its workdir. Push
+    # from the tarball's own directory so the stored name is a clean relative
+    # basename (e.g. "binpkgs.tar.zst"); cmd_pull globs *.tar.zst, so it stays
+    # compatible regardless of the name.
+    local dir base
+    dir="$(cd "$(dirname "$tarball")" && pwd)"
+    base="$(basename "$tarball")"
+    ( cd "$dir" && oras push "$ref" "${base}:application/vnd.oci.image.layer.v1.tar+zstd" )
 }
 
 cmd_pull() {
