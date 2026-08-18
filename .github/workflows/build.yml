@@ -158,7 +158,10 @@ jobs:
     needs: [changes, build-image]
     permissions:
       contents: read
-      packages: read
+      # write: this job pushes the epoch's binpkg cache to GHCR as an OCI
+      # artifact (scripts/binpkg-store.sh push) — see the "Save binary
+      # package cache to GHCR" step below.
+      packages: write
     if: >
       needs.changes.outputs.packages == 'true' ||
       needs.build-image.outputs.image-changed == 'true' ||
@@ -178,6 +181,11 @@ jobs:
         run: |
           BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
           echo "BUILD_EPOCH=$BUILD_EPOCH" >> "$GITHUB_ENV"
+          # GHCR requires a lowercase image path; github.repository_owner /
+          # $GITHUB_REPOSITORY_OWNER preserve the owner's actual casing (which
+          # can be mixed-case for a user account), so lowercase it once here
+          # rather than at every scripts/binpkg-store.sh call site.
+          echo "GHCR_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
           BUILD_STARTED_ON=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           echo "BUILD_STARTED_ON=$BUILD_STARTED_ON" >> "$GITHUB_ENV"
           echo "build-started-on=$BUILD_STARTED_ON" >> "$GITHUB_OUTPUT"
@@ -203,6 +211,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # `oras` isn't preinstalled on GitHub-hosted runners. Pinned release
+      # tarball rather than `go install` (no Go toolchain on this runner) —
+      # follows the upstream install snippet at https://oras.land/docs/installation/.
+      # Reuses the docker/login-action credential helper entry this job's "Log
+      # in to GHCR" step just wrote to ~/.docker/config.json — oras authenticates
+      # against ghcr.io the same way `docker` does, no separate `oras login`.
+      - name: Install oras
+        run: |
+          set -euo pipefail
+          ORAS_VERSION=1.2.0
+          curl -fsSL -o oras.tar.gz \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          mkdir -p oras-install
+          tar -zxf oras.tar.gz -C oras-install
+          sudo mv oras-install/oras /usr/local/bin/oras
+          rm -rf oras.tar.gz oras-install
+          oras version
+
       - name: Pull images
         run: make pull-image
         env:
@@ -215,21 +241,23 @@ jobs:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
         run: make sync-portage
 
+      # Binpkg cache is a single OCI artifact per epoch on GHCR
+      # (ghcr.io/<owner>/monolith-binpkgs:<epoch>) — one GET instead of the old
+      # per-object `aws s3 sync` of the whole packages/<epoch> tree. `pull`
+      # fails OPEN: an epoch that's never been pushed yet (e.g. this build's
+      # first run, or a brand-new BUILD_EPOCH) leaves output/packages/ empty
+      # and the build just compiles from source, same as an S3 miss did
+      # before. See scripts/binpkg-store.sh.
+      - name: Pull binary package cache from GHCR
+        run: bash scripts/binpkg-store.sh pull "$GHCR_OWNER" "$BUILD_EPOCH" output/packages
+
       - name: Purge stale savedconfig binpkgs
         # Delete any savedconfig-governed binpkg (e.g. busybox) whose config has
         # changed since it was cached, so the build recompiles it from source.
         # Portage's binpkg reuse ignores savedconfig contents, so without this a
-        # config edit is silently a no-op. See scripts/savedconfig-cache.sh.
-        run: bash scripts/savedconfig-cache.sh check "${{ secrets.S3_BUCKET }}" "$BUILD_EPOCH"
-
-      # Binpkg cache kept on S3 (NOT migrated to actions/cache). Deferred per the
-      # CI transfer-cost plan Task 3 measure-gate: the packages/<epoch> set is
-      # potentially multi-GB and would contend with the per-run ISO/squashfs cache
-      # for the free 10 GB actions/cache pool, and it is only a 1x/build read (not
-      # the ~17x/build ISO egress this effort primarily targets). Revisit under the
-      # K3s phase (persistent PVC cache). See docs/superpowers/plans/2026-08-11-ci-transfer-cost.md.
-      - name: Restore binary package cache from S3
-        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/ output/packages/ || true
+        # config edit is silently a no-op. Runs AFTER the GHCR pull above so it
+        # acts on the freshly-unpacked local store. See scripts/savedconfig-cache.sh.
+        run: bash scripts/savedconfig-cache.sh check output/packages
 
       - name: Build packages
         run: |
@@ -291,15 +319,25 @@ jobs:
           fi
           echo "==> All ${#MODULES[@]} NIC modules present under ${MODDIR}"
 
-      - name: Save binary packages to S3
-        if: always()
-        run: aws s3 sync output/packages/ s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/
-
       - name: Record savedconfig hashes
         if: always()
         # Record each tracked savedconfig's hash next to its (now-current) binpkg
-        # so the next build's purge step sees a match and reuses it.
-        run: bash scripts/savedconfig-cache.sh mark "${{ secrets.S3_BUCKET }}" "$BUILD_EPOCH"
+        # so the next build's purge step sees a match and reuses it. Runs BEFORE
+        # prune/pack/push below so the marker travels inside the packed artifact.
+        run: bash scripts/savedconfig-cache.sh mark output/packages
+
+      # Replaces the old whole-tree `aws s3 sync` save: prune superseded gpkgs
+      # first (keep only the newest PVR per CAT/PN, plus versions.lock pins) so
+      # the artifact only ever carries current-best binpkgs, then pack + push a
+      # single OCI artifact to GHCR. `if: always()` — partial progress from a
+      # failed build (whatever packages DID finish) is still worth caching for
+      # the next run, same as the old S3 save's always-run behavior.
+      - name: Save binary package cache to GHCR
+        if: always()
+        run: |
+          bash scripts/binpkg-store.sh prune output/packages
+          bash scripts/binpkg-store.sh pack output/packages
+          bash scripts/binpkg-store.sh push "$GHCR_OWNER" "$BUILD_EPOCH"
 
       - name: Determine whether to publish 'latest' pointers
         # Only master and tag builds overwrite the public themonolith.iso/.squashfs/
