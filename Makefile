@@ -77,6 +77,14 @@ PORTAGE_VOLUME  := monolith-repos
 DISTFILES_VOLUME := monolith-distfiles
 GRYPE_VOLUME    := monolith-grype-db
 
+# Grype vulnerability DB location. Default (empty) preserves local-dev behavior:
+# a persistent named Docker volume, provisioned by ensure-volume, that survives
+# across container runs. Set GRYPE_CACHE_DIR to a host directory to bind-mount
+# it at the same container path instead — actions/cache can only cache host
+# paths, not named Docker volumes, so CI sets this to a workspace dir it can
+# cache/restore across runs. Local dev never needs to set this.
+GRYPE_CACHE_DIR ?=
+
 # Bind mounts
 CONFIGS_MOUNT := -v $(PROJECT_DIR)/configs:/configs
 OUTPUT_MOUNT := -v $(PROJECT_DIR)/output:/output
@@ -87,7 +95,11 @@ ROOTFS_MOUNT := -v $(PROJECT_DIR)/rootfs:/rootfs:ro
 BUILD_MOUNT      := -v $(BUILD_VOLUME):/build
 PORTAGE_MOUNT    := -v $(PORTAGE_VOLUME):/var/db/repos
 DISTFILES_MOUNT  := -v $(DISTFILES_VOLUME):/var/cache/distfiles
+ifeq ($(GRYPE_CACHE_DIR),)
 GRYPE_MOUNT      := -v $(GRYPE_VOLUME):/root/.cache/grype
+else
+GRYPE_MOUNT      := -v $(abspath $(GRYPE_CACHE_DIR)):/root/.cache/grype
+endif
 
 # Portage log mount
 LOGS_MOUNT := -v $(PROJECT_DIR)/output/portage-logs:/var/log/portage
@@ -220,9 +232,13 @@ ensure-volume:
 	@docker volume inspect $(DISTFILES_VOLUME) >/dev/null 2>&1 || \
 		(echo "==> Creating distfiles volume" && \
 		 docker volume create $(DISTFILES_VOLUME))
+ifeq ($(GRYPE_CACHE_DIR),)
 	@docker volume inspect $(GRYPE_VOLUME) >/dev/null 2>&1 || \
 		(echo "==> Creating grype DB volume" && \
 		 docker volume create $(GRYPE_VOLUME))
+else
+	@mkdir -p $(GRYPE_CACHE_DIR)
+endif
 
 # Intermediate image name for the pre-crossdev stage
 BASE_TOOLS_IMAGE := $(IMAGE_NAME)-base-tools

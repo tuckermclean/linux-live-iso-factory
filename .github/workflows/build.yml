@@ -512,11 +512,32 @@ jobs:
           key: ci-artifacts-${{ github.run_id }}-iso
           fail-on-cache-miss: true
 
+      - name: Compute weekly Grype DB cache key
+        id: grype-cache-key
+        run: echo "week=$(date -u +%Y-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore/save Grype DB cache
+        # actions/cache only caches host paths, not the named Docker volume
+        # `grype db update` writes into locally — GRYPE_CACHE_DIR (Makefile)
+        # redirects it to this workspace dir instead. Keyed weekly so `grype
+        # db update` only pulls deltas on a hit; a miss (or partial hit via
+        # restore-keys) just falls through to a normal full update below —
+        # this is a correctness cache, it must never fail the job.
+        uses: actions/cache@v4
+        with:
+          path: output/grype-db
+          key: grype-db-${{ steps.grype-cache-key.outputs.week }}
+          restore-keys: |
+            grype-db-
+
       - name: Update Grype DB
-        run: make grype-db-update
+        run: make grype-db-update GRYPE_CACHE_DIR=output/grype-db
 
       - name: Run attestation pipeline
-        run: make attestation BUILD_VERSION=$BUILD_VERSION
+        # GRYPE_CACHE_DIR must match the value used by the "Update Grype DB"
+        # step above — the CVE scan inside attestation.sh reads from the same
+        # bind-mounted dir the update just wrote into.
+        run: make attestation BUILD_VERSION=$BUILD_VERSION GRYPE_CACHE_DIR=output/grype-db
         continue-on-error: true
         env:
           # Bucket name only (no credentials) — used to build the SBOM's
@@ -539,26 +560,36 @@ jobs:
           echo "overall=$OVERALL" >> "$GITHUB_OUTPUT"
           echo "==> Attestation gate verdict: $OVERALL"
 
+      - name: Restore pip cache for check-jsonschema
+        # Runner-side (not builder-image) cache: the validate step below runs
+        # python3 -m pip on the GitHub-hosted runner, not in the container, so
+        # baking check-jsonschema into the builder image wouldn't help. Keyed
+        # on the pinned version — a version bump naturally busts the cache. A
+        # miss just means a normal (slower) download in the install step next;
+        # this is a tooling cache, it must never fail the job.
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-check-jsonschema-0.38.0
+
       - name: Validate CycloneDX SBOM schema
         if: always()
         run: |
           set -uo pipefail
-          python3 -m pip install --user --quiet check-jsonschema \
-            || python3 -m pip install --user --break-system-packages --quiet check-jsonschema
+          python3 -m pip install --user --quiet check-jsonschema==0.38.0 \
+            || python3 -m pip install --user --break-system-packages --quiet check-jsonschema==0.38.0
 
-          SCHEMA_DIR="$(mktemp -d)"
-          # Download a CycloneDX schema and STRIP its "$id". The published schemas
-          # set "$id" to a cyclonedx.org URL, so check-jsonschema would resolve the
-          # relative $refs (spdx/jsf) against that URL and fetch them over the
-          # network at validation time — which hung the job for hours. With "$id"
-          # removed, the refs resolve to the local files we downloaded here.
-          fetch_schema() {
-            curl -fsSL --connect-timeout 20 --max-time 60 -o "${SCHEMA_DIR}/$1" \
-              "https://raw.githubusercontent.com/CycloneDX/specification/master/schema/$1"
-            python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.pop("$id",None); json.dump(d,open(p,"w"))' "${SCHEMA_DIR}/$1"
-          }
-          fetch_schema spdx.schema.json
-          fetch_schema jsf-0.82.schema.json
+          # Schemas are vendored in configs/attestation/schemas/ (committed),
+          # each with "$id" already stripped. The published schemas set "$id"
+          # to a cyclonedx.org URL, so check-jsonschema would otherwise resolve
+          # the relative $refs (spdx/jsf) against that URL and fetch them over
+          # the network at validation time — which once hung the job for
+          # hours. With "$id" removed, the refs resolve to these local files
+          # via --base-uri below. See configs/attestation/schemas/README for
+          # provenance and how to add a new bom-X.schema.json if specVersion
+          # ever moves past 1.6.
+          SCHEMA_DIR="$(pwd)/configs/attestation/schemas"
 
           validate_sbom() {
             local sbom_file="$1"
@@ -566,8 +597,13 @@ jobs:
             local spec_version
             spec_version=$(python3 -c "import json; print(json.load(open('${sbom_file}')).get('specVersion','1.6'))")
             local schema="bom-${spec_version}.schema.json"
-            [[ -f "${SCHEMA_DIR}/${schema}" ]] || fetch_schema "${schema}"
-            echo "==> Validating ${sbom_file} against CycloneDX ${spec_version} schema (offline)"
+            if [[ ! -f "${SCHEMA_DIR}/${schema}" ]]; then
+              # Genuinely missing vendored schema — a repo bug, not a transient
+              # miss. Die loud instead of falling back to a network fetch.
+              echo "::error::No vendored CycloneDX schema for specVersion ${spec_version} (expected ${SCHEMA_DIR}/${schema}). Vendor it — see configs/attestation/schemas/README."
+              return 1
+            fi
+            echo "==> Validating ${sbom_file} against CycloneDX ${spec_version} schema (offline, vendored)"
             local rc=0
             # --base-uri resolves $refs to the local schema files (no network).
             # The SBOM is a package SBOM (enrich-sbom.py drops file components), so

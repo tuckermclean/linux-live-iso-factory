@@ -1,0 +1,35 @@
+CycloneDX schemas, vendored for offline validation
+====================================================
+
+These files are fetched, unmodified, from:
+
+  https://raw.githubusercontent.com/CycloneDX/specification/master/schema/<name>
+
+  - bom-1.6.schema.json
+  - spdx.schema.json
+  - jsf-0.82.schema.json
+
+Each file has had its top-level "$id" key REMOVED. The published schemas set
+"$id" to an "http://cyclonedx.org/schema/..." URL; check-jsonschema resolves a
+schema's relative $refs against its "$id" first, so with "$id" present it
+would try to fetch spdx.schema.json / jsf-0.82.schema.json over the network at
+validation time instead of using the local files passed via --base-uri. That
+network fetch once hung the attestation job for hours — hence stripping it.
+
+The strip was done with:
+
+    python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); \
+      d.pop("$id",None); json.dump(d,open(p,"w"), indent=2)' <file>
+
+Why only bom-1.6: scripts/enrich-sbom.py hard-floors every SBOM's
+"specVersion" to "1.6" (see enrich-sbom.py, the SBOM finalization step), so
+the attestation pipeline only ever validates against the CycloneDX 1.6 BOM
+schema. spdx.schema.json and jsf-0.82.schema.json are transitive $refs of
+bom-1.6.schema.json (license SPDX expressions and JSF signature blocks) and
+are spec-version-agnostic, so one copy of each covers all BOMs.
+
+If the SBOM's specVersion is ever bumped past 1.6, the "Validate CycloneDX
+SBOM schema" step in .github/workflows/build.yml will fail loudly (by design
+— no network fallback). To fix: vendor the new bom-<version>.schema.json here
+using the same fetch + strip steps above, and re-check whether spdx/jsf also
+need a newer revision for that CycloneDX release.
