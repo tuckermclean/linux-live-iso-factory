@@ -61,3 +61,14 @@ net-analyzer/nmap
 # .batteries/reports/nethack.md). world pins =games-roguelike/nethack-3.6.7-r1;
 # this mask is belt-and-suspenders in case that pin is ever loosened.
 >=games-roguelike/nethack-5.0.0
+
+# dev-cpp/eigen-9999 is a LIVE (git-HEAD) ebuild: its SRC_URI is upstream git,
+# which drifts between builds, so its versioned patch (eigen-5.0.1-cmake-
+# GNUInstallDirs.patch) fails to apply once upstream moves past it — the failure
+# that turned every full build red. It is not something we depend on directly;
+# it is pulled transitively as a HOST build-dep of glib's man-page generation
+# (dev-libs/glib -> dev-python/docutils -> dev-python/pillow -> dev-python/pybind11
+# -> dev-cpp/eigen). Mask the live ebuild so portage selects the STABLE
+# dev-cpp/eigen (header-only, builds trivially) instead — restoring a
+# reproducible, non-drifting build. A live ebuild has no place in a pinned build.
+>=dev-cpp/eigen-9999
