@@ -8,11 +8,41 @@ persist — keeping changes across a reboot
   live mountpoint is /overlay, and changes made to the running root
   survive a reboot.
 
-  Create one (from a shell on the disc, or any other Linux box):
+  The WHOLE root is that overlay. There is no separate "persist your
+  home directory" step and nothing to symlink: /root/.bash_history,
+  ~/.vimrc, ~/.inputrc, /etc/profile.local — any write anywhere under /
+  — already lands on /overlay/upper and survives the next boot exactly
+  as-is. If you don't see your changes after a reboot, you booted
+  without `persist`, or without a MONOLITH_PERSIST partition present.
+
+  Create one:
+      monolith-persist init /dev/sdXN
+  (from a shell on the disc, or any other Linux box; names the device
+  and the fate of its current contents before doing anything — pass
+  --yes to skip the prompt). Equivalent to, and previously done by hand
+  as:
       mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN
 
   If `persist` was requested but no MONOLITH_PERSIST partition is found,
   the boot falls back to tmpfs with a warning — not a failed boot.
 
-  There is no monolith-persist helper yet; the mkfs line above is the
-  current, manual, whole liturgy.
+  A one-line login status reports which case you're in:
+      persist: mounted (412 MB free)          — a real MONOLITH_PERSIST fs
+      persist: none (see monolith help persist) — tmpfs, nothing survives
+
+  On a persistent overlay, an UNCLEAN poweroff can still lose shell
+  history bash hasn't flushed yet (bash normally only appends
+  $HISTFILE on a clean exit) — /etc/profile.d/20-persist.sh turns that
+  into an incremental per-prompt append (`history -a`) so a command is
+  on disk the instant its prompt returns, no clean shutdown required.
+
+  swap-on-persist (the 8MB-GUI doctrine): there is no `swap` boot
+  parameter and nothing swaps on automatically.
+      monolith-persist init /dev/sdXN --swap 64
+  creates the MONOLITH_PERSIST filesystem AND a 64MB swapfile on it in
+  one step (or add --swap to an `init` you're already running). After
+  each boot, enable it by hand:
+      swapon /overlay/swapfile
+  (there is nothing on this disc yet that does this for you at boot —
+  a small machine that wants swap on every boot needs this one line in
+  its own routine, e.g. typed after startx's mouse-attach line).

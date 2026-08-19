@@ -6,6 +6,7 @@ helpers (this disc's own — see: monolith help <topic>)
   monolith-router         — one-command NAT router + dnsmasq DHCP/DNS for a LAN
   monolith-console        — lazy auto-login shell (idle consoles cost no RAM)
   monolith-advisory-check — fetches this build's CVE-revocation status
+  monolith-persist        — mkfs.ext4 -L MONOLITH_PERSIST <dev> + optional swapfile
   startx                  — Xfbdev + dwm + st on the framebuffer
   guestbook.cgi           — CGI guestbook fixture (perl + sqlite3, no DBI)
 

@@ -50,6 +50,13 @@ src_install() {
 	# scripts/tests/monolith-time.test.sh.
 	doexe "${FILESDIR}/monolith-time"
 	doexe "${FILESDIR}/monolith-time-check"
+	# monolith-persist (UX Pass Task 3, persist continuity): the
+	# mkfs.ext4 -L MONOLITH_PERSIST liturgy as a script, with one
+	# confirmation naming the device + its current contents' fate, and
+	# an optional --swap N swapfile. Manual tool — nothing runs it
+	# automatically. Unit-tested standalone:
+	# scripts/tests/monolith-persist.test.sh.
+	doexe "${FILESDIR}/monolith-persist"
 
 	# /usr/lib/cgi-bin — SP5 P4 LAMP-invariant guestbook fixture (perl +
 	# CGI.pm + the sqlite3 CLI). Ships executable; perl reads its own
@@ -66,6 +73,11 @@ src_install() {
 	insinto /etc/profile.d
 	doins "${FILESDIR}/monolith-advisory.sh"
 	doins "${FILESDIR}/monolith-time-hint.sh"
+	# 20-persist.sh (UX Pass Task 3): one-line persist status at login +
+	# (bash-only, guarded) incremental history-append wiring when
+	# /overlay is the real MONOLITH_PERSIST partition. Unit-tested
+	# standalone: scripts/tests/monolith-persist-profile.test.sh.
+	doins "${FILESDIR}/20-persist.sh"
 
 	# /etc/bash/bashrc.d — sourced from bash's bashrc.d chain; runs last
 	# (after 10-gentoo-color.bash sets PS1) to prepend the dark-grey ■.

@@ -41,6 +41,23 @@ THE CLOCK LANDMINE (Monolith UX Pass Task 2) — both directions of the
               real present. This is the negative control that makes
               clock-epoch's positive result mean something.
 
+PERSIST continuity (Monolith UX Pass Task 3) — proves a command typed
+before an UNCLEAN poweroff is still in /root/.bash_history after a fresh
+boot against the SAME MONOLITH_PERSIST disk (see build_persist_cmd /
+run_persist):
+  persist  Boots BIOS/ISOLINUX with a second, host-created raw disk
+           (ext4, labeled MONOLITH_PERSIST — see make_persist_disk)
+           attached as a virtio-blk-pci device, and the `persist` kernel
+           parameter. Types a distinctive `echo <marker>` command, then
+           kills QEMU with SIGKILL (no ACPI poweroff — a graceful
+           shutdown would flush history on its own via bash's normal
+           on-exit save and prove nothing about the incremental-append
+           fix in 20-persist.sh). Relaunches a FRESH QEMU process against
+           the same disk file and asserts the marker is in
+           /root/.bash_history — proving both that /overlay really is the
+           persistent partition (not tmpfs) and that history survived the
+           unclean poweroff.
+
 Ground truth this script is built against (re-check these if the boot
 sequence ever changes — this script has no other source of truth):
   rootfs/init                 — initramfs init: mount sequence, log lines
@@ -91,6 +108,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import time
 import uuid
@@ -595,6 +613,64 @@ def build_nat_client_cmd(args):
         f"socket,id=lan,udp=127.0.0.1:{NAT_ROUTER_PORT},localaddr=127.0.0.1:{NAT_CLIENT_PORT}",
         "-device", "e1000,netdev=lan",
     ]
+
+
+PERSIST_DISK_SIZE_MB = 64  # plenty for an ext4 superblock + a handful of history lines
+
+
+def make_persist_disk(path, size_mb=PERSIST_DISK_SIZE_MB):
+    """
+    Create (or overwrite) a raw disk image at `path`, ext4-formatted and
+    labeled MONOLITH_PERSIST — the same liturgy `monolith-persist init` runs
+    against a real block device (configs/overlay/app-misc/monolith-base/
+    files/monolith-persist), run here against a host-side file instead.
+    mkfs.ext4 works directly against a plain regular file (no loop device,
+    no root needed), which is why this lives in boot-test.py itself rather
+    than a CI workflow step — contrast the nat-router job's fixture HTTP
+    server, which genuinely needs a long-running background process the
+    workflow owns.
+    """
+    mkfs = require_binary("mkfs.ext4")
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "wb") as f:
+        f.truncate(size_mb * 1024 * 1024)
+    log(f"Formatting persist scratch disk: {path} ({size_mb}M, ext4, label MONOLITH_PERSIST)")
+    subprocess.run([mkfs, "-F", "-q", "-L", "MONOLITH_PERSIST", path], check=True)
+
+
+def _persist_qemu_argv(args):
+    """
+    The actual QEMU argv for persist mode: BIOS/ISOLINUX boot (like
+    build_bios_cmd) plus args.persist_disk attached as a SECOND drive on
+    virtio-blk-pci. Factored out of build_persist_cmd so run_persist() can
+    build the identical "reboot" command a second time WITHOUT re-running
+    make_persist_disk (which would reformat the disk and destroy the
+    history the second boot is supposed to find).
+    """
+    qemu = require_binary(args.qemu_i386)
+    return [
+        qemu,
+        "-cdrom", args.iso,
+        "-drive", f"id=persist,if=none,format=raw,file={args.persist_disk}",
+        "-device", "virtio-blk-pci,drive=persist",
+        "-m", str(args.ram_mb),
+        "-cpu", "486",
+        "-boot", "d",
+        "-nographic",
+        "-serial", "mon:stdio",
+        "-no-reboot",
+    ]
+
+
+def build_persist_cmd(args):
+    """
+    First-boot command for persist mode. Formats args.persist_disk fresh
+    (host-side — see make_persist_disk) then returns the same argv
+    _persist_qemu_argv builds. run_persist() calls _persist_qemu_argv
+    directly (not this function) for the second ("reboot") boot.
+    """
+    make_persist_disk(args.persist_disk)
+    return _persist_qemu_argv(args)
 
 
 # ---------------------------------------------------------------------------
@@ -1746,6 +1822,98 @@ def run_nat(child, args):
     return ok
 
 
+def _persist_boot_to_shell(child, args, suffix=""):
+    """Shared milestone sequence for both persist-mode boots."""
+    select_isolinux_label(child, "serial persist")
+    expect_milestone(child, MILESTONE_INIT_START, args.boot_timeout, f"initramfs /init started{suffix}")
+    expect_milestone(child, MILESTONE_OVERLAY_READY, args.boot_timeout, f"squashfs+overlay mounted{suffix}")
+    expect_milestone(child, MILESTONE_EXEC_INIT, args.boot_timeout, f"pivot_root complete{suffix}")
+    expect_milestone(child, MILESTONE_RCS_START, args.boot_timeout, f"sysvinit rcS started{suffix}")
+    expect_milestone(child, MILESTONE_RCS_COMPLETE, args.boot_timeout, f"sysvinit rcS completed{suffix}")
+    wait_for_shell(child)
+
+
+def run_persist(child, args):
+    """
+    Monolith UX Pass Task 3 (persist continuity). Two boots against the SAME
+    MONOLITH_PERSIST disk (args.persist_disk, formatted fresh by
+    build_persist_cmd before `child` was even spawned):
+
+      boot 1 (this `child`, already booting when we're called): confirm
+      /overlay is the real persist partition (not tmpfs), run a distinctive
+      `echo <marker>` command so it lands in bash history, give
+      20-persist.sh's per-prompt `history -a` one more prompt to fire on,
+      then kill QEMU with SIGKILL — deliberately UNCLEAN. A graceful
+      `poweroff` would flush history via bash's own on-exit save and prove
+      nothing about the incremental-append fix this mode exists to test.
+
+      boot 2 (a fresh pexpect.spawn against the identical disk file, mirrors
+      how run_nat spawns a second `client` process): confirm /overlay is
+      STILL the persist partition, then grep /root/.bash_history for the
+      marker.
+    """
+    results1 = []
+    _persist_boot_to_shell(child, args)
+
+    results1.append(("boot 1: /overlay is the persist partition, not tmpfs",
+                     *run_check(child, "overlay fstype",
+                                "awk '$2==\"/overlay\"{print $3}' /proc/mounts",
+                                regex_absent(r"^tmpfs$"))))
+
+    marker = f"MONOLITH_PERSIST_MARK_{uuid.uuid4().hex[:8]}"
+    # The command itself becomes the .bash_history line boot 2 looks for.
+    results1.append(("boot 1: distinctive command runs",
+                     *run_check(child, "marker command", f"echo {marker}", contains(marker))))
+
+    # One more prompt cycle so 20-persist.sh's PROMPT_COMMAND `history -a`
+    # fires on the command above before the unclean kill below.
+    child.sendline("")
+    time.sleep(1)
+
+    ok1 = report_results(results1)
+
+    log("persist: killing QEMU uncleanly (SIGKILL, no poweroff) to prove history already hit disk")
+    try:
+        child.close(force=True)
+    except Exception:
+        pass
+
+    log("persist: relaunching QEMU against the SAME persist disk (boot 2)")
+    cmd2 = _persist_qemu_argv(args)
+    child2 = pexpect.spawn(
+        cmd2[0], cmd2[1:], timeout=args.boot_timeout, encoding="utf-8", codec_errors="replace"
+    )
+    if args.log_file:
+        child2.logfile = open(args.log_file + ".boot2", "w", encoding="utf-8", errors="replace")
+
+    ok2 = False
+    try:
+        results2 = []
+        _persist_boot_to_shell(child2, args, suffix=" (boot 2)")
+
+        results2.append(("boot 2: /overlay is STILL the persist partition",
+                         *run_check(child2, "overlay fstype (boot 2)",
+                                    "awk '$2==\"/overlay\"{print $3}' /proc/mounts",
+                                    regex_absent(r"^tmpfs$"))))
+        results2.append((f"boot 2: '{marker}' survived the unclean poweroff in .bash_history",
+                         *run_check(child2, "history grep",
+                                    f"grep -qF {marker} /root/.bash_history && echo FOUND_{marker}",
+                                    contains(f"FOUND_{marker}"))))
+
+        ok2 = report_results(results2)
+        poweroff_and_wait(child2)
+    finally:
+        if child2.isalive():
+            try:
+                child2.close(force=True)
+            except Exception:
+                pass
+        if args.log_file and child2.logfile:
+            child2.logfile.close()
+
+    return ok1 and ok2
+
+
 MODE_BUILDERS = {
     "bios": build_bios_cmd,
     "uefi": build_uefi_cmd,
@@ -1760,6 +1928,7 @@ MODE_BUILDERS = {
     "gui": build_gui_cmd,
     "clock-epoch": build_clock_epoch_cmd,
     "clock-1996": build_clock_1996_cmd,
+    "persist": build_persist_cmd,
 }
 
 MODE_RUNNERS = {
@@ -1776,6 +1945,7 @@ MODE_RUNNERS = {
     "gui": run_gui,
     "clock-epoch": run_clock_epoch,
     "clock-1996": run_clock_1996,
+    "persist": run_persist,
 }
 
 MODE_DEFAULT_RAM = {
@@ -1792,6 +1962,7 @@ MODE_DEFAULT_RAM = {
     "gui": 128,
     "clock-epoch": 64,  # same bios/pc machine as "bios", no extra RAM pressure
     "clock-1996": 64,
+    "persist": 128,  # BIOS/pc + one extra virtio-blk-pci disk; no networking needed
 }
 
 
@@ -1838,6 +2009,12 @@ def parse_args():
              "Default: unset -- QEMU uses the host clock. The clock-epoch/clock-1996 "
              "modes set a sensible default automatically when this is omitted; pass "
              "it explicitly to override even those.",
+    )
+    p.add_argument(
+        "--persist-disk", default="output/monolith-persist-test.img",
+        help="Host-side path for the MONOLITH_PERSIST scratch disk (persist mode only). "
+             "Created fresh (truncated + mkfs.ext4 -L MONOLITH_PERSIST) by build_persist_cmd "
+             "before boot 1; both boots in run_persist attach this same file.",
     )
     return p.parse_args()
 
