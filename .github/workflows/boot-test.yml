@@ -481,10 +481,6 @@ jobs:
   nic-models:
     needs: expected-kernel
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        nic_model: [pcnet, rtl8139, tulip, ne2k_pci, ne2k_isa]
     steps:
       - uses: actions/checkout@v4
 
@@ -507,20 +503,36 @@ jobs:
           key: ci-artifacts-${{ github.run_id }}-iso
           fail-on-cache-miss: true
 
-      - name: Boot test — NIC model ${{ matrix.nic_model }}
+      - name: Boot test — NIC models (sequential)
         run: |
-          python3 scripts/boot-test.py \
-            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
-            --mode nic --nic-model ${{ matrix.nic_model }} \
-            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
-            --log-file "output/boot-test-nic-${{ matrix.nic_model }}.log"
+          set -u
+          FAILED=""
+          for m in pcnet rtl8139 tulip ne2k_pci ne2k_isa; do
+            echo "::group::NIC model $m"
+            if python3 scripts/boot-test.py \
+                 --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+                 --mode nic --nic-model "$m" \
+                 --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+                 --log-file "output/boot-test-nic-$m.log"; then
+              echo "==> NIC model $m: PASS"
+            else
+              echo "::error::NIC model $m: FAILED"
+              FAILED="$FAILED $m"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$FAILED" ]; then
+            echo "::error::NIC model boot test(s) failed:$FAILED"
+            exit 1
+          fi
+          echo "==> All NIC models passed"
 
-      - name: Upload serial console log
+      - name: Upload serial console logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: boot-test-nic-${{ matrix.nic_model }}-${{ github.run_id }}
-          path: output/boot-test-nic-${{ matrix.nic_model }}.log
+          name: boot-test-nic-${{ github.run_id }}
+          path: output/boot-test-nic-*.log
           retention-days: 14
           if-no-files-found: warn
 

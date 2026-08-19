@@ -86,7 +86,7 @@ jobs:
       contents: read
       packages: write
     outputs:
-      image-changed: ${{ steps.check-hash.outputs.changed }}
+      image-changed: ${{ steps.gate.outputs.image-exists == 'true' && 'false' || 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -97,58 +97,72 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull existing images for cache
+      # Cheap change-detection: instead of pulling the (multi-GB) builder image
+      # just to inspect a label, ask the registry for the manifest of the exact
+      # tag `make build-image` would produce (`docker manifest inspect` fetches
+      # only the manifest, not the layers). If the Dockerfile didn't change AND
+      # that tag already exists, the image we'd build is byte-identical to what's
+      # already published, so we can skip straight past ensure-dirs/build/push.
+      # TAG comes from `make print-registry-tag` (not re-derived here) so the
+      # hash logic has exactly one source of truth: Makefile's REGISTRY_TAG.
+      - name: Gate on whether the image already exists
+        id: gate
+        run: |
+          set -euo pipefail
+          TAG=$(make -s print-registry-tag REGISTRY="${{ env.REGISTRY }}")
+          echo "==> Resolved registry tag: $TAG"
+          if [ "${{ needs.changes.outputs.dockerfile }}" != "true" ] && \
+             docker manifest inspect "${{ env.REGISTRY }}/monolith-builder:$TAG" >/dev/null 2>&1; then
+            echo "==> Dockerfile unchanged and $TAG already exists in the registry — skipping build"
+            echo "image-exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "==> Dockerfile changed or $TAG not found in the registry — building"
+            echo "image-exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: ensure-dirs
+        if: steps.gate.outputs.image-exists != 'true'
+        run: make ensure-dirs
+
+      # Warm buildx's LOCAL --cache-from tags before a real build. `make
+      # build-image` (Makefile) passes --cache-from monolith-builder-base-tools
+      # (IMAGE_NAME/BASE_TOOLS_IMAGE) — a purely local docker tag, not the
+      # registry image — so without this pull+retag the base-tools/toolchain
+      # stage rebuilds with zero layer cache on every Dockerfile-changing
+      # build (the only path that reaches here now that the gate above
+      # short-circuits the unchanged case). Gated to the build path so the
+      # gate's short-circuit win on the unchanged case is preserved.
+      - name: Warm docker layer cache from :latest (build path only)
+        if: steps.gate.outputs.image-exists != 'true'
         run: |
           docker pull ${{ env.REGISTRY }}/monolith-builder:latest || true
           docker tag ${{ env.REGISTRY }}/monolith-builder:latest monolith-builder || true
           docker pull ${{ env.REGISTRY }}/monolith-builder-base-tools:latest || true
           docker tag ${{ env.REGISTRY }}/monolith-builder-base-tools:latest monolith-builder-base-tools || true
 
-      - name: Capture pre-build hash
-        id: pre-hash
-        run: |
-          echo "hash=$(docker inspect --format='{{index .Config.Labels "base-tools-hash"}}' monolith-builder 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
-
-      - run: make ensure-dirs
-
       - name: Build image
+        if: steps.gate.outputs.image-exists != 'true'
         run: make build-image
         env:
           REGISTRY: ${{ env.REGISTRY }}
 
       - name: Upload crossdev logs on failure
-        if: failure()
+        if: failure() && steps.gate.outputs.image-exists != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: crossdev-logs-${{ github.run_id }}
           path: output/portage-logs/
           retention-days: 7
 
-      - name: Check if image changed
-        id: check-hash
-        run: |
-          NEW_HASH=$(docker inspect --format='{{index .Config.Labels "base-tools-hash"}}' monolith-builder)
-          OLD_HASH="${{ steps.pre-hash.outputs.hash }}"
-          if [ "$NEW_HASH" != "$OLD_HASH" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "==> base-tools-hash changed: $OLD_HASH -> $NEW_HASH"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "==> base-tools-hash unchanged, skipping push"
-          fi
-
       # Publish the image tags after EVERY successful build-image, not only when
       # the toolchain was rebuilt. The `build` and `attestation` jobs run on fresh
       # runners and get the image solely via `make pull-image` ->
       # `docker pull $(REGISTRY_IMAGE):$(REGISTRY_TAG)`, so that tag must exist in
-      # the registry on every run. Gating the push on changed=='true' meant a run
-      # where the toolchain was unchanged (a routine BUILD_EPOCH bump, or any run
-      # whose REGISTRY_TAG differs from what was last pushed) never published the
-      # tag, and the build job then 404'd ("manifest unknown"). When the content
-      # is unchanged this is a cheap manifest-only re-push of the same image, so it
-      # cannot clobber :latest with different content. The `image-changed` output
-      # (from the check-hash step) still governs how downstream jobs treat the image.
+      # the registry on every run. When the gate above finds the tag already
+      # published, this step (and the build it would push) is skipped entirely —
+      # the tag is already there, which is precisely why we short-circuited.
       - name: Push images
+        if: steps.gate.outputs.image-exists != 'true'
         run: make push-image
         env:
           REGISTRY: ${{ env.REGISTRY }}
@@ -158,7 +172,10 @@ jobs:
     needs: [changes, build-image]
     permissions:
       contents: read
-      packages: read
+      # write: this job pushes the epoch's binpkg cache to GHCR as an OCI
+      # artifact (scripts/binpkg-store.sh push) — see the "Save binary
+      # package cache to GHCR" step below.
+      packages: write
     if: >
       needs.changes.outputs.packages == 'true' ||
       needs.build-image.outputs.image-changed == 'true' ||
@@ -178,6 +195,11 @@ jobs:
         run: |
           BUILD_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)
           echo "BUILD_EPOCH=$BUILD_EPOCH" >> "$GITHUB_ENV"
+          # GHCR requires a lowercase image path; github.repository_owner /
+          # $GITHUB_REPOSITORY_OWNER preserve the owner's actual casing (which
+          # can be mixed-case for a user account), so lowercase it once here
+          # rather than at every scripts/binpkg-store.sh call site.
+          echo "GHCR_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
           BUILD_STARTED_ON=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           echo "BUILD_STARTED_ON=$BUILD_STARTED_ON" >> "$GITHUB_ENV"
           echo "build-started-on=$BUILD_STARTED_ON" >> "$GITHUB_OUTPUT"
@@ -203,6 +225,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # `oras` isn't preinstalled on GitHub-hosted runners. Pinned release
+      # tarball rather than `go install` (no Go toolchain on this runner) —
+      # follows the upstream install snippet at https://oras.land/docs/installation/.
+      # Reuses the docker/login-action credential helper entry this job's "Log
+      # in to GHCR" step just wrote to ~/.docker/config.json — oras authenticates
+      # against ghcr.io the same way `docker` does, no separate `oras login`.
+      - name: Install oras
+        run: |
+          set -euo pipefail
+          ORAS_VERSION=1.2.0
+          curl -fsSL -o oras.tar.gz \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          mkdir -p oras-install
+          tar -zxf oras.tar.gz -C oras-install
+          sudo mv oras-install/oras /usr/local/bin/oras
+          rm -rf oras.tar.gz oras-install
+          oras version
+
       - name: Pull images
         run: make pull-image
         env:
@@ -215,21 +255,23 @@ jobs:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
         run: make sync-portage
 
+      # Binpkg cache is a single OCI artifact per epoch on GHCR
+      # (ghcr.io/<owner>/monolith-binpkgs:<epoch>) — one GET instead of the old
+      # per-object `aws s3 sync` of the whole packages/<epoch> tree. `pull`
+      # fails OPEN: an epoch that's never been pushed yet (e.g. this build's
+      # first run, or a brand-new BUILD_EPOCH) leaves output/packages/ empty
+      # and the build just compiles from source, same as an S3 miss did
+      # before. See scripts/binpkg-store.sh.
+      - name: Pull binary package cache from GHCR
+        run: bash scripts/binpkg-store.sh pull "$GHCR_OWNER" "$BUILD_EPOCH" output/packages
+
       - name: Purge stale savedconfig binpkgs
         # Delete any savedconfig-governed binpkg (e.g. busybox) whose config has
         # changed since it was cached, so the build recompiles it from source.
         # Portage's binpkg reuse ignores savedconfig contents, so without this a
-        # config edit is silently a no-op. See scripts/savedconfig-cache.sh.
-        run: bash scripts/savedconfig-cache.sh check "${{ secrets.S3_BUCKET }}" "$BUILD_EPOCH"
-
-      # Binpkg cache kept on S3 (NOT migrated to actions/cache). Deferred per the
-      # CI transfer-cost plan Task 3 measure-gate: the packages/<epoch> set is
-      # potentially multi-GB and would contend with the per-run ISO/squashfs cache
-      # for the free 10 GB actions/cache pool, and it is only a 1x/build read (not
-      # the ~17x/build ISO egress this effort primarily targets). Revisit under the
-      # K3s phase (persistent PVC cache). See docs/superpowers/plans/2026-08-11-ci-transfer-cost.md.
-      - name: Restore binary package cache from S3
-        run: aws s3 sync s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/ output/packages/ || true
+        # config edit is silently a no-op. Runs AFTER the GHCR pull above so it
+        # acts on the freshly-unpacked local store. See scripts/savedconfig-cache.sh.
+        run: bash scripts/savedconfig-cache.sh check output/packages
 
       - name: Build packages
         run: |
@@ -291,15 +333,48 @@ jobs:
           fi
           echo "==> All ${#MODULES[@]} NIC modules present under ${MODDIR}"
 
-      - name: Save binary packages to S3
+      - name: Take ownership of the binpkg tree
         if: always()
-        run: aws s3 sync output/packages/ s3://${{ secrets.S3_BUCKET }}/packages/$BUILD_EPOCH/
+        # `make build-packages` runs IN-CONTAINER as root, so output/packages is
+        # root-owned. The savedconfig-mark + prune/pack steps below run on the
+        # runner as NON-root and must write/delete there — without this they hit
+        # "Permission denied" (the savedconfig marker fails to write; prune can't
+        # rm superseded gpkgs). Hand the tree to the runner user. build-rootfs
+        # later still reads these binpkgs fine (it runs as root in-container).
+        run: sudo chown -R "$(id -u):$(id -g)" output/packages
 
       - name: Record savedconfig hashes
         if: always()
         # Record each tracked savedconfig's hash next to its (now-current) binpkg
-        # so the next build's purge step sees a match and reuses it.
-        run: bash scripts/savedconfig-cache.sh mark "${{ secrets.S3_BUCKET }}" "$BUILD_EPOCH"
+        # so the next build's purge step sees a match and reuses it. Runs BEFORE
+        # prune/pack/push below so the marker travels inside the packed artifact.
+        run: bash scripts/savedconfig-cache.sh mark output/packages
+
+      # Replaces the old whole-tree `aws s3 sync` save: prune superseded gpkgs
+      # first (keep only the newest PVR per CAT/PN, plus versions.lock pins) so
+      # the artifact only ever carries current-best binpkgs, then pack + push a
+      # single OCI artifact to GHCR. `if: always()` — partial progress from a
+      # failed build (whatever packages DID finish) is still worth caching for
+      # the next run, same as the old S3 save's always-run behavior.
+      - name: Save binary package cache to GHCR
+        if: always()
+        # Best-effort, fail-OPEN: the GHCR binpkg store is a build ACCELERATOR,
+        # not a deliverable. A prune/pack/push hiccup must NOT fail an otherwise
+        # good build (rootfs/ISO/attestation) — worst case the next build just
+        # compiles from source. The outcome is surfaced as a notice/warning so a
+        # persistently failing push is still visible in the run summary.
+        run: |
+          bash scripts/binpkg-store.sh prune output/packages \
+            || echo "::warning::binpkg prune failed (non-fatal)"
+          if ! bash scripts/binpkg-store.sh pack output/packages; then
+            echo "::warning::binpkg pack failed (non-fatal) — skipping push"
+            exit 0
+          fi
+          if bash scripts/binpkg-store.sh push "$GHCR_OWNER" "$BUILD_EPOCH"; then
+            echo "::notice::binpkg cache pushed to GHCR (epoch $BUILD_EPOCH)"
+          else
+            echo "::warning::binpkg cache push failed (non-fatal) — next build compiles from source"
+          fi
 
       - name: Determine whether to publish 'latest' pointers
         # Only master and tag builds overwrite the public themonolith.iso/.squashfs/
@@ -334,7 +409,8 @@ jobs:
           if [ -f output/vmlinuz ]; then
             cp output/vmlinuz output/themonolith-$BUILD_VERSION.vmlinuz
             aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz
-            aws s3 cp output/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
+            # server-side copy — no runner egress
+            aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.vmlinuz s3://${{ secrets.S3_BUCKET }}/themonolith.vmlinuz
           fi
 
       - name: Build rootfs
@@ -351,7 +427,8 @@ jobs:
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.squashfs ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs
-            aws s3 cp output/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
+            # server-side copy — no runner egress
+            aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.squashfs s3://${{ secrets.S3_BUCKET }}/themonolith.squashfs
           fi
 
       - name: Save initrd to S3
@@ -359,7 +436,8 @@ jobs:
         run: |
           if [ -f output/themonolith-$BUILD_VERSION.initrd ]; then
             aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd
-            aws s3 cp output/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
+            # server-side copy — no runner egress
+            aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.initrd s3://${{ secrets.S3_BUCKET }}/themonolith.initrd
           fi
 
       - name: Build ISO
@@ -375,7 +453,8 @@ jobs:
         if: env.PUBLISH_LATEST == 'true'
         run: |
           aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.iso
-          aws s3 cp output/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
+          # server-side copy — no runner egress
+          aws s3 cp s3://${{ secrets.S3_BUCKET }}/themonolith-$BUILD_VERSION.iso s3://${{ secrets.S3_BUCKET }}/themonolith.iso
           echo "==> Uploaded versioned + latest ISO"
 
   # Actually boots the ISO in QEMU (BIOS, UEFI, and toram+eject) and proves it
@@ -472,11 +551,32 @@ jobs:
           key: ci-artifacts-${{ github.run_id }}-iso
           fail-on-cache-miss: true
 
+      - name: Compute weekly Grype DB cache key
+        id: grype-cache-key
+        run: echo "week=$(date -u +%Y-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore/save Grype DB cache
+        # actions/cache only caches host paths, not the named Docker volume
+        # `grype db update` writes into locally — GRYPE_CACHE_DIR (Makefile)
+        # redirects it to this workspace dir instead. Keyed weekly so `grype
+        # db update` only pulls deltas on a hit; a miss (or partial hit via
+        # restore-keys) just falls through to a normal full update below —
+        # this is a correctness cache, it must never fail the job.
+        uses: actions/cache@v4
+        with:
+          path: output/grype-db
+          key: grype-db-${{ steps.grype-cache-key.outputs.week }}
+          restore-keys: |
+            grype-db-
+
       - name: Update Grype DB
-        run: make grype-db-update
+        run: make grype-db-update GRYPE_CACHE_DIR=output/grype-db
 
       - name: Run attestation pipeline
-        run: make attestation BUILD_VERSION=$BUILD_VERSION
+        # GRYPE_CACHE_DIR must match the value used by the "Update Grype DB"
+        # step above — the CVE scan inside attestation.sh reads from the same
+        # bind-mounted dir the update just wrote into.
+        run: make attestation BUILD_VERSION=$BUILD_VERSION GRYPE_CACHE_DIR=output/grype-db
         continue-on-error: true
         env:
           # Bucket name only (no credentials) — used to build the SBOM's
@@ -499,26 +599,36 @@ jobs:
           echo "overall=$OVERALL" >> "$GITHUB_OUTPUT"
           echo "==> Attestation gate verdict: $OVERALL"
 
+      - name: Restore pip cache for check-jsonschema
+        # Runner-side (not builder-image) cache: the validate step below runs
+        # python3 -m pip on the GitHub-hosted runner, not in the container, so
+        # baking check-jsonschema into the builder image wouldn't help. Keyed
+        # on the pinned version — a version bump naturally busts the cache. A
+        # miss just means a normal (slower) download in the install step next;
+        # this is a tooling cache, it must never fail the job.
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-check-jsonschema-0.38.0
+
       - name: Validate CycloneDX SBOM schema
         if: always()
         run: |
           set -uo pipefail
-          python3 -m pip install --user --quiet check-jsonschema \
-            || python3 -m pip install --user --break-system-packages --quiet check-jsonschema
+          python3 -m pip install --user --quiet check-jsonschema==0.38.0 \
+            || python3 -m pip install --user --break-system-packages --quiet check-jsonschema==0.38.0
 
-          SCHEMA_DIR="$(mktemp -d)"
-          # Download a CycloneDX schema and STRIP its "$id". The published schemas
-          # set "$id" to a cyclonedx.org URL, so check-jsonschema would resolve the
-          # relative $refs (spdx/jsf) against that URL and fetch them over the
-          # network at validation time — which hung the job for hours. With "$id"
-          # removed, the refs resolve to the local files we downloaded here.
-          fetch_schema() {
-            curl -fsSL --connect-timeout 20 --max-time 60 -o "${SCHEMA_DIR}/$1" \
-              "https://raw.githubusercontent.com/CycloneDX/specification/master/schema/$1"
-            python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.pop("$id",None); json.dump(d,open(p,"w"))' "${SCHEMA_DIR}/$1"
-          }
-          fetch_schema spdx.schema.json
-          fetch_schema jsf-0.82.schema.json
+          # Schemas are vendored in configs/attestation/schemas/ (committed),
+          # each with "$id" already stripped. The published schemas set "$id"
+          # to a cyclonedx.org URL, so check-jsonschema would otherwise resolve
+          # the relative $refs (spdx/jsf) against that URL and fetch them over
+          # the network at validation time — which once hung the job for
+          # hours. With "$id" removed, the refs resolve to these local files
+          # via --base-uri below. See configs/attestation/schemas/README for
+          # provenance and how to add a new bom-X.schema.json if specVersion
+          # ever moves past 1.6.
+          SCHEMA_DIR="$(pwd)/configs/attestation/schemas"
 
           validate_sbom() {
             local sbom_file="$1"
@@ -526,8 +636,13 @@ jobs:
             local spec_version
             spec_version=$(python3 -c "import json; print(json.load(open('${sbom_file}')).get('specVersion','1.6'))")
             local schema="bom-${spec_version}.schema.json"
-            [[ -f "${SCHEMA_DIR}/${schema}" ]] || fetch_schema "${schema}"
-            echo "==> Validating ${sbom_file} against CycloneDX ${spec_version} schema (offline)"
+            if [[ ! -f "${SCHEMA_DIR}/${schema}" ]]; then
+              # Genuinely missing vendored schema — a repo bug, not a transient
+              # miss. Die loud instead of falling back to a network fetch.
+              echo "::error::No vendored CycloneDX schema for specVersion ${spec_version} (expected ${SCHEMA_DIR}/${schema}). Vendor it — see configs/attestation/schemas/README."
+              return 1
+            fi
+            echo "==> Validating ${sbom_file} against CycloneDX ${spec_version} schema (offline, vendored)"
             local rc=0
             # --base-uri resolves $refs to the local schema files (no network).
             # The SBOM is a package SBOM (enrich-sbom.py drops file components), so

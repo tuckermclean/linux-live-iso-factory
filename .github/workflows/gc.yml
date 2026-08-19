@@ -7,6 +7,9 @@ on:
 jobs:
   gc:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
@@ -20,3 +23,7 @@ jobs:
         env:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
         run: sh scripts/s3-gc.sh ${{ (github.event_name == 'workflow_dispatch' && inputs.apply) && '--apply' || '' }}
+      - name: GHCR GC (dry-run unless apply=true)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: sh scripts/ghcr-gc.sh ${{ (github.event_name == 'workflow_dispatch' && inputs.apply) && '--apply' || '' }}
