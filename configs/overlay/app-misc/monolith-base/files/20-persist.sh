@@ -1,5 +1,13 @@
 # /etc/profile.d/20-persist.sh
 #
+# Ordering contract (Task 6, hint hygiene — see the monolith-base ebuild's
+# src_install, profile.d section for the full statement): this is the
+# first STATUS-group snippet. STATUS-group /run-flag policy: persist
+# status prints on EVERY login on purpose — it's one cheap mount-table
+# read (no subprocess storms) and the answer can change between logins
+# (persist mounted vs. not), unlike the clock hint which is a one-time
+# ignorance flag.
+#
 # Persist continuity (Monolith UX Pass Task 3): "the disc remembers you,
 # when asked." Login STATUS line only — see
 # /etc/bash/bashrc.d/50-persist-history.bash for the history-reliability

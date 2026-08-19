@@ -215,13 +215,27 @@ fi
 [ -f /etc/profile.local ] && . /etc/profile.local
 EOF
 
-    # /etc/profile.d/10-dropbear-hint.sh — dropbear SSH is installed but NOT
+    # /etc/profile.d/50-dropbear-hint.sh — dropbear SSH is installed but NOT
     # started at boot (deliberate for a live ISO). Show the user, on interactive
     # login, the one command to start it if they want remote access. The ECDSA
     # host key is generated at boot by /etc/init.d/S20keygen.
+    #
+    # Ordering contract (Task 6, hint hygiene — see the monolith-base
+    # ebuild's src_install, profile.d section for the full statement):
+    # ACTIONABLE-group, after 40-advisory.sh (security banner outranks a
+    # convenience hint), before zz-fortune.sh. Renamed from
+    # 10-dropbear-hint.sh in Task 6.
+    #
+    # /run-flag policy: this fires on EVERY login ON PURPOSE — it is a
+    # security-posture reminder (sshd present but off, root has no
+    # password) that is meant to repeat deliberately, not a one-shot
+    # tip. Do NOT add a once-guard to it.
     mkdir -p "$ROOTFS_DIR/etc/profile.d"
-    cat > "$ROOTFS_DIR/etc/profile.d/10-dropbear-hint.sh" << 'EOF'
+    cat > "$ROOTFS_DIR/etc/profile.d/50-dropbear-hint.sh" << 'EOF'
 # Interactive-shell hint: dropbear is available but not running by default.
+# Prints on EVERY login ON PURPOSE (security-posture reminder, not a
+# one-shot tip) — see the ordering contract in scripts/build-rootfs.sh
+# above this heredoc. Do NOT add a once-per-boot guard here.
 case "$-" in
     *i*)
         if command -v dropbear >/dev/null 2>&1 && \
@@ -553,7 +567,7 @@ exit 0
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/S30gpm"
 
-    # /usr/sbin/monolith-advisory-check, /etc/profile.d/monolith-advisory.sh,
+    # /usr/sbin/monolith-advisory-check, /etc/profile.d/40-advisory.sh,
     # and /etc/bash/bashrc.d/99-monolith-square.bash are installed by
     # app-misc/monolith-base (Pillar 4; see
     # configs/overlay/app-misc/monolith-base) via the sysroot rsync in

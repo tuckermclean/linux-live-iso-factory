@@ -38,7 +38,7 @@ source_it() {
 }
 
 # Same, but as a NON-interactive bash -- proves the whole file is a no-op
-# outside a login shell (matches monolith-advisory.sh/20-persist.sh's
+# outside a login shell (matches 40-advisory.sh/20-persist.sh's
 # `case "$-" in *i*)` convention).
 source_it_noninteractive() {
     PATH="$BIN:$PATH" MONOLITH_FORTUNE_FLAG="$FLAG" \

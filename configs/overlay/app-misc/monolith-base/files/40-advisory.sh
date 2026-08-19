@@ -1,4 +1,12 @@
-# /etc/profile.d/monolith-advisory.sh
+# /etc/profile.d/40-advisory.sh (renamed from monolith-advisory.sh in
+# Task 6, hint hygiene — see the ordering contract in the monolith-base
+# ebuild's src_install, profile.d section: STATUS lines first [20-persist,
+# 30-clock], then ACTIONABLE hints [40-advisory, 50-dropbear], then
+# zz-fortune last. Advisory prints before dropbear because a revoked-build
+# security warning outranks a "you could enable sshd" convenience hint.)
+#
+# ACTIONABLE-group /run-flag policy: only fires when
+# /run/monolith-advisory exists — most boots print nothing here.
 #
 # Displays a security warning at login if this build of The Monolith
 # has been revoked (new CVEs discovered after the ISO was released).

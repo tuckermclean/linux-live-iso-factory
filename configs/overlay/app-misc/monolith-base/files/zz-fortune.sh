@@ -2,19 +2,18 @@
 #
 # Console comfort (Monolith UX Pass Task 5): one fortune cookie per boot, on
 # interactive login. "Wisdom must never bury status" — this must run AFTER
-# every status/hint profile.d snippet (persist status, dropbear hint,
-# security advisory, clock-ignorance hint).
+# every status/hint profile.d snippet.
 #
-# Named zz- rather than the "90-fortune.sh" the task brief suggested as an
-# example: /etc/profile's `for f in /etc/profile.d/*.sh` glob sorts
-# lexically (verified), and this repo already has two hint files with NO
-# numeric prefix — monolith-advisory.sh and monolith-time-hint.sh. A "90-"
-# prefix sorts BEFORE "monolith-advisory.sh" in ASCII (digits < letters),
-# which would print the fortune ahead of the security advisory — exactly
-# backwards. zz- sorts after every profile.d file in this tree today
-# (10-, 20-, monolith-*). Task 6 (hint hygiene) is expected to formalize
-# an ordering scheme repo-wide; until then, zz- is the one prefix
-# guaranteed to lose every comparison.
+# Ordering contract (Task 6, hint hygiene — see the monolith-base ebuild's
+# src_install, profile.d section for the full statement and the
+# /run-flag policy per snippet): /etc/profile's
+# `for f in /etc/profile.d/*.sh` glob sorts lexically (verified), and the
+# repo-wide contract is now: STATUS lines first (20-persist.sh,
+# 30-clock-hint.sh), ACTIONABLE hints second (40-advisory.sh,
+# 50-dropbear-hint.sh), fortune last. Named zz- rather than a numeric
+# prefix like "90-" so it is guaranteed to sort after any two-digit
+# prefix ever added to this directory without requiring every future
+# snippet author to stay under 90 — 'z' > any digit in ASCII.
 #
 # Guarded on a /run flag: once per BOOT, not once per shell — a user
 # opening several terminals in one session should not see a fortune in

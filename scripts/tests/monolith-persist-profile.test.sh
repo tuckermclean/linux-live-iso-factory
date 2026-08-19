@@ -48,7 +48,7 @@ source_it() {
 }
 
 # Same, but as a NON-interactive bash -- proves the whole file is a no-op
-# outside a login shell (matches monolith-advisory.sh/10-dropbear-hint.sh's
+# outside a login shell (matches 40-advisory.sh/50-dropbear-hint.sh's
 # `case "$-" in *i*)` convention).
 source_it_noninteractive() {
     PATH="$BIN:$PATH" MONOLITH_PERSIST_DIR="$MOUNTDIR" MONOLITH_PERSIST_MOUNTS="$MOUNTSFILE" \

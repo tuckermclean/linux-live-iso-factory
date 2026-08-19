@@ -1,4 +1,11 @@
-# /etc/profile.d/monolith-time-hint.sh
+# /etc/profile.d/30-clock-hint.sh (renamed from monolith-time-hint.sh in
+# Task 6, hint hygiene — see the ordering contract in the monolith-base
+# ebuild's src_install, profile.d section: STATUS lines first [20-persist,
+# 30-clock], then ACTIONABLE hints [40-advisory, 50-dropbear], then
+# zz-fortune last).
+#
+# STATUS-group /run-flag policy: this only fires in the demonstrated-
+# ignorance case (see below) — most boots print nothing here at all.
 #
 # Prints a reminder ONLY when boot detected the clock was demonstrably
 # ignorant of the time (dead RTC at the epoch, or a common BIOS/CMOS
