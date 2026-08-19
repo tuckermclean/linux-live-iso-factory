@@ -22,10 +22,6 @@ sys-apps/coreutils   disable-stdbuf.conf
 
 # Packages using gnulib/librecode that reference libiconv_open but omit -liconv
 app-arch/tar             libiconv.conf
-# recode itself (Monolith UX Pass Task 5, pulled in unconditionally by
-# games-misc/fortune-mod's RDEPEND — see package.use/static) — this is the
-# actual "librecode" case the comment above was written for.
-app-text/recode          libiconv.conf
 
 # Packages that use C++ exceptions — override global -fno-exceptions
 sys-apps/smartmontools   fexceptions.conf

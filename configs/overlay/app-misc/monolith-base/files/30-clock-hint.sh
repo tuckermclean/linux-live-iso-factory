@@ -1,8 +1,7 @@
 # /etc/profile.d/30-clock-hint.sh (renamed from monolith-time-hint.sh in
 # Task 6, hint hygiene — see the ordering contract in the monolith-base
 # ebuild's src_install, profile.d section: STATUS lines first [20-persist,
-# 30-clock], then ACTIONABLE hints [40-advisory, 50-dropbear], then
-# zz-fortune last).
+# 30-clock], then ACTIONABLE hints [40-advisory, 50-dropbear]).
 #
 # STATUS-group /run-flag policy: this only fires in the demonstrated-
 # ignorance case (see below) — most boots print nothing here at all.

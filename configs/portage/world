@@ -238,16 +238,6 @@ games-misc/bsd-games
 app-misc/figlet
 app-misc/cmatrix
 app-misc/sl
-# fortune-mod — one cookie per interactive login (Monolith UX Pass Task 5),
-# printed by monolith-base's zz-fortune.sh profile.d snippet. bsd-games
-# above does not build its own `fortune` in this repo's pinned
-# GAMES_TO_BUILD set (verified: games-misc/bsd-games-3.3.ebuild's default
-# game list has no "fortune" in it), so no /usr/bin/fortune collision.
-# Pulls app-text/recode and dev-libs/rinutils in unconditionally as
-# RDEPEND — see package.use/static's fortune-mod comment for why that's a
-# real (not just the usual CI-unverified) risk. Both are new, NOT added to
-# world themselves (transitive-only; portage resolves them automatically).
-games-misc/fortune-mod
 
 # rl144 — a deterministic, integer-only roguelike written in Rust, built for the
 # 486DX (terminal backend, static musl). Cross-built via the overlay ebuild using

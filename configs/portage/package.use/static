@@ -296,46 +296,6 @@ dev-libs/libffi static static-libs -debug -exec-static-trampoline -pax-kernel -t
 # figlet - ASCII art text banners
 app-misc/figlet static
 
-# fortune-mod - random fortune cookies (Monolith UX Pass Task 5). The
-# previously-staged "-nls" here was stale: verified against ::gentoo's
-# real games-misc/fortune-mod-3.24.0.ebuild — IUSE is "offensive pcre
-# test", there is no nls flag on this package at all. -offensive matches
-# upstream's own IUSE default (kept explicit for documentation parity,
-# same convention as nethack's "-X" below). -pcre needs nothing beyond
-# musl's own <regex.h> for `fortune -m`. -test is build-time only
-# (RESTRICT="!test? ( test )", and this repo never sets FEATURES=test).
-#
-# REAL RISK, not just the usual "no cross-toolchain here" CI-unverified
-# flag: fortune-mod's RDEPEND is UNCONDITIONAL on app-text/recode AND
-# >=dev-libs/rinutils-0.10.2 — no USE flag removes either, and there is no
-# custom overlay fork of fortune-mod in this tree (unlike e.g. rl144/
-# stele), so this pulls the real ::gentoo recipe, dependencies and all.
-# rinutils is trivial (DESCRIPTION: "Set of C headers containing macros
-# and static functions" — header-only cmake package, no target linking).
-# recode is the real unknown: an old autotools/gnulib package this repo
-# has never built before. Its own RDEPEND is only virtual/libiconv, which
-# is a no-op on elibc_musl (musl provides iconv natively) — so no further
-# new dependency chain — but recode's gnulib iconv shim calls
-# libiconv_open()/libiconv_close() (GNU-prefixed symbols) instead of
-# musl's iconv_open()/iconv_close(), which is exactly the failure mode
-# configs/portage/env/libiconv.conf was written for — its own comment
-# already names "librecode" as a case it covers, alongside app-arch/tar.
-# Wired app-text/recode onto that same env hook in package.env/
-# cross-compile. See the recode/rinutils entries just below.
-games-misc/fortune-mod -offensive -pcre -test
-
-# recode — pulled in unconditionally by games-misc/fortune-mod's RDEPEND
-# (see above). -nls avoids the sys-devel/gettext BDEPEND (this repo's
-# usual doctrine — see coreutils/tar/util-linux/etc above). -test is
-# build-time only. libiconv_open/libiconv_close linkage is handled by
-# package.env/cross-compile (libiconv.conf), not a USE flag.
-app-text/recode -nls -test
-
-# rinutils — pulled in unconditionally by games-misc/fortune-mod's RDEPEND
-# alongside recode (see above). Header-only cmake package — no RDEPEND of
-# its own, nothing to link statically. -test is build-time only.
-dev-libs/rinutils -test
-
 # cmatrix - terminal matrix rain animation
 app-misc/cmatrix static
 

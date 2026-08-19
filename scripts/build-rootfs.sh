@@ -223,8 +223,7 @@ EOF
     # Ordering contract (Task 6, hint hygiene — see the monolith-base
     # ebuild's src_install, profile.d section for the full statement):
     # ACTIONABLE-group, after 40-advisory.sh (security banner outranks a
-    # convenience hint), before zz-fortune.sh. Renamed from
-    # 10-dropbear-hint.sh in Task 6.
+    # convenience hint). Renamed from 10-dropbear-hint.sh in Task 6.
     #
     # /run-flag policy: this fires on EVERY login ON PURPOSE — it is a
     # security-posture reminder (sshd present but off, root has no
