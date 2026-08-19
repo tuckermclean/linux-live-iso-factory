@@ -594,3 +594,104 @@ jobs:
           path: output/boot-test-nat.log*
           retention-days: 14
           if-no-files-found: warn
+
+  # THE CLOCK LANDMINE (Monolith UX Pass Task 2), both directions. See
+  # run_clock_epoch/run_clock_1996 in scripts/boot-test.py for the full
+  # orchestration and the INVARIANT this is built against
+  # (.superpowers/sdd/2026-08-19-monolith-ux-pass/task-2-brief.md).
+  clock-epoch:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
+
+      - name: Start host http.server (the fixture monolith-time reads its Date header from)
+        run: |
+          mkdir -p /tmp/clocksrv && echo clock-fixture > /tmp/clocksrv/probe.txt
+          ( cd /tmp/clocksrv && python3 -m http.server 8000 --bind 0.0.0.0 ) &
+          echo "HTTP_PID=$!" >> "$GITHUB_ENV"
+          sleep 2
+
+      - name: Boot test — clock landmine, direction (a) RTC at epoch + fixture server
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode clock-epoch \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-clock-epoch.log"
+
+      - name: Stop host http.server
+        if: always()
+        run: kill "${HTTP_PID}" 2>/dev/null || true
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-clock-epoch-${{ github.run_id }}
+          path: output/boot-test-clock-epoch.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  clock-1996:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
+
+      # Deliberately NO fixture server here: a correct 1996 clock must never
+      # trigger a network call in the first place (see run_clock_1996).
+      - name: Boot test — clock landmine, direction (b) RTC in the disc's native era
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode clock-1996 \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-clock-1996.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-clock-1996-${{ github.run_id }}
+          path: output/boot-test-clock-1996.log
+          retention-days: 14
+          if-no-files-found: warn

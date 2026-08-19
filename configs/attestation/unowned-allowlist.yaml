@@ -72,6 +72,7 @@ allowlist:
   - etc/init.d/S30gpm
   - etc/init.d/S35netprobe
   - etc/init.d/S40network
+  - etc/init.d/S45monolith-time
   - etc/init.d/S50advisory
   - etc/monolith-release
   - etc/os-release

@@ -1,0 +1,123 @@
+#!/bin/sh
+#
+# monolith-time-check
+#
+# Runs after network is up (called from /etc/init.d/S45monolith-time, which
+# runs after S40network and before S50advisory — a corrected clock helps
+# advisory's own TLS fetch). Decides WHETHER monolith-time should run at
+# all, and does the actual calling.
+#
+# "The Monolith never assumes what year it is. It's a rock. Rocks are
+# patient." The trigger here is NEVER date plausibility — a 486 booted in
+# 1996 has a CORRECT clock, and a plausibility check would declare a true
+# date broken and phone the future to "fix" it. The only thing this script
+# detects is IGNORANCE: the clock sitting at or near a small set of KNOWN
+# "nobody has ever told this machine what time it is" sentinels.
+#
+# Designed for i486 with 16 MB RAM: POSIX sh only, no daemon. On a machine
+# that has an opinion about the time — including a correct 1996 clock —
+# this script does nothing at all: no output, no flag, no network call.
+#
+# Configuration (overridable for testing):
+#   MONOLITH_TIME_SYSCLASS   — /sys/class/net equivalent (default: real path)
+#   MONOLITH_TIME_FLAG       — /run flag path (default: real path)
+#   MONOLITH_TIME_CMDLINE    — /proc/cmdline equivalent (default: real path)
+
+set -u
+
+SYSCLASS="${MONOLITH_TIME_SYSCLASS:-/sys/class/net}"
+FLAG="${MONOLITH_TIME_FLAG:-/run/monolith-clock-ignorant}"
+CMDLINE_FILE="${MONOLITH_TIME_CMDLINE:-/proc/cmdline}"
+
+# ── Known ignorance signatures ──────────────────────────────────────────
+# NOT a plausibility check: this never asks "is this a sane date for the
+# disc's era", only "does the clock sit at/near one of three well-known,
+# specific, no-real-information instants". A working RTC — 1996 or 2026 —
+# essentially never sits at exactly one of these three timestamps, so the
+# risk of catching a genuine (if odd) clock is negligible no matter which
+# decade it's set to.
+#
+#   1970-01-01T00:00:00Z (epoch=0)         Unix epoch. The kernel's own
+#     fallback when the RTC can't be read at all (dead battery, no RTC
+#     hardware) — clock-at-epoch is no machine's true present in any
+#     decade this disc serves.
+#   1980-01-01T00:00:00Z (epoch=315532800) Classic PC BIOS/CMOS
+#     factory-reset default (also DOS/FAT's earliest representable date) —
+#     what many AMI/Award/Phoenix BIOSes on real 486-era hardware revert
+#     to after a dead CMOS battery.
+#   2000-01-01T00:00:00Z (epoch=946684800) Common post-Y2K BIOS/CMOS reset
+#     default seen on later boards.
+#
+# +/- 2 days (SLACK) around each sentinel absorbs (a) however many minutes
+# of boot time have elapsed since actual power-on, and (b) a full day of
+# RTC-stores-localtime-vs-kernel-reads-UTC skew — a classic, unrelated
+# misconfiguration an exact-instant match would otherwise dodge. It stays
+# narrow: days, never years, so it can't drift into being a plausibility
+# check by another name.
+SLACK=172800
+SENTINELS="0 315532800 946684800"
+
+clock_is_ignorant() {
+    now=$(date +%s 2>/dev/null) || return 1
+    for sentinel in $SENTINELS; do
+        lo=$((sentinel - SLACK))
+        hi=$((sentinel + SLACK))
+        if [ "$now" -ge "$lo" ] && [ "$now" -le "$hi" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Any non-loopback interface reporting operstate=up. S40network runs before
+# this script and brings up every eth*/en* it finds, so this is answerable
+# by the time we're called.
+have_iface_up() {
+    for d in "$SYSCLASS"/*; do
+        [ -e "$d" ] || continue
+        n=${d##*/}
+        [ "$n" = lo ] && continue
+        state=$(cat "$d/operstate" 2>/dev/null || echo unknown)
+        [ "$state" = up ] && return 0
+    done
+    return 1
+}
+
+# Has an opinion (including a correct 1996 clock) — silent, no network call,
+# nothing written. This is the common case on every boot but the dead-RTC one.
+clock_is_ignorant || exit 0
+
+if ! have_iface_up; then
+    # Ignorant, and no interface to ask — never a boot-time network wait.
+    # Record the ignorance so the login hint can offer the hand-typed remedy.
+    : > "$FLAG" 2>/dev/null
+    exit 0
+fi
+
+# Test hook: a kernel cmdline override of the fetch URL, so boot-test.py's
+# clock-epoch mode (scripts/boot-test.py) can point monolith-time at a
+# hermetic host-side fixture server instead of the live internet. Absent by
+# default (production boots never set this); only consulted here, on the
+# already-rare ignorant-and-networked path, so it costs nothing on every
+# other boot. A caller-supplied MONOLITH_TIME_URL (e.g. someone re-running
+# this script by hand) always wins over the cmdline.
+if [ -z "${MONOLITH_TIME_URL:-}" ] && [ -r "$CMDLINE_FILE" ]; then
+    for arg in $(cat "$CMDLINE_FILE" 2>/dev/null); do
+        case "$arg" in
+            monolith_time_url=*)
+                MONOLITH_TIME_URL="${arg#monolith_time_url=}"
+                export MONOLITH_TIME_URL
+                ;;
+        esac
+    done
+fi
+
+if monolith-time; then
+    # The network told it the time; it now has an opinion. Silent from here.
+    exit 0
+fi
+
+# Ignorant, an interface exists, but the fetch failed (offline, blocked,
+# whatever) — same remedy as the no-interface case.
+: > "$FLAG" 2>/dev/null
+exit 0

@@ -42,6 +42,14 @@ src_install() {
 	doexe "${FILESDIR}/monolith-router"
 	doexe "${FILESDIR}/monolith-console"
 	doexe "${FILESDIR}/monolith-advisory-check"
+	# monolith-time (UX Pass Task 2, the clock landmine): sets the clock
+	# from an HTTP Date header, and monolith-time-check, the gate that
+	# decides WHEN it's allowed to run (demonstrated ignorance only — see
+	# the INVARIANT in monolith-time-check). Runs from
+	# /etc/init.d/S45monolith-time. Unit-tested standalone:
+	# scripts/tests/monolith-time.test.sh.
+	doexe "${FILESDIR}/monolith-time"
+	doexe "${FILESDIR}/monolith-time-check"
 
 	# /usr/lib/cgi-bin — SP5 P4 LAMP-invariant guestbook fixture (perl +
 	# CGI.pm + the sqlite3 CLI). Ships executable; perl reads its own
@@ -57,6 +65,7 @@ src_install() {
 	# /etc/profile.d — sourced by /etc/profile, not executed directly.
 	insinto /etc/profile.d
 	doins "${FILESDIR}/monolith-advisory.sh"
+	doins "${FILESDIR}/monolith-time-hint.sh"
 
 	# /etc/bash/bashrc.d — sourced from bash's bashrc.d chain; runs last
 	# (after 10-gentoo-color.bash sets PS1) to prepend the dark-grey ■.

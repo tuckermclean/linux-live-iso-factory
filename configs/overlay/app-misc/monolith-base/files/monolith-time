@@ -1,0 +1,82 @@
+#!/bin/sh
+#
+# monolith-time — set the clock from an HTTP Date header.
+#
+# "The Monolith never assumes what year it is. It's a rock. Rocks are
+# patient." This tool has NO opinion about which decade it lands in — it
+# reports what the network says, full stop. Run it in 1996 and it believes
+# 1996's servers. It never "corrects" toward an assumed present, and it is
+# never itself the judge of WHEN it should run (see
+# /etc/init.d/S45monolith-time + monolith-time-check for that gate, which
+# is driven by demonstrated ignorance, never date plausibility). This
+# script will happily set the clock to any date a server reports.
+#
+# Why plain http, not https: this is the tool that makes https POSSIBLE in
+# the first place. A dead RTC boots at the Unix epoch; openssl then rejects
+# every certificate (chain says "not yet valid" or "expired" against an
+# epoch clock), so TLS-by-delegation (curl/wget/lynx/mutt/irssi/Stele) is
+# dead until something sets the clock. That something cannot itself depend
+# on TLS.
+#
+# Usage: monolith-time [URL]
+#   URL   plain-http URL to HEAD. Default: $MONOLITH_TIME_URL if set, else
+#         the built-in default below. Positional arg wins over the env var.
+#
+# Sets the system clock via `date -s` — the booted rootfs's GNU coreutils
+# `date` (NOT busybox; busybox is initramfs-only, see rootfs/init) — then
+# writes it to the hardware RTC via `hwclock -w` if hwclock is present
+# (probed, never assumed: not every machine this disc boots on has one).
+#
+# ~1s accuracy from an HTTP Date header is plenty for TLS certificate
+# validity windows. This is not an NTP replacement and doesn't try to be.
+
+set -u
+
+DEFAULT_URL="http://example.com/"
+URL="${1:-${MONOLITH_TIME_URL:-$DEFAULT_URL}}"
+
+if ! command -v curl >/dev/null 2>&1; then
+    echo "monolith-time: curl not found; cannot ask the network what time it is" >&2
+    exit 1
+fi
+
+# -sI: silent, headers-only (HEAD). --max-time/--connect-timeout bound the
+# whole call so a dead or slow link fails fast instead of hanging the boot.
+HEADERS=$(curl -sI --connect-timeout 5 --max-time 8 "$URL" 2>/dev/null)
+if [ -z "$HEADERS" ]; then
+    echo "monolith-time: no response from $URL (offline, or unreachable)" >&2
+    exit 1
+fi
+
+# Date header, e.g. "Date: Thu, 13 Aug 2026 20:15:03 GMT". Header names are
+# case-insensitive (RFC 7230); match case-insensitively and take the first.
+DATE_LINE=$(printf '%s\n' "$HEADERS" | grep -i '^Date:' | head -n1)
+if [ -z "$DATE_LINE" ]; then
+    echo "monolith-time: response from $URL had no Date header" >&2
+    exit 1
+fi
+
+# Strip the "Date:" prefix (case-insensitive) and any CR/leading space.
+HTTP_DATE=$(printf '%s\n' "$DATE_LINE" | sed 's/^[Dd][Aa][Tt][Ee]:[[:space:]]*//' | tr -d '\r')
+if [ -z "$HTTP_DATE" ]; then
+    echo "monolith-time: could not parse a date out of: $DATE_LINE" >&2
+    exit 1
+fi
+
+# GNU `date -s` parses the same free-form date grammar as `date -d`, which
+# reads RFC 7231 HTTP-dates natively — one call sets the clock to exactly
+# what the header said.
+if ! date -s "$HTTP_DATE" >/dev/null 2>&1; then
+    echo "monolith-time: '$HTTP_DATE' (from $URL) did not parse as a date" >&2
+    exit 1
+fi
+
+echo "monolith-time: clock set to $HTTP_DATE (from $URL)"
+
+if command -v hwclock >/dev/null 2>&1; then
+    if ! hwclock -w 2>/dev/null; then
+        echo "monolith-time: hwclock -w failed (no writable RTC?)" >&2
+    fi
+fi
+
+exit 0

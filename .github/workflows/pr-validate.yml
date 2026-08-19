@@ -56,7 +56,7 @@ jobs:
           ./actionlint -color -shellcheck=
 
       - name: Shell lint (shellcheck, errors only)
-        run: shellcheck --severity=error scripts/*.sh scripts/tests/*.sh configs/overlay/app-misc/monolith-base/files/monolith-net configs/overlay/app-misc/monolith-base/files/monolith-router configs/overlay/app-misc/monolith-base/files/monolith
+        run: shellcheck --severity=error scripts/*.sh scripts/tests/*.sh configs/overlay/app-misc/monolith-base/files/monolith-net configs/overlay/app-misc/monolith-base/files/monolith-router configs/overlay/app-misc/monolith-base/files/monolith configs/overlay/app-misc/monolith-base/files/monolith-time configs/overlay/app-misc/monolith-base/files/monolith-time-check
 
       - name: Shell unit tests (scripts/tests/*.sh)
         run: |

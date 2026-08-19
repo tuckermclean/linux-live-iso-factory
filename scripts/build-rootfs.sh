@@ -460,6 +460,31 @@ exit 0
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/S40network"
 
+    # /etc/init.d/S45monolith-time - THE CLOCK LANDMINE (Monolith UX Pass
+    # Task 2). Runs after S40network (so "is an interface up" is answerable)
+    # and before S50advisory (so a corrected clock helps advisory's own TLS
+    # fetch). All the actual logic — deciding whether the clock is
+    # demonstrably ignorant, and calling monolith-time if so — lives in
+    # /usr/sbin/monolith-time-check (app-misc/monolith-base); this wrapper
+    # only invokes it, mirroring S50advisory's split.
+    cat > "$ROOTFS_DIR/etc/init.d/S45monolith-time" << 'EOF'
+#!/bin/sh
+# S45monolith-time - correct a demonstrably ignorant clock, quietly
+case "$1" in
+    start)
+        /usr/sbin/monolith-time-check
+        ;;
+    stop|restart)
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+exit 0
+EOF
+    chmod 755 "$ROOTFS_DIR/etc/init.d/S45monolith-time"
+
     # Dropbear SSH host key generation (runs before network)
     cat > "$ROOTFS_DIR/etc/init.d/S20keygen" << 'EOF'
 #!/bin/sh

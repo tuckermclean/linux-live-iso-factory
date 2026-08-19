@@ -27,6 +27,20 @@ was coldplug-loaded from the initrd before the squashfs was mounted:
           coldplug loads modules for hardware that's present, not
           unconditionally.
 
+THE CLOCK LANDMINE (Monolith UX Pass Task 2) — both directions of the
+/etc/init.d/S45monolith-time boot hook, via QEMU's `-rtc base=<date>`
+(--rtc-date; see build_clock_epoch_cmd/build_clock_1996_cmd):
+  clock-epoch RTC seeded at the Unix epoch (dead-RTC sentinel) + a host
+              fixture HTTP server (mirrors the nat-router job's
+              `python3 -m http.server` step); asserts the automatic boot
+              hook corrects the clock to ~now and the ignorance flag clears.
+  clock-1996  RTC seeded inside the disc's own native era, no fixture
+              server; asserts the hook does NOT touch the clock, makes no
+              network call, and never sets the ignorance flag — a correct
+              1996 clock must never be "corrected" toward the CI host's
+              real present. This is the negative control that makes
+              clock-epoch's positive result mean something.
+
 Ground truth this script is built against (re-check these if the boot
 sequence ever changes — this script has no other source of truth):
   rootfs/init                 — initramfs init: mount sequence, log lines
@@ -168,6 +182,14 @@ def build_bios_cmd(args):
         "-serial", "mon:stdio",
         "-no-reboot",
     ]
+    # --rtc-date (default: unset -> QEMU uses the host clock, its own
+    # default). QEMU's `-rtc base=<date>` sets the guest RTC's INITIAL value
+    # at cold boot; the guest's own clock then runs forward from there, same
+    # as real hardware. Used by the clock-epoch/clock-1996 modes below to
+    # drive THE CLOCK LANDMINE test in both directions (see
+    # .superpowers/sdd/2026-08-19-monolith-ux-pass/task-2-brief.md).
+    if getattr(args, "rtc_date", None):
+        cmd += ["-rtc", f"base={args.rtc_date}"]
     return cmd
 
 
@@ -385,6 +407,152 @@ def build_nic_cmd(args):
     cmd = build_bios_cmd(args)
     cmd += ["-net", f"nic,model={args.nic_model}", "-net", "user"]
     return cmd
+
+
+# THE CLOCK LANDMINE (Monolith UX Pass Task 2): boot with the guest RTC
+# seeded to a specific instant via QEMU's `-rtc base=<ISO date>` (documented
+# by QEMU as interpreted in UTC), then prove the automatic
+# /etc/init.d/S45monolith-time boot hook does the right, invariant-respecting
+# thing in both directions. See
+# .superpowers/sdd/2026-08-19-monolith-ux-pass/task-2-brief.md for the
+# INVARIANT this is built against: the trigger is demonstrated ignorance
+# (epoch / known RTC-reset dates), never date plausibility.
+CLOCK_EPOCH_RTC = "1970-01-01T00:00:00"   # the dead-RTC / no-battery sentinel
+CLOCK_1996_RTC = "1996-06-15T12:00:00"    # squarely inside the disc's own native era
+
+# Host-side fixture HTTP server the guest reaches through QEMU's default
+# usermode networking gateway (10.0.2.2 -> the CI host; same address
+# build_nat_router_cmd's WAN link and run_nat's client curl already use).
+# Started by the CI job as a plain `python3 -m http.server` — mirrors
+# boot-test.yml's "Start host http.server" step in the nat-router job
+# verbatim, just a different port so the two jobs (which run on separate
+# runners anyway) never collide even if that changes.
+CLOCK_FIXTURE_PORT = 8000
+CLOCK_FIXTURE_URL = f"http://10.0.2.2:{CLOCK_FIXTURE_PORT}/probe.txt"
+
+
+def build_clock_epoch_cmd(args):
+    """
+    Direction (a): RTC at the Unix epoch. --rtc-date defaults to
+    CLOCK_EPOCH_RTC when the caller didn't already pass one explicitly, so
+    `--mode clock-epoch` is correct out of the box while still allowing an
+    override for local experimentation.
+    """
+    if not args.rtc_date:
+        args.rtc_date = CLOCK_EPOCH_RTC
+    return build_bios_cmd(args)
+
+
+def build_clock_1996_cmd(args):
+    """Direction (b): RTC seeded to a date inside the disc's own native era."""
+    if not args.rtc_date:
+        args.rtc_date = CLOCK_1996_RTC
+    return build_bios_cmd(args)
+
+
+def epoch_close_to(target_epoch, tolerance):
+    """
+    Validator: the guest's `date +%s` output must be an integer within
+    `tolerance` seconds of `target_epoch`. Used for the clock-epoch
+    direction, where "corrected" means "close to the CI host's real time
+    (as reported by the fixture server's Date header)", not an exact match.
+    """
+    def _v(exit_code, output):
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        m = re.search(r"(\d{9,})", output)
+        if not m:
+            return False, f"no epoch integer found in output: {output.strip()[-200:]}"
+        got = int(m.group(1))
+        delta = abs(got - target_epoch)
+        if delta > tolerance:
+            return False, (
+                f"guest epoch {got} is {delta}s away from expected ~{target_epoch} "
+                f"(tolerance {tolerance}s)"
+            )
+        return True, f"guest epoch {got}, delta {delta}s (tolerance {tolerance}s)"
+    return _v
+
+
+def run_clock_epoch(child, args):
+    """
+    THE CLOCK LANDMINE, direction (a): dead-RTC machine + a reachable
+    fixture server. The automatic S45monolith-time hook (running during rcS,
+    well before this function ever gets a shell) must see a clock sitting at
+    the epoch sentinel, see eth0 up (S40network already ran), fetch the
+    fixture's Date header, and set the clock — all with zero interaction
+    from this test. We only observe the result once a shell is up: the clock
+    reads ~now, and the ignorance flag the login hint keys on is gone
+    (the fetch succeeded, so the machine now has an opinion).
+    """
+    select_isolinux_label(child, f"serial monolith_time_url={CLOCK_FIXTURE_URL}")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    results = []
+    # A one-hour tolerance absorbs however long boot + the QEMU launch took,
+    # plus the fixture server's own clock skew — it's nowhere near loose
+    # enough to also match "still 1970" or "some plausible past decade", so
+    # it still proves the correction actually happened.
+    results.append((
+        "clock corrected to ~now via monolith-time (S45 boot hook)",
+        *run_check(child, "date +%s", "date +%s", epoch_close_to(int(time.time()), tolerance=3600)),
+    ))
+    results.append((
+        "ignorance flag absent after a successful correction",
+        *run_check(child, "flag absent", "test ! -e /run/monolith-clock-ignorant", exit_code_only()),
+    ))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
+def run_clock_1996(child, args):
+    """
+    THE CLOCK LANDMINE, direction (b) — the disc must pass CI in the year it
+    was built for. RTC seeded inside the disc's own native era, no fixture
+    server offered and no cmdline override: if S45monolith-time mistakenly
+    treated this as ignorance (a plausibility check in disguise) it would
+    either hang waiting on a network call that's never coming, or — since CI
+    runners DO have real internet — reach the genuine default URL and
+    stomp the clock to today's real date. Either failure mode is caught by
+    the assertions below: the year must come out exactly 1996 (proving no
+    stomp happened) and the ignorance flag must be absent (proving the
+    machine was never judged ignorant in the first place, so the login hint
+    stays silent).
+    """
+    select_isolinux_label(child, "serial")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    results = []
+    results.append((
+        "clock left exactly as the machine believed it (year 1996, untouched)",
+        *run_check(child, "date +%Y", "date +%Y", contains("1996")),
+    ))
+    results.append((
+        "no ignorance flag (a correct 1996 clock is never judged ignorant)",
+        *run_check(child, "flag absent", "test ! -e /run/monolith-clock-ignorant", exit_code_only()),
+    ))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
 
 
 # Private LAN link between the router and client guests, carried as a
@@ -1590,6 +1758,8 @@ MODE_BUILDERS = {
     "nic": build_nic_cmd,
     "nat": build_nat_router_cmd,
     "gui": build_gui_cmd,
+    "clock-epoch": build_clock_epoch_cmd,
+    "clock-1996": build_clock_1996_cmd,
 }
 
 MODE_RUNNERS = {
@@ -1604,6 +1774,8 @@ MODE_RUNNERS = {
     "nic": run_nic,
     "nat": run_nat,
     "gui": run_gui,
+    "clock-epoch": run_clock_epoch,
+    "clock-1996": run_clock_1996,
 }
 
 MODE_DEFAULT_RAM = {
@@ -1618,6 +1790,8 @@ MODE_DEFAULT_RAM = {
     "nic": 256,
     "nat": 256,
     "gui": 128,
+    "clock-epoch": 64,  # same bios/pc machine as "bios", no extra RAM pressure
+    "clock-1996": 64,
 }
 
 
@@ -1656,6 +1830,14 @@ def parse_args():
     p.add_argument(
         "--gui-screendump", default="output/gui-screendump.ppm",
         help="Host-side path QEMU's HMP 'screendump' writes the framebuffer PPM to (gui mode only)",
+    )
+    p.add_argument(
+        "--rtc-date", default=None,
+        help="QEMU `-rtc base=<value>` to seed the guest's RTC at cold boot, e.g. "
+             "1970-01-01T00:00:00 or 1996-06-15T12:00:00 (interpreted as UTC). "
+             "Default: unset -- QEMU uses the host clock. The clock-epoch/clock-1996 "
+             "modes set a sensible default automatically when this is omitted; pass "
+             "it explicitly to override even those.",
     )
     return p.parse_args()
 
