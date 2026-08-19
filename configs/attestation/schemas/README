@@ -1,35 +1,42 @@
 CycloneDX schemas, vendored for offline validation
 ====================================================
 
-These files are fetched, unmodified, from:
+These files are fetched, unmodified (except for the "$id" strip below), from:
 
   https://raw.githubusercontent.com/CycloneDX/specification/master/schema/<name>
 
   - bom-1.6.schema.json
-  - spdx.schema.json
-  - jsf-0.82.schema.json
+  - bom-1.7.schema.json
+  - spdx.schema.json            (transitive $ref of both bom-1.6 and bom-1.7)
+  - jsf-0.82.schema.json        (transitive $ref of both bom-1.6 and bom-1.7)
+  - cryptography-defs.schema.json  (transitive $ref of bom-1.7 ONLY — new in 1.7)
 
 Each file has had its top-level "$id" key REMOVED. The published schemas set
 "$id" to an "http://cyclonedx.org/schema/..." URL; check-jsonschema resolves a
 schema's relative $refs against its "$id" first, so with "$id" present it
-would try to fetch spdx.schema.json / jsf-0.82.schema.json over the network at
-validation time instead of using the local files passed via --base-uri. That
-network fetch once hung the attestation job for hours — hence stripping it.
+would try to fetch spdx.schema.json / jsf-0.82.schema.json / etc. over the
+network at validation time instead of using the local files passed via
+--base-uri. That network fetch once hung the attestation job for hours —
+hence stripping it.
 
 The strip was done with:
 
     python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); \
       d.pop("$id",None); json.dump(d,open(p,"w"), indent=2)' <file>
 
-Why only bom-1.6: scripts/enrich-sbom.py hard-floors every SBOM's
-"specVersion" to "1.6" (see enrich-sbom.py, the SBOM finalization step), so
-the attestation pipeline only ever validates against the CycloneDX 1.6 BOM
-schema. spdx.schema.json and jsf-0.82.schema.json are transitive $refs of
-bom-1.6.schema.json (license SPDX expressions and JSF signature blocks) and
-are spec-version-agnostic, so one copy of each covers all BOMs.
+Which bom-<version> schemas to vendor: scripts/enrich-sbom.py FLOORS every
+SBOM's "specVersion" to "1.6" but does NOT cap it — so whatever CycloneDX
+version Syft emits (>= 1.6) passes through unchanged. Today Syft emits 1.7, so
+we vendor BOTH bom-1.6 and bom-1.7 (older cached SBOMs may still be 1.6).
+spdx.schema.json and jsf-0.82.schema.json are spec-version-agnostic transitive
+$refs shared by both; cryptography-defs.schema.json is referenced only by
+bom-1.7. The full $ref closure resolves entirely to files in this directory
+(verified: no external/network $refs remain).
 
-If the SBOM's specVersion is ever bumped past 1.6, the "Validate CycloneDX
-SBOM schema" step in .github/workflows/build.yml will fail loudly (by design
-— no network fallback). To fix: vendor the new bom-<version>.schema.json here
-using the same fetch + strip steps above, and re-check whether spdx/jsf also
-need a newer revision for that CycloneDX release.
+If the SBOM's specVersion is ever bumped again (Syft upgrades its CycloneDX
+output, e.g. to 1.8), the "Validate CycloneDX SBOM schema" step in
+.github/workflows/build.yml will fail loudly (by design — no network
+fallback). To fix: vendor the new bom-<version>.schema.json here using the
+same fetch + strip steps above, then grep the new schema for '"$ref"' and
+vendor any NEW transitive schema it pulls in (as bom-1.7 introduced
+cryptography-defs) so the whole closure stays local.
