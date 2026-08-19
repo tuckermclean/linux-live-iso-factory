@@ -69,6 +69,26 @@ if [ -d "${PORTAGE_DIR}" ] && [ -d "${SYSROOT_PORTAGE}" ]; then
     mkdir -p "${SYSROOT_PORTAGE}/repos.conf"
     printf '[monolith]\nlocation = /configs/overlay\npriority = 20\nmasters = gentoo\nauto-sync = no\n' \
         > "${SYSROOT_PORTAGE}/repos.conf/monolith.conf"
+
+    # ALSO mirror package.mask onto the BUILD HOST's /etc/portage. Cross-emerge
+    # resolves TARGET packages against the sysroot config above, but a package's
+    # BDEPEND (host build tools — docutils/rst2man for glib's man pages, cmake,
+    # etc.) is resolved for BROOT=/ against the HOST config. A mask that lives
+    # only in the sysroot is invisible to that half of the graph, so a broken or
+    # drifting host build-dep (e.g. the live dev-cpp/eigen-9999 pulled via
+    # glib->docutils->pillow->pybind11, or docutils>=0.23's hard pillow dep) can
+    # never be masked away — the symptom that turned full builds red even after
+    # the tree was pinned. package.mask is purely SUBTRACTIVE, and everything we
+    # mask (man-db, mc, nmap, fortune, nethack, eigen-9999, docutils>=0.23) is a
+    # target package or a broken host tool we explicitly do not want built, so
+    # applying the same masks host-side is safe. We sync ONLY package.mask —
+    # never package.use/accept_keywords — so we can't accidentally enable or
+    # reconfigure a host tool, only forbid versions.
+    if [ -d "${PORTAGE_DIR}/package.mask" ]; then
+        echo "==> Mirroring package.mask to the build host /etc/portage (host BDEPEND resolution)"
+        mkdir -p /etc/portage/package.mask
+        cp -r "${PORTAGE_DIR}/package.mask"/* /etc/portage/package.mask/ 2>/dev/null || true
+    fi
 fi
 
 # Ensure groups required by game package preinst phases exist on the BUILD HOST.

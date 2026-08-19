@@ -62,6 +62,21 @@ net-analyzer/nmap
 # this mask is belt-and-suspenders in case that pin is ever loosened.
 >=games-roguelike/nethack-5.0.0
 
+# dev-python/docutils>=0.23 grew a HARD dependency on dev-python/pillow (a
+# 46 MB image library that in turn pulls dev-python/pybind11 -> dev-cpp/eigen).
+# docutils is dragged in as a HOST build tool (rst2man) by dev-libs/glib's
+# man-page generation — an UNCONDITIONAL BDEPEND with no USE gate, so it cannot
+# be turned off from our side. Older docutils (0.21.x) is pure Python with no
+# such dep, generates the exact same man pages, and keeps the whole Pillow/
+# pybind11/eigen Python stack (all unbuildable in this cross env — they demand a
+# host PYTHON_TARGET we don't provide) out of the graph entirely. Mask the 0.23+
+# line so the host resolves rst2man to plain docutils-0.21.x. This is the real
+# fix for the post-pin red build; the eigen mask below is now belt-and-suspenders.
+# NB: only bites once package.mask is mirrored host-side (build-packages.sh) —
+# docutils here is a BDEPEND, resolved against the HOST /etc/portage, not the
+# cross sysroot.
+>=dev-python/docutils-0.23
+
 # dev-cpp/eigen-9999 is a LIVE (git-HEAD) ebuild: its SRC_URI is upstream git,
 # which drifts between builds, so its versioned patch (eigen-5.0.1-cmake-
 # GNUInstallDirs.patch) fails to apply once upstream moves past it — the failure
