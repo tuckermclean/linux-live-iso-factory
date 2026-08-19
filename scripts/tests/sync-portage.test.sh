@@ -56,4 +56,34 @@ fetch_snapshot >/dev/null 2>&1 && r=0 || r=1
 grep -q 'aws' "$CALLLOG" && { echo "  FAIL: aws called without S3_BUCKET"; fails=$((fails+1)); } || echo "  ok: aws not called without S3_BUCKET"
 teardown
 
+# 5. The legacy .md5sum is OPTIONAL (the GPG .gpgsig is authoritative): required
+#    .tar.xz + .gpgsig come from upstream, the .md5sum 404s -> fetch still succeeds
+#    and no empty stub file is left behind.
+setup
+export S3_BUCKET=bkt
+mk_stub aws 'exit 1'   # nothing in S3
+# wget: serve .tar.xz and .gpgsig, 404 the .md5sum.
+mk_stub wget 'f=""; url=""; for a in "$@"; do case "$a" in /*) f="$a";; http://*|https://*) url="$a";; esac; done; case "$url" in *.md5sum) exit 8;; *) echo data > "$f"; exit 0;; esac'
+fetch_snapshot >/dev/null 2>&1 && r=0 || r=1
+[ "$r" -eq 0 ] && echo "  ok: optional .md5sum absent -> fetch still succeeds" || { echo "  FAIL: md5sum-absent rc=$r"; fails=$((fails+1)); }
+[ ! -e "$SYNC_MIRROR_DIR/snapshots/gentoo-20260811.tar.xz.md5sum" ] && echo "  ok: empty .md5sum dropped (not left as a 0-byte stub)" || { echo "  FAIL: stray .md5sum kept"; fails=$((fails+1)); }
+teardown
+
+# 6. THE FIX (root cause of the 0% binpkg-cache hit): webrsync_local must run
+#    emerge-webrsync against the PINNED localhost mirror over http, with NO
+#    upstream in GENTOO_MIRRORS. The old file://+upstream form silently fell back
+#    to distfiles.gentoo.org (whose snapshot drifts), invalidating the whole
+#    binpkg cache and cold-building every time. This asserts the drift is gone.
+setup
+mk_stub python3 'exit 0'                              # the http.server (stubbed; wget below fakes readiness)
+mk_stub wget 'exit 0'                                 # readiness probe passes immediately
+mk_stub emerge-webrsync 'echo "GENTOO_MIRRORS=[$GENTOO_MIRRORS] emerge-webrsync $*" >> "$CALLLOG"; exit 0'
+webrsync_local >/dev/null 2>&1 && r=0 || r=1
+trap - EXIT INT TERM 2>/dev/null || true             # clear the server-cleanup trap webrsync_local set in our shell
+[ "$r" -eq 0 ] && echo "  ok: webrsync_local returns 0" || { echo "  FAIL: webrsync_local rc=$r"; fails=$((fails+1)); }
+grep -q 'GENTOO_MIRRORS=\[http://127.0.0.1:8899\]' "$CALLLOG" && echo "  ok: emerge-webrsync uses the pinned localhost http mirror" || { echo "  FAIL: not pinned to localhost:"; cat "$CALLLOG"; fails=$((fails+1)); }
+grep -q 'distfiles.gentoo.org' "$CALLLOG" && { echo "  FAIL: upstream present in GENTOO_MIRRORS -> tree can drift"; fails=$((fails+1)); } || echo "  ok: NO upstream in GENTOO_MIRRORS (deterministic, no drift)"
+grep -q 'revert=20260811' "$CALLLOG" && echo "  ok: reverts to the pinned BUILD_EPOCH" || { echo "  FAIL: no --revert=<epoch>"; fails=$((fails+1)); }
+teardown
+
 echo; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
