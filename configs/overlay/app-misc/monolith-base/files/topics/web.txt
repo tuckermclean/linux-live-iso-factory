@@ -1,0 +1,18 @@
+web — browsing and fetching from the console
+
+  lynx is the browser on this disc (www-client/lynx): text-mode, no
+  images, works the same over a serial console as any other TTY program.
+
+      lynx https://example.org
+
+  www-client/w3m was tried for this disc and dropped — it fails to build
+  against this musl toolchain — so lynx is what shipped instead.
+
+  Anything here that speaks HTTP (lynx, curl, wget) honors the standard
+  proxy variables:
+
+      export http_proxy=http://proxy.example:3128/
+      export https_proxy=$http_proxy
+
+  curl and wget also cover scripted fetches (see: monolith-advisory-check
+  for a worked example of curl-with-fallback-to-wget).

@@ -29,6 +29,10 @@ src_install() {
 	# the framebuffer. Hand-authored → owned here so it isn't an unowned rootfs
 	# file (attestation Pillar 4). See files/startx.
 	doexe "${FILESDIR}/startx"
+	# monolith (Monolith UX Pass, Task 1): the front door — lists the helpers
+	# and curated tools below instead of leaving them to tribal knowledge.
+	# Unit-tested standalone: scripts/tests/monolith.test.sh.
+	doexe "${FILESDIR}/monolith"
 
 	# /usr/sbin — monolith-router (SP2/SP3 NAT + dnsmasq DHCP/DNS helper,
 	# unit-tested: scripts/tests/monolith-router.test.sh), monolith-console
@@ -44,6 +48,11 @@ src_install() {
 	# shebang. See scripts/boot-test.py smoke_guestbook.
 	exeinto /usr/lib/cgi-bin
 	doexe "${FILESDIR}/guestbook.cgi"
+
+	# /usr/share/monolith — curated topic text for `monolith help <topic>` /
+	# `monolith tools` (Task 1). Plain text, cat/pager'd, never generated.
+	insinto /usr/share/monolith
+	doins "${FILESDIR}/topics/"*.txt
 
 	# /etc/profile.d — sourced by /etc/profile, not executed directly.
 	insinto /etc/profile.d

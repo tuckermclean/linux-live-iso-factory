@@ -1,0 +1,24 @@
+dev — perl, sqlite3, and the CGI guestbook fixture
+
+  perl on this disc is static and built -Uusedl: there is no dynamic
+  loader, so no XS module can be loaded at runtime. CGI.pm is baked in as
+  a pure-Perl module for exactly this reason. DBI/DBD::SQLite are NOT
+  shipped (a perl-cross build-order limitation, not an oversight) — talk
+  to SQLite by shelling out to the sqlite3 CLI instead, the way a
+  pre-DBI-era CGI script would have.
+
+      sqlite3 /tmp/somedb.sqlite 'select 1;'
+
+  /usr/lib/cgi-bin/guestbook.cgi is a worked example of exactly that
+  pattern: perl + CGI.pm for param()/header(), sqlite3 for storage, no
+  DBI anywhere.
+
+      REQUEST_METHOD=GET QUERY_STRING='name=Ada&message=Hello' \
+          perl /usr/lib/cgi-bin/guestbook.cgi
+
+  prints the just-inserted row read back from SQLite (a genuine
+  INSERT-then-SELECT round trip, not just an echo). GUESTBOOK_DB
+  overrides the db path (default /tmp/guestbook.db).
+
+  gdb is also on the disc (target-native, ptrace-based) for anything that
+  outgrows print-statement debugging.

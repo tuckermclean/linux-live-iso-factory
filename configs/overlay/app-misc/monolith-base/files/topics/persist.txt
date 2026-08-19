@@ -1,0 +1,18 @@
+persist — keeping changes across a reboot
+
+  By default the disc runs read-only underneath: a tmpfs overlay absorbs
+  every write, and it all vanishes at power-off.
+
+  Boot with the `persist` kernel parameter and a partition labeled
+  MONOLITH_PERSIST becomes the overlay's upper/work storage instead — the
+  live mountpoint is /overlay, and changes made to the running root
+  survive a reboot.
+
+  Create one (from a shell on the disc, or any other Linux box):
+      mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN
+
+  If `persist` was requested but no MONOLITH_PERSIST partition is found,
+  the boot falls back to tmpfs with a warning — not a failed boot.
+
+  There is no monolith-persist helper yet; the mkfs line above is the
+  current, manual, whole liturgy.
