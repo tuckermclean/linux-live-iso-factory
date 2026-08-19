@@ -1337,11 +1337,12 @@ def run_gui(child, args):
         exit_code_only(), timeout=15,
     )
 
-    log("Running `startx` (Xfbdev + st terminal) on the framebuffer")
+    log("Running `startx` (Xfbdev + dwm + st) on the framebuffer")
     # startx (app-misc/monolith-base): stops gpm, launches Xfbdev with the
     # libXfont built-in fonts (-fp built-ins, no font files on disc), waits for
-    # :0, then launches st. This exercises the whole user-facing `startx → a
-    # term` path — the server AND the de-Xft'd core-font terminal.
+    # :0, then launches the dwm window manager and one st terminal. This
+    # exercises the whole user-facing `startx → managed desktop` path — the
+    # server, the de-Xft'd core-font WM, AND the de-Xft'd core-font terminal.
     child.sendline("startx >/tmp/startx.log 2>&1 &")
     time.sleep(1)  # let the shell fork the background job before driving serial
     # startx's own loop waits for Xfbdev to listen (~2-4s) then execs st; give
@@ -1355,12 +1356,15 @@ def run_gui(child, args):
               "echo '--- startx.log ---'; cat /tmp/startx.log 2>&1; true",
               exit_code_only(), timeout=15)
 
-    # Both the server AND the terminal must be alive: a server that couldn't
-    # open the fb/fonts, or an st that couldn't connect or load its font, exits
-    # immediately. Corroborate with a negative scan of the X log for fatals.
+    # The server, the WM, AND the terminal must all be alive: a server that
+    # couldn't open the fb/fonts, a dwm that couldn't load its bar font or grab
+    # the root ("another window manager is running"), or an st that couldn't
+    # connect or load its font, exits immediately. Corroborate with a negative
+    # scan of the X log for fatals.
     server_up = run_check(
-        child, "startx: Xfbdev + st both alive, no fatal X error",
-        "pgrep -x Xfbdev >/dev/null 2>&1 && pgrep -x st >/dev/null 2>&1 && "
+        child, "startx: Xfbdev + dwm + st all alive, no fatal X error",
+        "pgrep -x Xfbdev >/dev/null 2>&1 && pgrep -x dwm >/dev/null 2>&1 && "
+        "pgrep -x st >/dev/null 2>&1 && "
         "! grep -Eq 'Fatal|could not open default font|giving up' /tmp/Xfbdev.log",
         exit_code_only(), timeout=15,
     )
@@ -1375,8 +1379,8 @@ def run_gui(child, args):
         not_black_ok, not_black_detail = False, f"screendump failed: {dump_detail}"
 
     results = [
-        ("startx brings up Xfbdev + st on the framebuffer", *server_up),
-        ("framebuffer screendump is not uniformly black (a terminal is drawn)", not_black_ok, not_black_detail),
+        ("startx brings up Xfbdev + dwm + st on the framebuffer", *server_up),
+        ("framebuffer screendump is not uniformly black (dwm bar + terminal drawn)", not_black_ok, not_black_detail),
     ]
     ok = report_results(results)
     poweroff_and_wait(child)

@@ -258,6 +258,15 @@ x11-libs/libXext
 # later polish; NO font package is needed for `startx → a term`.
 x11-terms/monolith-st
 
+# GUI — dwm, the suckless dynamic window manager (SP-GUI G3). Same de-Xft
+# treatment as st: drw.c/drw.h rewritten off Xft/fontconfig onto core X11 bitmap
+# fonts (XLoadQueryFont / XChar2b / XDrawString16), Xinerama compiled out (no
+# libXinerama on the disc) — see configs/overlay/x11-wm/monolith-dwm and its
+# files/dwm-6.5-core-fonts.patch. Links ONLY libX11. Bar font is the builtin
+# "fixed"; dwm's default Mod+Shift+Return spawns st (already on the disc). This
+# makes `startx` a managed desktop instead of a lone terminal.
+x11-wm/monolith-dwm
+
 # Stele — a document-web browser for the 486 (Rust, one static binary, NO
 # JavaScript by construction). Renders straight to /dev/fb0 (backend/fb.rs) with
 # a compiled-in 8x8 bitmap font — needs neither X nor fonts on the disc. Cross-

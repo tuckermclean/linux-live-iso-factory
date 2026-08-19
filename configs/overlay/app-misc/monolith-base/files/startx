@@ -1,8 +1,9 @@
 #!/bin/sh
 # startx — bring up the Monolith GUI on the framebuffer: the TinyX Xfbdev
-# server (libXfont built-in fonts, no font files on disc) plus a terminal (st).
-# The rock does not draw until asked — nothing runs this at boot. When the
-# terminal exits, the server comes down with it.
+# server (libXfont built-in fonts, no font files on disc), the dwm window
+# manager, and one terminal (st) already open. The rock does not draw until
+# asked — nothing runs this at boot. dwm is the session; when it exits
+# (Mod+Shift+q), the server comes down with it.
 #
 # Requires a GRAPHICAL /dev/fb0 (vesafb): boot a framebuffer label (fb / fb800)
 # or append `vga=788` at the boot prompt. A plain text-mode console leaves the
@@ -44,10 +45,18 @@ while [ ! -S /tmp/.X11-unix/X0 ]; do
 	sleep 1
 done
 
-# The session: a terminal. (A window manager — dwm — and a launcher land in a
-# later milestone; for now the terminal IS the session.) Runs in the
-# foreground; when it exits, we tear the server down.
-DISPLAY=:0 st
+# The session: dwm, the window manager, as the foreground session leader. When
+# dwm exits (Mod+Shift+q) we tear the server down. dwm won't open a terminal on
+# its own, so once it owns the root window we start one st for the user (more
+# via dwm's Mod+Shift+Return).
+DISPLAY=:0 dwm &
+wmpid=$!
+
+# Let dwm take the root window before mapping the first client.
+sleep 1
+DISPLAY=:0 st &
+
+wait "$wmpid"
 rc=$?
 
 kill "$xpid" 2>/dev/null

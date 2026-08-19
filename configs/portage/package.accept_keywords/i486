@@ -17,3 +17,4 @@ x11-base/monolith-xserver **
 x11-base/xcb-proto **
 www-client/stele **
 x11-terms/monolith-st **
+x11-wm/monolith-dwm **
