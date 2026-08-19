@@ -1858,7 +1858,7 @@ def run_persist(child, args):
     results1.append(("boot 1: /overlay is the persist partition, not tmpfs",
                      *run_check(child, "overlay fstype",
                                 "awk '$2==\"/overlay\"{print $3}' /proc/mounts",
-                                regex_absent(r"^tmpfs$"))))
+                                regex_absent(r"^tmpfs$", re.MULTILINE))))
 
     marker = f"MONOLITH_PERSIST_MARK_{uuid.uuid4().hex[:8]}"
     # The command itself becomes the .bash_history line boot 2 looks for.
@@ -1894,7 +1894,7 @@ def run_persist(child, args):
         results2.append(("boot 2: /overlay is STILL the persist partition",
                          *run_check(child2, "overlay fstype (boot 2)",
                                     "awk '$2==\"/overlay\"{print $3}' /proc/mounts",
-                                    regex_absent(r"^tmpfs$"))))
+                                    regex_absent(r"^tmpfs$", re.MULTILINE))))
         results2.append((f"boot 2: '{marker}' survived the unclean poweroff in .bash_history",
                          *run_check(child2, "history grep",
                                     f"grep -qF {marker} /root/.bash_history && echo FOUND_{marker}",

@@ -73,14 +73,20 @@ src_install() {
 	insinto /etc/profile.d
 	doins "${FILESDIR}/monolith-advisory.sh"
 	doins "${FILESDIR}/monolith-time-hint.sh"
-	# 20-persist.sh (UX Pass Task 3): one-line persist status at login +
-	# (bash-only, guarded) incremental history-append wiring when
-	# /overlay is the real MONOLITH_PERSIST partition. Unit-tested
-	# standalone: scripts/tests/monolith-persist-profile.test.sh.
+	# 20-persist.sh (UX Pass Task 3): one-line persist status at login
+	# ("persist: mounted (N MB free)" / "persist: none ..."). The
+	# history-reliability half lives in 50-persist-history.bash below
+	# (bashrc.d, not profile.d — see that file's header for why). Unit-
+	# tested standalone: scripts/tests/monolith-persist-profile.test.sh.
 	doins "${FILESDIR}/20-persist.sh"
 
-	# /etc/bash/bashrc.d — sourced from bash's bashrc.d chain; runs last
-	# (after 10-gentoo-color.bash sets PS1) to prepend the dark-grey ■.
+	# /etc/bash/bashrc.d — sourced from bash's bashrc.d chain, AFTER the
+	# stock /etc/bash/bashrc has done its own setup (runs last: prepends
+	# the dark-grey ■ after 10-gentoo-color.bash sets PS1; wires up
+	# persist's incremental history-append without risking Gentoo's stock
+	# bashrc clobbering it). Unit-tested standalone:
+	# scripts/tests/monolith-persist-bashrc.test.sh.
 	insinto /etc/bash/bashrc.d
 	doins "${FILESDIR}/99-monolith-square.bash"
+	doins "${FILESDIR}/50-persist-history.bash"
 }

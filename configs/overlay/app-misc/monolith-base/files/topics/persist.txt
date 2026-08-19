@@ -32,9 +32,10 @@ persist — keeping changes across a reboot
 
   On a persistent overlay, an UNCLEAN poweroff can still lose shell
   history bash hasn't flushed yet (bash normally only appends
-  $HISTFILE on a clean exit) — /etc/profile.d/20-persist.sh turns that
-  into an incremental per-prompt append (`history -a`) so a command is
-  on disk the instant its prompt returns, no clean shutdown required.
+  $HISTFILE on a clean exit) — /etc/bash/bashrc.d/50-persist-history.bash
+  turns that into an incremental per-prompt append (`history -a`) so a
+  command is on disk the instant its prompt returns, no clean shutdown
+  required.
 
   swap-on-persist (the 8MB-GUI doctrine): there is no `swap` boot
   parameter and nothing swaps on automatically.

@@ -1,7 +1,12 @@
 # /etc/profile.d/20-persist.sh
 #
 # Persist continuity (Monolith UX Pass Task 3): "the disc remembers you,
-# when asked."
+# when asked." Login STATUS line only — see
+# /etc/bash/bashrc.d/50-persist-history.bash for the history-reliability
+# half, split out to a separate file on review (a profile.d snippet's
+# PROMPT_COMMAND wiring can be silently clobbered by Gentoo's stock
+# /etc/bash/bashrc, which /etc/profile sources AFTER profile.d/*.sh — see
+# that file's own header for the full reasoning).
 #
 # The WHOLE rootfs is an overlayfs (lowerdir=/squashfs,
 # upperdir=/overlay/upper, workdir=/overlay/work — see rootfs/init). When
@@ -36,26 +41,6 @@ case "$-" in
         if [ -n "$_persist_fstype" ] && [ "$_persist_fstype" != "tmpfs" ]; then
             _persist_free=$(df -m "$MONOLITH_PERSIST_DIR" 2>/dev/null | awk 'NR==2 {print $4}')
             printf 'persist: mounted (%s MB free)\n' "${_persist_free:-?}"
-
-            # History reliability: bash only appends $HISTFILE on a CLEAN
-            # shell exit, so an unclean poweroff (exactly the case persist
-            # exists to survive) loses every command typed since the last
-            # clean exit — even though the file itself is already on a
-            # partition that persists. `shopt -s histappend` + a
-            # per-prompt `history -a` turns that into an incremental
-            # append: the instant a prompt redraws, the just-run command
-            # is already on disk. Both are bash BUILTINS (no fork/exec),
-            # so the added per-prompt cost is one small write to a file
-            # already open — negligible even at -cpu 486. Gated on a REAL
-            # persist mount: no point paying even that on tmpfs, and never
-            # redirects $HISTFILE off the overlay (it's already there).
-            if [ -n "$BASH_VERSION" ]; then
-                shopt -s histappend
-                case "$PROMPT_COMMAND" in
-                    *'history -a'*) ;;
-                    *) PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}" ;;
-                esac
-            fi
         else
             printf 'persist: none (see monolith help persist)\n'
         fi
