@@ -42,13 +42,13 @@ teardown() { rm -rf "$TMP"; }
 # runs $1 (extra bash to print out whatever the test wants to assert on).
 # stderr is discarded (bash -i without a tty logs harmless job-control
 # warnings that would otherwise pollute every assertion).
+# --norc below is LOAD-BEARING: without it `bash -i` sources the runner's
+# ~/.bashrc / /etc/bash.bashrc, and one that does `shopt -s histappend`
+# (Ubuntu's default) would make the "20-persist.sh never enables histappend"
+# check measure the runner's dotfiles instead of our code (passes locally,
+# fails in CI). Clean baseline — do not remove.
 source_it() {
     PATH="$BIN:$PATH" MONOLITH_PERSIST_DIR="$MOUNTDIR" MONOLITH_PERSIST_MOUNTS="$MOUNTSFILE" \
-        # --norc is LOAD-BEARING: without it `bash -i` sources the runner's
-        # ~/.bashrc / /etc/bash.bashrc, and one that does `shopt -s histappend`
-        # (Ubuntu's default) would make the "20-persist.sh never enables
-        # histappend" check measure the runner's dotfiles instead of our code
-        # (passes locally, fails in CI). Clean baseline — do not remove.
         bash --norc -i -c ". '$SCRIPT'; $1" </dev/null 2>/dev/null
 }
 
