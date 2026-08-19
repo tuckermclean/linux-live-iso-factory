@@ -854,6 +854,24 @@ def exit_code_only():
     return _v
 
 
+def contains_with_exit(needle, expected_exit, ci=False):
+    """
+    Like `contains`, but for checks whose success case is a specific NONZERO
+    exit code (e.g. bash's command_not_found_handle returns 127) — `contains`
+    and `exit_code_only` both hard-require exit_code == 0, so a miss command
+    needs its own validator here.
+    """
+    def _v(exit_code, output):
+        hay = output.lower() if ci else output
+        n = needle.lower() if ci else needle
+        if exit_code != expected_exit:
+            return False, f"expected exit code {expected_exit}, got {exit_code}, output: {output.strip()[-500:]}"
+        if n not in hay:
+            return False, f"expected {needle!r} in output, got: {output.strip()[-500:]}"
+        return True, "ok"
+    return _v
+
+
 # ---------------------------------------------------------------------------
 # Smoke suite
 # ---------------------------------------------------------------------------
@@ -1020,6 +1038,31 @@ def smoke_man(child):
     )
 
 
+def smoke_monolith(child, results):
+    """
+    Monolith UX Pass Task 7: lightweight proof the front door (Task 1) and
+    the command_not_found handler (Task 5) actually landed in the booted
+    rootfs, not just in the ebuild's src_install. Three checks:
+
+      1. `monolith help` exits 0 (the front door runs at all).
+      2. `monolith tools` lists monolith-router (the curated inventory in
+         /usr/share/monolith/tools.txt shipped and is readable).
+      3. An unknown command trips bash's command_not_found_handle
+         (60-monolith-cnf.bash, bashrc.d) — asserts BOTH its message
+         ("not on the disc") and its exit code (127), the same contract
+         the cnf handler's own unit test checks.
+    """
+    results.append(("monolith help exits 0",
+                    *run_check(child, "monolith help", "monolith help >/dev/null",
+                               exit_code_only())))
+    results.append(("monolith tools lists monolith-router",
+                    *run_check(child, "monolith tools", "monolith tools",
+                               contains("monolith-router"))))
+    results.append(("unknown command fires command_not_found_handle",
+                    *run_check(child, "notacommand", "notacommand",
+                               contains_with_exit("not on the disc", 127))))
+
+
 def smoke_ahci_is_module(child):
     """
     kernel.config carries CONFIG_SATA_AHCI=m, and the ahci mode boots the ISO
@@ -1157,6 +1200,7 @@ def run_full_smoke_suite(child, expected_kernel):
     smoke_guestbook(child, results)
     results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
     results.append(("man ls renders (mandoc)", *smoke_man(child)))
+    smoke_monolith(child, results)
     return results
 
 
@@ -1865,8 +1909,8 @@ def run_persist(child, args):
     results1.append(("boot 1: distinctive command runs",
                      *run_check(child, "marker command", f"echo {marker}", contains(marker))))
 
-    # One more prompt cycle so 20-persist.sh's PROMPT_COMMAND `history -a`
-    # fires on the command above before the unclean kill below.
+    # One more prompt cycle so 50-persist-history.bash's PROMPT_COMMAND
+    # `history -a` fires on the command above before the unclean kill below.
     child.sendline("")
     time.sleep(1)
 

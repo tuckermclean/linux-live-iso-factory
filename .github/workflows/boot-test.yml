@@ -695,3 +695,53 @@ jobs:
           path: output/boot-test-clock-1996.log
           retention-days: 14
           if-no-files-found: warn
+
+  # Persist continuity (Monolith UX Pass Task 3): boots BIOS/ISOLINUX with a
+  # second, host-formatted MONOLITH_PERSIST disk attached as virtio-blk-pci,
+  # confirms /overlay is the real persist partition (not tmpfs), then kills
+  # QEMU uncleanly (no poweroff) and relaunches a fresh QEMU against the SAME
+  # disk file to prove the incremental-append history fix (50-persist-
+  # history.bash) already hit disk before the unclean kill. No networking
+  # needed — see run_persist in scripts/boot-test.py for the full
+  # two-boot orchestration.
+  persist:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
+
+      - name: Boot test — persist continuity (two boots, same MONOLITH_PERSIST disk)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode persist \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-persist.log"
+
+      - name: Upload serial console logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-persist-${{ github.run_id }}
+          path: output/boot-test-persist.log*
+          retention-days: 14
+          if-no-files-found: warn
