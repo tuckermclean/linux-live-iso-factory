@@ -13,7 +13,7 @@ HOMEPAGE="https://github.com/tuckermclean/stele-browser"
 # and regenerate the Manifest. GitHub per-commit archive is the DIST tarball,
 # Manifest-pinned (games-roguelike/rl144 precedent; S3 only if GitHub's gzip
 # drifts). Version tracks Cargo.toml (0.1.0) + the commit date.
-COMMIT="f6a59c0f5f2a2cf1be28466930713cd9a1263101"
+COMMIT="eeb8c0736d43a5688a9f417eb41449fe778d8fef"
 SRC_URI="https://github.com/tuckermclean/stele-browser/archive/${COMMIT}.tar.gz -> ${P}.tar.gz"
 S="${WORKDIR}/stele-browser-${COMMIT}"
 
