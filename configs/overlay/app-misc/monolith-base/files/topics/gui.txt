@@ -22,5 +22,10 @@ gui — the framebuffer desktop (Xfbdev + dwm + st)
   run that before startx. gpm owns the console mouse otherwise; startx
   stops it so X can take the input devices.
 
-  Non-US keyboards: no loadkeys-equivalent keymap tool is on this disc
-  yet. Filed as a future world decision, not silently unsupported.
+  Non-US keyboards: sys-apps/kbd is on this disc now, so loadkeys works —
+  keymaps ship inside the kbd package itself, no separate download:
+      loadkeys uk
+      loadkeys de
+  Remaps the text-console (tty) keyboard driver. Not verified against a
+  running X (startx) session — treat it as console-only until someone
+  checks.

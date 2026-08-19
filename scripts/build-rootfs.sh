@@ -318,6 +318,19 @@ fi
 # Set hostname
 [ -f /etc/hostname ] && echo "$(cat /etc/hostname)" > /proc/sys/kernel/hostname
 
+# Console font: Terminus, if it's aboard (Monolith UX Pass Task 5, "the kid's
+# font, everywhere"). Guarded on both setfont and the font file existing —
+# --keep-going can silently drop sys-apps/kbd or media-fonts/terminus-font
+# from a CI build (see MEMORY.md's w3m precedent) without failing the whole
+# build, and this call must not care either way. ter-116n is 16px, normal
+# weight, ISO-8859-1/Latin-1 (this disc's charset elsewhere — st's
+# core-fonts "fixed", /etc/issue, etc.). setfont reads the .gz directly
+# (media-fonts/terminus-font's own compressed install; sys-apps/kbd is
+# built with USE=zlib specifically so this works, see package.use/static).
+if command -v setfont >/dev/null 2>&1 && [ -f /usr/share/consolefonts/ter-116n.psf.gz ]; then
+    setfont /usr/share/consolefonts/ter-116n.psf.gz 2>/dev/null || true
+fi
+
 # The mandoc whatis database (mandoc.db) is baked into the squashfs at BUILD
 # time — see scripts/build-rootfs.sh, which runs makewhatis against the fully
 # assembled rootfs right before mksquashfs. So apropos/whatis already work with

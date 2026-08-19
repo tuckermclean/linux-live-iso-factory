@@ -79,6 +79,14 @@ src_install() {
 	# (bashrc.d, not profile.d — see that file's header for why). Unit-
 	# tested standalone: scripts/tests/monolith-persist-profile.test.sh.
 	doins "${FILESDIR}/20-persist.sh"
+	# zz-fortune.sh (UX Pass Task 5): one fortune per boot, on interactive
+	# login, once-per-boot guarded via /run/monolith-fortune-shown. Named
+	# zz- (not a numeric prefix) so it sorts after every other profile.d
+	# file in this tree, including the two that predate a numeric-prefix
+	# convention (monolith-advisory.sh, monolith-time-hint.sh) — see the
+	# file's own header for the ASCII-sort reasoning. "Wisdom must never
+	# bury status."
+	doins "${FILESDIR}/zz-fortune.sh"
 
 	# /etc/bash/bashrc.d — sourced from bash's bashrc.d chain, AFTER the
 	# stock /etc/bash/bashrc has done its own setup (runs last: prepends
@@ -89,4 +97,9 @@ src_install() {
 	insinto /etc/bash/bashrc.d
 	doins "${FILESDIR}/99-monolith-square.bash"
 	doins "${FILESDIR}/50-persist-history.bash"
+	# 60-monolith-cnf.bash (UX Pass Task 5): command_not_found_handle,
+	# pointing a miss at `monolith tools` instead of bash's bare
+	# "command not found". bashrc.d, not profile.d — see the file's own
+	# header for why (a function definition, not a login side effect).
+	doins "${FILESDIR}/60-monolith-cnf.bash"
 }
