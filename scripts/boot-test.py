@@ -435,17 +435,15 @@ def build_nic_cmd(args):
 # .superpowers/sdd/2026-08-19-monolith-ux-pass/task-2-brief.md for the
 # INVARIANT this is built against: the trigger is demonstrated ignorance
 # (epoch / known RTC-reset dates), never date plausibility.
-# The dead-RTC / no-battery sentinel. Uses 2000-01-01 (the value a drained
-# CMOS cell most commonly resets a PC RTC to), NOT the Unix epoch: QEMU's
-# SeaBIOS + `-cpu 486` deterministically HANGS in early firmware with
-# `-rtc base=1970-01-01T00:00:00` (verified — the guest emitted zero serial
-# and never reached /init across 3 independent launches), which is an
-# emulator/firmware edge at time_t 0, not a Monolith behaviour worth pinning a
-# test to. 2000-01-01 boots reliably, is still 26 years adrift from the disc's
-# era, and is one of the RTC-reset sentinels monolith-time-check keys its
-# "demonstrated ignorance" trigger on — so the correction path under test is
-# exercised identically.
-CLOCK_EPOCH_RTC = "2000-01-01T00:00:00"   # dead-RTC / no-battery sentinel (CMOS reset value)
+# The dead-RTC / no-battery sentinel: the Unix epoch itself, the truest image
+# of a machine whose clock never started. (An earlier commit briefly moved this
+# to 2000-01-01 on a MISDIAGNOSIS — the clock-epoch job was hanging, but the
+# serial logs proved the hang was the fixture-URL boot label below, not the RTC:
+# SeaBIOS + ISOLINUX come up fine at 1970, then the boot stalls right after a
+# long `monolith_time_url=http://…` label is typed at the ISOLINUX prompt. With
+# that label removed, the epoch boots like any other date, so the origin myth
+# stays.)
+CLOCK_EPOCH_RTC = "1970-01-01T00:00:00"   # the dead-RTC / no-battery sentinel (the Unix epoch)
 CLOCK_1996_RTC = "1996-06-15T12:00:00"    # squarely inside the disc's own native era
 
 # Exit-0-safe reader for /overlay's filesystem type, used by the persist mode.
@@ -515,16 +513,26 @@ def epoch_close_to(target_epoch, tolerance):
 
 def run_clock_epoch(child, args):
     """
-    THE CLOCK LANDMINE, direction (a): dead-RTC machine + a reachable
-    fixture server. The automatic S45monolith-time hook (running during rcS,
-    well before this function ever gets a shell) must see a clock sitting at
-    the epoch sentinel, see eth0 up (S40network already ran), fetch the
-    fixture's Date header, and set the clock — all with zero interaction
-    from this test. We only observe the result once a shell is up: the clock
-    reads ~now, and the ignorance flag the login hint keys on is gone
-    (the fetch succeeded, so the machine now has an opinion).
+    THE CLOCK LANDMINE, direction (a): a dead-RTC machine corrects itself over
+    the network. The automatic S45monolith-time hook (running during rcS, well
+    before this function ever gets a shell) must see a clock sitting at the
+    epoch sentinel, see eth0 up (S40network already ran), fetch a Date header,
+    and set the clock — all with zero interaction from this test. We only
+    observe the result once a shell is up: the clock reads ~now, and the
+    ignorance flag the login hint keys on is gone (the fetch succeeded, so the
+    machine now has an opinion).
+
+    We deliberately DON'T override monolith_time_url here. The natural way to
+    inject a host fixture URL is a kernel arg typed at the ISOLINUX prompt, but
+    a long `monolith_time_url=http://…` label hangs the boot right after it's
+    typed (SeaBIOS/ISOLINUX come up fine, then stall — a plain `serial` label,
+    or short appends like `vga=788`/`toram`, boot without issue). So we type the
+    same bare `serial` label the other nine boot modes use and let monolith-time
+    hit its default endpoint (http://example.com/) over QEMU's usermode NAT —
+    the very real-internet path run_clock_1996's docstring relies on. The dead
+    clock still gets corrected to ~now; that's the behaviour under test.
     """
-    select_isolinux_label(child, f"serial monolith_time_url={CLOCK_FIXTURE_URL}")
+    select_isolinux_label(child, "serial")
     for ms, desc in [
         (MILESTONE_INIT_START, "initramfs /init started"),
         (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
@@ -537,7 +545,7 @@ def run_clock_epoch(child, args):
 
     results = []
     # A one-hour tolerance absorbs however long boot + the QEMU launch took,
-    # plus the fixture server's own clock skew — it's nowhere near loose
+    # plus the upstream server's Date granularity — it's nowhere near loose
     # enough to also match "still 1970" or "some plausible past decade", so
     # it still proves the correction actually happened.
     results.append((
