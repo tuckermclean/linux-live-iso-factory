@@ -40,7 +40,7 @@ src_prepare() {
 	# startx). The stock config names "monospace:size=10" (a fontconfig string
 	# this de-Xft build can't parse). dwm regenerates config.h from config.def.h.
 	# -r2 busts -r1's binpkg (which named the builtin "fixed").
-	local terminus="-xos4-terminus-medium-r-normal--16-160-72-72-c-80-iso10646-1"
+	local terminus="-xos4-Terminus-Medium-R-Normal--16-160-72-72-C-80-ISO10646-1"
 	sed -i \
 		-e "s|^static const char \*fonts\[\][[:space:]]*=.*|static const char *fonts[] = { \"${terminus}\" };|" \
 		-e "s|^static const char dmenufont\[\][[:space:]]*=.*|static const char dmenufont[]       = \"${terminus}\";|" \

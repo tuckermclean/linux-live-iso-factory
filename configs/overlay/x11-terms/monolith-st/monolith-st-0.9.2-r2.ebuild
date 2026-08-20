@@ -50,7 +50,7 @@ src_prepare() {
 	# (see app-misc/monolith-base's startx). iso10646-1 carries the same Unicode
 	# coverage that killed tofu on the console into the terminal. -r2 busts -r1's
 	# binpkg (which named the builtin "fixed").
-	local terminus="-xos4-terminus-medium-r-normal--16-160-72-72-c-80-iso10646-1"
+	local terminus="-xos4-Terminus-Medium-R-Normal--16-160-72-72-C-80-ISO10646-1"
 	sed -i "s|^static char \*font = .*|static char *font = \"${terminus}\";|" config.def.h \
 		|| die "failed to repoint st font to Terminus"
 	grep -qF "char *font = \"${terminus}\";" config.def.h || die "font sed did not take"

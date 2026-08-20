@@ -127,9 +127,9 @@ install_sysroot() {
 
             local aliasdir="$fontsroot/monolith"
             mkdir -p "$aliasdir"
-            local ter16="-xos4-terminus-medium-r-normal--16-160-72-72-c-80-iso10646-1"
-            local ter16b="-xos4-terminus-bold-r-normal--16-160-72-72-c-80-iso10646-1"
-            local ter32="-xos4-terminus-medium-r-normal--32-320-72-72-c-160-iso10646-1"
+            local ter16="-xos4-Terminus-Medium-R-Normal--16-160-72-72-C-80-ISO10646-1"
+            local ter16b="-xos4-Terminus-Bold-R-Normal--16-160-72-72-C-80-ISO10646-1"
+            local ter32="-xos4-Terminus-Medium-R-Normal--32-320-72-72-C-160-ISO10646-1"
             {
                 printf 'fixed\t\t%s\n'      "$ter16"
                 printf 'variable\t%s\n'     "$ter16"
