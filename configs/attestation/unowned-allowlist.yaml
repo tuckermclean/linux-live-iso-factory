@@ -22,7 +22,6 @@ allowlist:
   # writes our own /usr/share/fonts/monolith alias dir. These are generated at
   # image build, owned by no package.
   - usr/share/fonts/*/fonts.dir
-  - usr/share/fonts/*/fonts.scale
   - usr/share/fonts/monolith
   - usr/share/fonts/monolith/fonts.alias
 

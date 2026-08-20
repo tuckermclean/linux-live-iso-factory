@@ -117,9 +117,7 @@ RUN GRUB_PLATFORMS="efi-32 efi-64" emerge --noreplace \
         app-arch/cpio \
         dev-build/cmake \
         app-text/mandoc \
-        sys-libs/ncurses \
-        x11-apps/mkfontscale \
-        x11-apps/mkfontdir && \
+        sys-libs/ncurses && \
     eix-update && \
     rm -rf /var/cache/distfiles/*
 
