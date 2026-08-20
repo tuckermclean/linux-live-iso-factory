@@ -95,6 +95,18 @@ src_install() {
 	exeinto /usr/bin
 	doexe "${bin}"
 
+	# Ship Stele's own Acid2 conformance page as a sample/demo the disc can
+	# render fully offline (the page is self-contained — data: URIs, no external
+	# fetches — which is exactly what Stele's data:-URI support was built for).
+	# The boot-test `stele-acid2` mode renders this to the framebuffer and
+	# screendumps it. Ebuild-owned -> auto-attested (no unowned-allowlist entry).
+	if [[ -f "${S}/fixtures/acid2.html" ]]; then
+		insinto /usr/share/stele
+		doins "${S}/fixtures/acid2.html"
+	else
+		ewarn "fixtures/acid2.html missing in the stele-browser checkout — the stele-acid2 demo page will not ship"
+	fi
+
 	# EAPI-8 dodoc die()s on a missing file (|| can't catch its internal die),
 	# so only ship docs that actually exist. LICENSE is picked up automatically
 	# once the owner adds the GPL-3 file to the repo; Stele has REPORT.md, not a
