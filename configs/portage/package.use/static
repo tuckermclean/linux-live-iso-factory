@@ -348,4 +348,4 @@ sys-apps/kbd static zlib -pam -nls -bzip2 -lzma -selinux -test -xkb -zstd
 # come from the single "psf" build target — verified against upstream's
 # Makefile); rcS picks ter-116n.psf.gz (16px, normal weight, Latin-1).
 # CI-UNVERIFIED like kbd above.
-media-fonts/terminus-font -a-like-o -center-tilde -distinct-l -otf -pcf-8bit -pcf-unicode psf -quote -ru-dv -ru-g -ru-i -ru-k
+media-fonts/terminus-font -a-like-o -center-tilde -distinct-l -otf pcf -pcf-8bit pcf-unicode psf -quote -ru-dv -ru-g -ru-i -ru-k

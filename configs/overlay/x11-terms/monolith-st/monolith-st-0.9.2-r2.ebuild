@@ -43,14 +43,17 @@ PATCHES=( "${FILESDIR}/st-0.9.2-core-fonts.patch" )
 
 src_prepare() {
 	default
-	# Point st at the font NAME "fixed" — the libXfont builtin 6x13 the Xfbdev
-	# server already carries via `-fp built-ins` (no font files on the disc).
-	# The patch defaults to an iso10646-1 XLFD that only media-fonts/font-misc-misc
-	# provides; "fixed" (iso8859-1/Latin-1) needs no font package and is plenty
-	# for an ASCII/Latin TTY. -r1 revbump busts the -r0 binpkg cache.
-	sed -i 's|^static char \*font = .*|static char *font = "fixed";|' config.def.h \
-		|| die "failed to repoint st font to the builtin 'fixed'"
-	grep -q 'char \*font = "fixed";' config.def.h || die "font sed did not take"
+	# Name Terminus EXPLICITLY (a full iso10646-1 XLFD), not the `fixed` alias:
+	# st is a flagship client, so its font must be deterministic rather than
+	# whatever `fixed` currently resolves to. media-fonts/terminus-font[pcf]
+	# provides this XLFD; the Xfbdev server finds it via the disc -fp path
+	# (see app-misc/monolith-base's startx). iso10646-1 carries the same Unicode
+	# coverage that killed tofu on the console into the terminal. -r2 busts -r1's
+	# binpkg (which named the builtin "fixed").
+	local terminus="-xos4-terminus-medium-r-normal--16-160-72-72-c-80-iso10646-1"
+	sed -i "s|^static char \*font = .*|static char *font = \"${terminus}\";|" config.def.h \
+		|| die "failed to repoint st font to Terminus"
+	grep -qF "char *font = \"${terminus}\";" config.def.h || die "font sed did not take"
 }
 
 src_compile() {

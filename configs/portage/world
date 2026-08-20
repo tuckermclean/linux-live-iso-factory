@@ -220,6 +220,19 @@ sys-apps/dmidecode
 sys-apps/kbd
 media-fonts/terminus-font
 
+# X core fonts + the alias target (Terminus-as-default GUI font pass). The X
+# server refuses to start unless the bootstrap fonts `fixed` and `cursor`
+# resolve: font-misc-misc carries the classic 6x13 misc bitmaps (apps asking
+# for an explicit -misc-fixed XLFD still find it; it just no longer owns the
+# `fixed` alias — our /usr/share/fonts/monolith dir does, listed first), and
+# font-cursor-misc carries the `cursor` font the server needs as absolutely as
+# `fixed`. x11-apps/xlsfonts is the gui boot-test's probe: it resolves `fixed`
+# through the alias and prints the XLFD + metrics, turning "the alias took"
+# into a CI fact. terminus-font gains USE=pcf (X bitmaps) above.
+media-fonts/font-misc-misc
+media-fonts/font-cursor-misc
+x11-apps/xlsfonts
+
 # Databases
 # sqlite — static SQLite (CLI + libsqlite3.a) from the amalgamation ebuild, not
 # ::gentoo (which BDEPENDs tcl). THREADSAFE=0, no dlopen extensions, FTS5+JSON1.

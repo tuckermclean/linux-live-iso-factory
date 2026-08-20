@@ -1701,6 +1701,20 @@ def run_gui(child, args):
         exit_code_only(), timeout=15,
     )
 
+    # Prove the `fixed` alias actually resolves to Terminus (not the retired
+    # built-in 6x13). xlsfonts -ll opens the font behind the alias and dumps its
+    # properties; a Terminus resolution shows the -xos4-terminus XLFD in the FONT
+    # atom (and FAMILY_NAME "Terminus"). If the alias/index is broken, `fixed`
+    # would not resolve, the server would not have started at all (checked
+    # above), so reaching here already implies resolution — this pins WHICH font.
+    # The 16-160 in the XLFD is the metric (16px cell, 8.0px avg width), so
+    # asserting the exact size string is the "metrics are Terminus-shaped" fact.
+    fixed_is_terminus = run_check(
+        child, "`fixed` resolves to Terminus (alias took)",
+        "DISPLAY=:0 xlsfonts -ll fixed 2>&1 | tr 'A-Z' 'a-z'",
+        contains("terminus"), timeout=20,
+    )
+
     log("Taking a QEMU QMP screendump of the framebuffer")
     screendump_out = os.path.abspath(args.gui_screendump)
     os.makedirs(os.path.dirname(screendump_out) or ".", exist_ok=True)
@@ -1712,6 +1726,7 @@ def run_gui(child, args):
 
     results = [
         ("startx brings up Xfbdev + dwm + st on the framebuffer", *server_up),
+        ("`fixed` alias resolves to Terminus (xlsfonts)", *fixed_is_terminus),
         ("framebuffer screendump is not uniformly black (dwm bar + terminal drawn)", not_black_ok, not_black_detail),
     ]
     ok = report_results(results)

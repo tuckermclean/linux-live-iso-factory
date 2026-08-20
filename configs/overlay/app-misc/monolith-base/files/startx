@@ -26,8 +26,16 @@ fi
 
 mkdir -p /tmp/.X11-unix
 
-# The X server, on the framebuffer, with ONLY the built-in fonts.
-Xfbdev :0 -fb /dev/fb0 -fp built-ins >/tmp/Xfbdev.log 2>&1 &
+# The X server, on the framebuffer, with the disc font path: our alias dir
+# FIRST (it reclaims `fixed`/`variable` for Terminus — font path order is the
+# alias tiebreaker), then the Terminus PCFs, then misc (font-misc-misc's 6x13
+# and font-cursor-misc's `cursor`). No `built-ins` fallback ON PURPOSE: the
+# server refuses to start unless `fixed` and `cursor` resolve from these dirs,
+# so a broken alias/index fails loudly (the gui boot-test is the net) instead of
+# silently falling back to the compiled-in 6x13.
+Xfbdev :0 -fb /dev/fb0 \
+    -fp /usr/share/fonts/monolith,/usr/share/fonts/terminus,/usr/share/fonts/misc \
+    >/tmp/Xfbdev.log 2>&1 &
 xpid=$!
 
 # Wait (up to ~10s) for the server to accept connections on :0.
