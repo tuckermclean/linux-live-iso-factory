@@ -1,0 +1,31 @@
+gui — the framebuffer desktop (Xfbdev + dwm + st)
+
+  Requires a GRAPHICAL /dev/fb0: boot a framebuffer label (fb / fb800) or
+  append vga=788 at the boot prompt. A plain text-mode console leaves the
+  framebuffer in VGA text mode, which the X server cannot claim ("no
+  screens").
+
+      startx
+
+  brings up Xfbdev on :0 (built-in fonts only — no font files on disc),
+  then dwm as the session, with one st terminal already open. Closing dwm
+  tears the X server down with it.
+
+  dwm navigation — the mod key is Alt (Mod1):
+      Mod+Shift+Return    open another st
+      Mod+[1-9]           switch to tag N
+      Mod+Shift+q         quit dwm (X server exits too)
+  There is no dmenu on this disc yet — launch programs from an st shell.
+
+  Serial mouse (the protocol is your call; startx does not guess it):
+      inputattach --microsoft /dev/ttyS0 &
+  run that before startx. gpm owns the console mouse otherwise; startx
+  stops it so X can take the input devices.
+
+  Non-US keyboards: sys-apps/kbd is on this disc now, so loadkeys works —
+  keymaps ship inside the kbd package itself, no separate download:
+      loadkeys uk
+      loadkeys de
+  Remaps the text-console (tty) keyboard driver. Not verified against a
+  running X (startx) session — treat it as console-only until someone
+  checks.

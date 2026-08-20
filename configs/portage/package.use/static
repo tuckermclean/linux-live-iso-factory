@@ -296,9 +296,6 @@ dev-libs/libffi static static-libs -debug -exec-static-trampoline -pax-kernel -t
 # figlet - ASCII art text banners
 app-misc/figlet static
 
-# fortune-mod - random fortune cookies
-games-misc/fortune-mod -nls
-
 # cmatrix - terminal matrix rain animation
 app-misc/cmatrix static
 
@@ -312,3 +309,43 @@ app-misc/gpm static
 # flag gates it — only X11 is togglable). No qt/gtk/minimal IUSE exists on
 # this package; keep the atom minimal rather than setting no-op flags.
 games-roguelike/nethack -X
+
+# kbd — setfont/loadkeys/dumpkeys for the console (Monolith UX Pass Task
+# 5: Terminus PSF font in rcS + non-US keymaps, see topics/gui.txt).
+# zlib ON so setfont can read the .gz-compressed PSF terminus-font ships
+# (below) directly, with no build-time gunzip step; sys-libs/zlib is
+# already a static world package, so this is not a new dependency.
+# Everything else off: -pam (no PAM anywhere in this rootfs — same
+# posture as dropbear/shadow/ppp above), -nls (this repo's usual
+# doctrine), -bzip2 -lzma -zstd (no compressed-keymap use case here),
+# -selinux (n/a), -test (no dev-libs/check in world), -xkb (no
+# x11-libs/libxkbcommon in world — loadkeys' plain kernel keymaps are
+# enough). No native IUSE=static on this ebuild; "static" kept here for
+# documentation parity with ethtool/mtr above (repo-wide package.env
+# static.conf catch-all does the actual work). CI-UNVERIFIED — no
+# cross-toolchain available here to build-test i486-musl; if this fails
+# like w3m did, --keep-going silently drops it — rcS's setfont call and
+# topics/gui.txt's loadkeys note are both guarded/honest for that case.
+sys-apps/kbd static zlib -pam -nls -bzip2 -lzma -selinux -test -xkb -zstd
+
+# terminus-font — the PSF console font `setfont` loads in rcS (Monolith UX
+# Pass Task 5). Data-only: RDEPEND="" on the real ebuild (verified against
+# ::gentoo terminus-font-4.49.1.ebuild) — zero target-sysroot dependency,
+# only host-side BDEPEND (python-any-r1, app-alternatives/gzip,
+# app-alternatives/awk — build-host tools this image already has). +psf
+# is the only format flag kept on (PC Screen Font under
+# /usr/share/consolefonts — what setfont reads); -otf -pcf-8bit
+# -pcf-unicode drop the X11-facing outline/bitmap formats entirely (this
+# disc's X server already carries its own builtin "fixed" font — see
+# world's GUI section — so terminus adds nothing there, and pulling
+# x11-apps/bdftopcf for pcf-8bit/pcf-unicode would be pure waste). The
+# glyph-shape variant flags (a-like-o, center-tilde, distinct-l, quote,
+# ru-dv/g/i/k — alternate renderings of specific characters, mostly
+# Cyrillic disambiguation) are all off: this disc is Latin-1/ASCII, so the
+# vanilla upstream glyph set is the least-surprising default. Installs
+# ter-1*.psf.gz (ISO-8859-1/Latin-1) and ter-v*.psf.gz (VGA charset)
+# families under /usr/share/consolefonts regardless of these flags (both
+# come from the single "psf" build target — verified against upstream's
+# Makefile); rcS picks ter-116n.psf.gz (16px, normal weight, Latin-1).
+# CI-UNVERIFIED like kbd above.
+media-fonts/terminus-font -a-like-o -center-tilde -distinct-l -otf -pcf-8bit -pcf-unicode psf -quote -ru-dv -ru-g -ru-i -ru-k

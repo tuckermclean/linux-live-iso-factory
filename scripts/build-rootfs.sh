@@ -215,13 +215,26 @@ fi
 [ -f /etc/profile.local ] && . /etc/profile.local
 EOF
 
-    # /etc/profile.d/10-dropbear-hint.sh — dropbear SSH is installed but NOT
+    # /etc/profile.d/50-dropbear-hint.sh — dropbear SSH is installed but NOT
     # started at boot (deliberate for a live ISO). Show the user, on interactive
     # login, the one command to start it if they want remote access. The ECDSA
     # host key is generated at boot by /etc/init.d/S20keygen.
+    #
+    # Ordering contract (Task 6, hint hygiene — see the monolith-base
+    # ebuild's src_install, profile.d section for the full statement):
+    # ACTIONABLE-group, after 40-advisory.sh (security banner outranks a
+    # convenience hint). Renamed from 10-dropbear-hint.sh in Task 6.
+    #
+    # /run-flag policy: this fires on EVERY login ON PURPOSE — it is a
+    # security-posture reminder (sshd present but off, root has no
+    # password) that is meant to repeat deliberately, not a one-shot
+    # tip. Do NOT add a once-guard to it.
     mkdir -p "$ROOTFS_DIR/etc/profile.d"
-    cat > "$ROOTFS_DIR/etc/profile.d/10-dropbear-hint.sh" << 'EOF'
+    cat > "$ROOTFS_DIR/etc/profile.d/50-dropbear-hint.sh" << 'EOF'
 # Interactive-shell hint: dropbear is available but not running by default.
+# Prints on EVERY login ON PURPOSE (security-posture reminder, not a
+# one-shot tip) — see the ordering contract in scripts/build-rootfs.sh
+# above this heredoc. Do NOT add a once-per-boot guard here.
 case "$-" in
     *i*)
         if command -v dropbear >/dev/null 2>&1 && \
@@ -317,6 +330,19 @@ fi
 
 # Set hostname
 [ -f /etc/hostname ] && echo "$(cat /etc/hostname)" > /proc/sys/kernel/hostname
+
+# Console font: Terminus, if it's aboard (Monolith UX Pass Task 5, "the kid's
+# font, everywhere"). Guarded on both setfont and the font file existing —
+# --keep-going can silently drop sys-apps/kbd or media-fonts/terminus-font
+# from a CI build (see MEMORY.md's w3m precedent) without failing the whole
+# build, and this call must not care either way. ter-116n is 16px, normal
+# weight, ISO-8859-1/Latin-1 (this disc's charset elsewhere — st's
+# core-fonts "fixed", /etc/issue, etc.). setfont reads the .gz directly
+# (media-fonts/terminus-font's own compressed install; sys-apps/kbd is
+# built with USE=zlib specifically so this works, see package.use/static).
+if command -v setfont >/dev/null 2>&1 && [ -f /usr/share/consolefonts/ter-116n.psf.gz ]; then
+    setfont /usr/share/consolefonts/ter-116n.psf.gz 2>/dev/null || true
+fi
 
 # The mandoc whatis database (mandoc.db) is baked into the squashfs at BUILD
 # time — see scripts/build-rootfs.sh, which runs makewhatis against the fully
@@ -460,6 +486,31 @@ exit 0
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/S40network"
 
+    # /etc/init.d/S45monolith-time - THE CLOCK LANDMINE (Monolith UX Pass
+    # Task 2). Runs after S40network (so "is an interface up" is answerable)
+    # and before S50advisory (so a corrected clock helps advisory's own TLS
+    # fetch). All the actual logic — deciding whether the clock is
+    # demonstrably ignorant, and calling monolith-time if so — lives in
+    # /usr/sbin/monolith-time-check (app-misc/monolith-base); this wrapper
+    # only invokes it, mirroring S50advisory's split.
+    cat > "$ROOTFS_DIR/etc/init.d/S45monolith-time" << 'EOF'
+#!/bin/sh
+# S45monolith-time - correct a demonstrably ignorant clock, quietly
+case "$1" in
+    start)
+        /usr/sbin/monolith-time-check
+        ;;
+    stop|restart)
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+exit 0
+EOF
+    chmod 755 "$ROOTFS_DIR/etc/init.d/S45monolith-time"
+
     # Dropbear SSH host key generation (runs before network)
     cat > "$ROOTFS_DIR/etc/init.d/S20keygen" << 'EOF'
 #!/bin/sh
@@ -515,7 +566,7 @@ exit 0
 EOF
     chmod 755 "$ROOTFS_DIR/etc/init.d/S30gpm"
 
-    # /usr/sbin/monolith-advisory-check, /etc/profile.d/monolith-advisory.sh,
+    # /usr/sbin/monolith-advisory-check, /etc/profile.d/40-advisory.sh,
     # and /etc/bash/bashrc.d/99-monolith-square.bash are installed by
     # app-misc/monolith-base (Pillar 4; see
     # configs/overlay/app-misc/monolith-base) via the sysroot rsync in

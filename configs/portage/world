@@ -206,6 +206,20 @@ sys-apps/smartmontools
 sys-apps/hdparm
 sys-apps/dmidecode
 
+# Console: Terminus font + keymap tooling (Monolith UX Pass Task 5, "the
+# kid's font, everywhere"). kbd gives us setfont (rcS loads a Terminus PSF
+# at boot, see scripts/build-rootfs.sh) and loadkeys/dumpkeys (non-US
+# keyboards — see topics/gui.txt); terminus-font is the data package
+# setfont points at (data-only: RDEPEND="" on the real ebuild, verified
+# against ::gentoo terminus-font-4.49.1.ebuild — no target-sysroot
+# dependency at all). See package.use/static for the exact USE flags
+# chosen for each and why. CI-UNVERIFIED: no cross-toolchain available in
+# this environment to build-test i486-musl locally — first real test is
+# the Task 7 CI full build; a failure here is silently dropped by
+# --keep-going the same way w3m was (see MEMORY.md).
+sys-apps/kbd
+media-fonts/terminus-font
+
 # Databases
 # sqlite — static SQLite (CLI + libsqlite3.a) from the amalgamation ebuild, not
 # ::gentoo (which BDEPENDs tcl). THREADSAFE=0, no dlopen extensions, FTS5+JSON1.

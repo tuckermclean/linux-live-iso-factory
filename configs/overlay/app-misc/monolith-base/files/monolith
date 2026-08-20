@@ -1,0 +1,71 @@
+#!/bin/sh
+# monolith — the front door: lists what is on this disc.
+#
+# The disc ships helpers (monolith-router, monolith-net, monolith-console,
+# startx, guestbook.cgi) and rich tools (perl, sqlite3, dnsmasq, pppd, gdb,
+# irssi, mutt, lynx, nethack...) but none of them announce themselves. This
+# is the one command that does:
+#
+#   monolith                 this screen
+#   monolith help            same as above
+#   monolith help <topic>    the long-form doc for one topic
+#   monolith tools           one-line inventory of what is on the disc
+#
+# Topic files are curated text, not generated: $MONOLITH_SHARE/<topic>.txt
+# (default /usr/share/monolith). MONOLITH_SHARE overrides the share dir —
+# the unit test points it at an uninstalled files/topics/ tree.
+set -u
+
+: "${MONOLITH_SHARE:=/usr/share/monolith}"
+
+print_help() {
+    cat <<'EOF'
+The Monolith: a live GNU/Linux userland, cross-compiled static, that boots
+from a bare 486 to a modern UEFI box. One disc, one root, no installer.
+
+Helpers live in /usr/bin and /usr/sbin; rich tools ride along on PATH.
+Nothing here is a wizard — it states facts once and gets out of the way.
+
+topics: network web persist gui dev games verify
+
+  monolith tools           one-line inventory of what is on this disc
+  monolith help <topic>    the long-form doc for one topic above
+EOF
+}
+
+topic_help() {
+    _topic=$1
+    _file="$MONOLITH_SHARE/$_topic.txt"
+    if [ ! -f "$_file" ]; then
+        echo "monolith: no such topic '$_topic' — topics: network web persist gui dev games verify" >&2
+        return 1
+    fi
+    : "${PAGER:=cat}"
+    $PAGER "$_file"
+}
+
+cmd_tools() {
+    _file="$MONOLITH_SHARE/tools.txt"
+    if [ ! -f "$_file" ]; then
+        echo "monolith: tools inventory missing ($_file)" >&2
+        return 1
+    fi
+    cat "$_file"
+}
+
+case "${1:-help}" in
+    help)
+        if [ -n "${2:-}" ]; then
+            topic_help "$2"
+        else
+            print_help
+        fi
+        ;;
+    tools)
+        cmd_tools
+        ;;
+    *)
+        echo "monolith: unknown command '$1' — try 'monolith help'" >&2
+        exit 2
+        ;;
+esac

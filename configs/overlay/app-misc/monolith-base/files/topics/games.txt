@@ -1,0 +1,16 @@
+games — nethack and the bsd-games grab bag
+
+      nethack
+
+  the roguelike, pinned to 3.6.7 (the current ::gentoo head, 5.0.0,
+  requires USE=lua and restructured its build — 3.6.7 is the intentional
+  pin, not a stale one). Save files live under your home directory; they
+  only survive a reboot if you booted with the `persist` kernel parameter
+  (see: monolith help persist).
+
+  rl144 is also on the disc: a deterministic, integer-only roguelike
+  written in Rust, built static for the 486 (terminal backend).
+
+  games-misc/bsd-games brings the classic terminal amusements along too —
+  see `monolith tools` for the short list, or just look around; there is
+  no installer wizard for games either.

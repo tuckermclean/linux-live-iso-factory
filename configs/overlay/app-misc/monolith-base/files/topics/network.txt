@@ -1,0 +1,25 @@
+network — getting a NIC up, then routing/serving a LAN
+
+  ISA cards from before Plug-and-Play don't announce themselves:
+      monolith-net status         list what already came up
+      monolith-net probe          sweep the classic ISA io/irq addresses
+      monolith-net incantation    print the modprobe lines by hand
+  PCI/virtual NICs come up on their own at boot.
+
+  Bring up DHCP on an interface by hand:
+      dhcpcd -b eth0
+
+  Turn this box into a NAT router (and optionally a DHCP/DNS server) for a
+  LAN behind it:
+      monolith-router up [--dhcp]
+      monolith-router status
+      monolith-router down
+  --dhcp runs dnsmasq for the LAN — it hands out leases and DNS to every
+  host on that segment. Do NOT enable it on a network that already has a
+  DHCP server (office/dorm/home ISP router); only proceed if this box owns
+  the LAN. monolith-router prints that warning once per boot and asks for
+  confirmation ("yes") every single time regardless.
+
+  Dial-up / serial / PPPoE WAN: pppd + chat are on the disc
+  (net-dialup/ppp; kernel PPP support is built in). See `man pppd` and
+  `man chat` for the chat-script syntax.

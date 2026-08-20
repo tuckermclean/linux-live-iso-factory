@@ -419,32 +419,72 @@ if [ "$OVERLAY_MODE" = "1" ]; then
     if [ "$PERSIST" = "1" ]; then
         msg "Persistence requested — looking for MONOLITH_PERSIST partition..."
         PERSIST_DEV=""
-        # Resolve the LABEL to a block device ourselves — mdev -s does not create
-        # /dev/disk/by-label symlinks in this initramfs (no mdev.conf/blkid helper).
-        # Primary: findfs (BusyBox applet, backed by CONFIG_VOLUMEID).
-        if command -v findfs >/dev/null 2>&1; then
-            PERSIST_DEV=$(findfs LABEL=MONOLITH_PERSIST 2>/dev/null || true)
-        fi
-        # Compatibility: honour a real by-label symlink if one happens to exist.
-        if [ -z "$PERSIST_DEV" ] && [ -e /dev/disk/by-label/MONOLITH_PERSIST ]; then
-            PERSIST_DEV="/dev/disk/by-label/MONOLITH_PERSIST"
-        fi
-        # Fallback: scan partitions and read the ext2/3/4 volume label straight
-        # from the superblock (label at byte offset 0x478, 16 bytes). Covers the
-        # documented ext4 persist partition even if findfs is unavailable.
-        if [ -z "$PERSIST_DEV" ]; then
-            for sysdev in /sys/block/*; do
-                [ -n "$PERSIST_DEV" ] && break
-                devname="${sysdev##*/}"
-                case "$devname" in loop*|ram*|sr*) continue ;; esac
-                for dev in "/dev/$devname" "/dev/${devname}"[0-9]*; do
+        # Block drivers (virtio_blk, USB storage, ...) enumerate ASYNCHRONOUSLY,
+        # so the MONOLITH_PERSIST device node can land a beat after control
+        # reaches this point. A single detection pass then races the probe and
+        # finds nothing (observed under QEMU: virtio /dev/vda present in dmesg,
+        # yet findfs AND the superblock scan both miss it, and we fall back to
+        # tmpfs even though a labelled disk is attached). Poll the whole
+        # detection for a few seconds: it succeeds on the very first pass when
+        # the device is already settled — the common case, no added latency —
+        # and only actually waits when a slow probe would otherwise be lost.
+        _persist_tries=0
+        while [ -z "$PERSIST_DEV" ] && [ "$_persist_tries" -lt 8 ]; do
+            # Resolve the LABEL to a block device ourselves — mdev -s does not
+            # create /dev/disk/by-label symlinks in this initramfs (no
+            # mdev.conf/blkid helper).
+            # Primary: findfs (BusyBox applet, backed by CONFIG_VOLUMEID).
+            if command -v findfs >/dev/null 2>&1; then
+                PERSIST_DEV=$(findfs LABEL=MONOLITH_PERSIST 2>/dev/null || true)
+            fi
+            # Compatibility: honour a real by-label symlink if one happens to exist.
+            if [ -z "$PERSIST_DEV" ] && [ -e /dev/disk/by-label/MONOLITH_PERSIST ]; then
+                PERSIST_DEV="/dev/disk/by-label/MONOLITH_PERSIST"
+            fi
+            # Find the MONOLITH_PERSIST filesystem by its ext label, using ONLY
+            # tools this initramfs's busybox actually ships. Hard-won from the
+            # boot-test serial + the busybox savedconfig:
+            #   * NO findfs (CONFIG_FINDFS is compiled but the shipped binpkg is
+            #     stale and lacks it) and NO dd (CONFIG_DD is unset) — every dd we
+            #     tried silently failed with "dd: not found". Confirmed present
+            #     and working at runtime: cat, tr, grep.
+            #   * Enumerate nodes DIRECTLY from /dev (vd*/sd*/nvme*/mmcblk*/hd*),
+            #     NOT /sys/block, and NOT loop*/sr* — the squashfs on the loop
+            #     devices literally contains the string "MONOLITH_PERSIST" (this
+            #     very script), so scanning it would false-positive.
+            #   * `cat` streams the raw device (a plain read() the kernel serves);
+            #     `tr -d '\000'` drops the NULs so grep treats it as text (GNU grep
+            #     otherwise suppresses a match in binary without -a, and busybox
+            #     grep has no -a); `grep -q` exits at the first hit and SIGPIPEs
+            #     cat closed, so a matching disk is read only up to the label, not
+            #     slurped whole. A fresh persist disk carries the string only in
+            #     its (backup) superblock label, so a hit means the right disk.
+            if [ -z "$PERSIST_DEV" ]; then
+                for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
                     [ -b "$dev" ] || continue
-                    lbl=$(dd if="$dev" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
-                    if [ "$lbl" = "MONOLITH_PERSIST" ]; then
+                    if cat "$dev" 2>/dev/null | tr -d '\000' 2>/dev/null | grep -q MONOLITH_PERSIST 2>/dev/null; then
                         PERSIST_DEV="$dev"
                         break
                     fi
                 done
+            fi
+            [ -n "$PERSIST_DEV" ] && break
+            _persist_tries=$((_persist_tries + 1))
+            sleep 1
+        done
+
+        # If detection still came up empty, dump what the initramfs actually saw
+        # (msg, so it lands in the boot log even without `debug`). This turns the
+        # next boot-test serial into direct evidence — which block nodes existed
+        # and what label each superblock actually read — instead of a guess.
+        if [ -z "$PERSIST_DEV" ]; then
+            for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
+                [ -b "$dev" ] || continue
+                if cat "$dev" 2>/dev/null | tr -d '\000' 2>/dev/null | grep -q MONOLITH_PERSIST 2>/dev/null; then
+                    msg "persist DIAG: $dev DID contain MONOLITH_PERSIST (but was not selected?!)"
+                else
+                    msg "persist DIAG: $dev scanned, no MONOLITH_PERSIST label"
+                fi
             done
         fi
 

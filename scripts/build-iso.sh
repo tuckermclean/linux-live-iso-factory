@@ -118,6 +118,36 @@ for module in "$LIBUTIL_C32" "$LIBCOM32_C32"; do
     fi
 done
 
+# F1 help screen — one line per label plus the advanced (append-params) note.
+# Quoted heredoc: no variable expansion needed, and it keeps ${BUILD_VERSION}
+# etc. out of scope by mistake if this block ever grows.
+log_info "Creating F1 help screen..."
+cat > "${ISO_DIR}/isolinux/f1.txt" << 'F1EOF'
+tHE m0n0LiTH -- boot label reference (F1)
+
+  linux     - Normal boot, text console, no framebuffer.
+  fb        - Framebuffer, 1024x768.
+  fb800     - Framebuffer, 800x600. (default)
+  fb640     - Framebuffer, 640x480. Safest on old/unknown hardware.
+  vga       - Prompts you to pick a video mode at boot (vga=ask).
+  serial    - Serial console, ttyS0 115200n8. Headless/qemu -nographic.
+  debug     - Normal boot with verbose kernel/init output.
+  persist   - Uses a MONOLITH_PERSIST partition as the overlay upper/
+              work dir; falls back to tmpfs (with a warning) if none
+              is found. mkfs.ext4 -L MONOLITH_PERSIST /dev/sdXN
+  rescue    - Drops straight to a shell instead of normal init.
+
+Advanced: append extra kernel params after any label, e.g. "fb800 toram".
+
+  toram     - Copies rootfs into RAM; eject the disc after boot. Not a
+              label of its own -- always typed after one, as above.
+  root=     - Override the root device.
+  console=  - Override the console, e.g. console=ttyS0,115200n8.
+  vga=ask   - Same effect as the vga label, appended instead.
+
+There is no "swap" boot param -- persistence uses a labeled partition.
+F1EOF
+
 # Create ISOLINUX configuration
 log_info "Creating ISOLINUX configuration..."
 cat > "${ISO_DIR}/isolinux/isolinux.cfg" << EOF
@@ -148,13 +178,17 @@ DEFAULT fb800
 # Prompt for user input
 PROMPT 1
 
+# F1 help screen (isolinux/f1.txt, written above) — one line per label plus
+# the advanced append-params note (toram, root=, console=, vga=ask).
+F1 f1.txt
+
 # Display message
 SAY
 SAY =========================================
 SAY   tHE m0n0LiTH  ${BUILD_VERSION}
 SAY =========================================
 SAY
-SAY Press ENTER to boot, or type a label:
+SAY Press ENTER to boot, or type a label (F1 for help):
 SAY   linux     - Normal boot (text console)
 SAY   fb        - Framebuffer 1024x768
 SAY   fb800     - Framebuffer 800x600
@@ -265,31 +299,40 @@ terminal_input console serial
 terminal_output gfxterm serial
 background_image /boot/grub/bootbg.png
 
+# Plain boot — normal console, no framebuffer. Kernel auto-selects the
+# working video driver (simplefb -> hyperv_fb on Hyper-V Gen2); see the
+# set default=0 comment above for why this is the default entry.
 menuentry "tHE m0n0LiTH ${BUILD_VERSION}" {
     linux /boot/vmlinuz
     initrd /boot/initrd.img
 }
 
+# Framebuffer via video=efifb — needed on hardware where the auto-selected
+# driver doesn't work, but freezes on Hyper-V Gen2 (hence not the default).
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (framebuffer)" {
     linux /boot/vmlinuz video=efifb
     initrd /boot/initrd.img
 }
 
+# Serial console, ttyS0 115200n8 — headless machines or -nographic QEMU.
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (serial)" {
     linux /boot/vmlinuz console=ttyS0,115200n8
     initrd /boot/initrd.img
 }
 
+# Normal boot with verbose kernel/init output.
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (debug)" {
     linux /boot/vmlinuz debug
     initrd /boot/initrd.img
 }
 
+# Drops straight to a shell instead of normal init.
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (rescue shell)" {
     linux /boot/vmlinuz rescue
     initrd /boot/initrd.img
 }
 
+# Copies the rootfs into RAM at boot, so the disc can be ejected afterward.
 menuentry "tHE m0n0LiTH ${BUILD_VERSION} (toram)" {
     linux /boot/vmlinuz toram
     initrd /boot/initrd.img

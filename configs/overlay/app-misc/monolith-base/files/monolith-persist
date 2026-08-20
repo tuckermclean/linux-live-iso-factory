@@ -1,0 +1,191 @@
+#!/bin/sh
+# monolith-persist — the MONOLITH_PERSIST liturgy as a script.
+#
+#   monolith-persist init <dev> [--swap N] [--yes|-y]
+#
+# mkfs.ext4 -L MONOLITH_PERSIST <dev>, with ONE confirmation that NAMES the
+# device and states its contents will be destroyed — then it obeys: informs,
+# doesn't obstruct. --yes/-y skips the prompt for scripted/non-interactive
+# use. --swap N additionally creates an N-MB swapfile inside the new
+# filesystem (the 8MB-GUI doctrine wants swap-on-persist — see startx and
+# `monolith help persist`; there is no automatic boot-time `swapon`, so the
+# swapfile still needs a manual `swapon /overlay/swapfile` after boot).
+#
+# This does not run automatically anywhere (no init.d hook, no profile.d
+# hook) — it is a manual, one-shot tool invoked on purpose against a device
+# you name. Unit-tested standalone: scripts/tests/monolith-persist.test.sh
+# (stubs mkfs.ext4/mkswap/blkid on PATH).
+set -u
+
+prog="monolith-persist"
+
+usage() {
+    cat <<'EOF'
+usage: monolith-persist init <dev> [--swap N] [--yes|-y]
+
+  init <dev>    mkfs.ext4 -L MONOLITH_PERSIST <dev> — ERASES <dev>.
+    --swap N    also create an N-MB swapfile at the new filesystem's root
+                (enable it after boot with: swapon /overlay/swapfile)
+    --yes, -y   skip the "type yes" confirmation (still names the device
+                and the swap size, if any, before proceeding)
+EOF
+}
+
+die() {
+    echo "$prog: $*" >&2
+    exit 1
+}
+
+is_posint() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        0) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Names the fate of the device's CURRENT contents for the confirmation
+# prompt — "informs, doesn't obstruct": report what's there, don't refuse
+# to proceed over it. Best-effort: if blkid is missing or finds nothing
+# recognizable, says so plainly rather than pretending to know.
+describe_current_contents() {
+    if ! command -v blkid >/dev/null 2>&1; then
+        echo "unknown (blkid not available)"
+        return 0
+    fi
+    _cur_type=$(blkid -o value -s TYPE "$1" 2>/dev/null)
+    _cur_label=$(blkid -o value -s LABEL "$1" 2>/dev/null)
+    if [ -z "$_cur_type" ]; then
+        echo "no recognizable filesystem"
+    elif [ -n "$_cur_label" ]; then
+        echo "$_cur_type filesystem, labeled '$_cur_label'"
+    else
+        echo "$_cur_type filesystem, unlabeled"
+    fi
+}
+
+# Creates an $2-MB swapfile at the root of the filesystem on device $1.
+# Mounts $1 to a scratch mountpoint, writes+enables the swapfile, unmounts.
+make_swapfile() {
+    _dev=$1
+    _mb=$2
+
+    command -v mkswap >/dev/null 2>&1 || die "mkswap not found on PATH — cannot honor --swap"
+
+    _mnt=$(mktemp -d 2>/dev/null) || die "mktemp -d failed while preparing the swapfile"
+    if ! mount -t ext4 "$_dev" "$_mnt" 2>/dev/null; then
+        rmdir "$_mnt" 2>/dev/null
+        die "could not mount $_dev to create the swapfile (mkfs itself succeeded)"
+    fi
+
+    _swapfile="$_mnt/swapfile"
+    if command -v fallocate >/dev/null 2>&1 && fallocate -l "${_mb}M" "$_swapfile" 2>/dev/null; then
+        :
+    else
+        dd if=/dev/zero of="$_swapfile" bs=1M count="$_mb" status=none 2>/dev/null \
+            || { umount "$_mnt" 2>/dev/null; rmdir "$_mnt" 2>/dev/null; die "could not allocate the ${_mb}MB swapfile"; }
+    fi
+    chmod 600 "$_swapfile"
+    if ! mkswap "$_swapfile" >/dev/null 2>&1; then
+        umount "$_mnt" 2>/dev/null; rmdir "$_mnt" 2>/dev/null
+        die "mkswap failed on the new swapfile"
+    fi
+
+    umount "$_mnt" 2>/dev/null
+    rmdir "$_mnt" 2>/dev/null
+
+    echo "$prog: created a ${_mb}MB swapfile (path on the mounted persist fs: /swapfile)"
+    echo "$prog: enable it after boot with: swapon /overlay/swapfile"
+    echo "$prog: (no automatic boot-time swapon yet — see: monolith help persist)"
+}
+
+cmd_init() {
+    _dev=""
+    _swap_mb=""
+    _assume_yes=0
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --swap)
+                [ $# -ge 2 ] || die "--swap requires an argument (MB)"
+                _swap_mb=$2
+                shift 2
+                ;;
+            --swap=*)
+                _swap_mb=${1#--swap=}
+                shift
+                ;;
+            --yes|-y)
+                _assume_yes=1
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                die "unknown option: $1 (see: monolith-persist --help)"
+                ;;
+            *)
+                if [ -z "$_dev" ]; then
+                    _dev=$1
+                else
+                    die "unexpected extra argument: $1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    [ -n "$_dev" ] || { usage >&2; exit 2; }
+
+    if [ -n "$_swap_mb" ]; then
+        is_posint "$_swap_mb" || die "--swap wants a whole number of megabytes greater than 0, got '$_swap_mb'"
+    fi
+
+    command -v mkfs.ext4 >/dev/null 2>&1 || die "mkfs.ext4 not found on PATH"
+
+    if [ "$_assume_yes" -ne 1 ]; then
+        _current=$(describe_current_contents "$_dev")
+        printf 'This will ERASE ALL DATA on %s (currently: %s) and label it MONOLITH_PERSIST (ext4).\n' "$_dev" "$_current"
+        if [ -n "$_swap_mb" ]; then
+            printf 'A %sMB swapfile will also be created on it.\n' "$_swap_mb"
+        fi
+        printf 'Type "yes" to continue: '
+        if ! read -r _reply; then
+            die "aborted (no input; nothing was written to $_dev)"
+        fi
+        [ "$_reply" = "yes" ] || die "aborted (nothing was written to $_dev)"
+    fi
+
+    mkfs.ext4 -F -L MONOLITH_PERSIST "$_dev" || die "mkfs.ext4 failed on $_dev"
+    echo "$prog: $_dev is now MONOLITH_PERSIST (ext4)"
+
+    if [ -n "$_swap_mb" ]; then
+        make_swapfile "$_dev" "$_swap_mb"
+    fi
+}
+
+case "${1:-}" in
+    init)
+        shift
+        cmd_init "$@"
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    "")
+        usage >&2
+        exit 2
+        ;;
+    *)
+        echo "$prog: unknown command '$1'" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

@@ -1,0 +1,52 @@
+Monolith tools — curated, not exhaustive. `which <name>` finds anything else
+on PATH; this is what's worth knowing about on purpose.
+
+helpers (this disc's own — see: monolith help <topic>)
+  monolith-net            — bring up ISA NICs that can't announce themselves
+  monolith-router         — one-command NAT router + dnsmasq DHCP/DNS for a LAN
+  monolith-console        — lazy auto-login shell (idle consoles cost no RAM)
+  monolith-advisory-check — fetches this build's CVE-revocation status
+  monolith-persist        — mkfs.ext4 -L MONOLITH_PERSIST <dev> + optional swapfile
+  startx                  — Xfbdev + dwm + st on the framebuffer
+  guestbook.cgi           — CGI guestbook fixture (perl + sqlite3, no DBI)
+
+network
+  ip, ping, traceroute, ethtool — iproute2 / net-tools / iputils / ethtool
+  dhcpcd                        — DHCP client
+  nft                           — nftables firewall/NAT rules
+  dnsmasq                       — DHCP+DNS server (see: monolith-router --dhcp)
+  dropbear, dbclient            — SSH server / SSH client
+  curl, wget                    — HTTP(S)/FTP clients
+  mtr, tcpdump, iftop, socat, nc, iperf3 — traffic diagnostics/generation
+  pppd, chat                    — dial-up/serial/PPPoE WAN (net-dialup/ppp)
+  rsync                         — file sync over SSH or its own protocol
+  whois                         — WHOIS lookups
+
+web / mail / irc
+  lynx                          — text-mode web browser (see: monolith help web)
+  mutt                          — terminal email client (IMAP+SMTP over TLS)
+  irssi                         — terminal IRC client
+
+dev
+  perl                          — static, -Uusedl (see: monolith help dev)
+  sqlite3                       — SQLite CLI (no DBI/DBD on this disc)
+  gdb                           — target-native debugger (ptrace)
+  strace                        — syscall tracer
+  make, patch                   — build a package against the sysroot
+  lua                           — Lua interpreter
+
+games
+  nethack                       — the roguelike (pinned 3.6.7)
+  rl144                         — integer-only roguelike, Rust, 486-native
+  bsd-games                     — the classic BSD terminal amusements
+  sl, cmatrix, figlet           — the traditional distractions
+
+system
+  ps, top, kill, watch          — process tools (procps)
+  htop, lsof, killall, pstree, fuser — process/handle inspection
+  vim, nano                     — editors
+  tmux                          — terminal multiplexer
+  mkfs.ext4, mkfs.vfat, fsck.*  — filesystem tools (e2fsprogs, dosfstools)
+  mksquashfs, unsquashfs        — squashfs-tools
+  hdparm, smartctl, dmidecode   — hardware info
+  modprobe, lsmod, depmod       — kmod: load a driver the kernel didn't

@@ -9,7 +9,8 @@
 # or append `vga=788` at the boot prompt. A plain text-mode console leaves the
 # framebuffer in VGA text mode, which the X server cannot claim ("no screens").
 #
-# On 8 MB, run with swap-on-persist (see the doc beside this script). Serial
+# On 8 MB, run with swap-on-persist (see: monolith help persist — `monolith-persist
+# init <dev> --swap N`, then `swapon /overlay/swapfile` after each boot). Serial
 # mice: `inputattach --microsoft /dev/ttyS0 &` before startx (protocol is your
 # call — startx does not guess it).
 

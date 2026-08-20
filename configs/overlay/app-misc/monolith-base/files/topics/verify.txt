@@ -1,0 +1,21 @@
+verify — checking a downloaded ISO is the one this project built
+
+  Every build that completes the attestation pipeline is signed with
+  GitHub Artifact Attestations (SLSA v1.0 provenance via Sigstore):
+
+      gh attestation verify themonolith-<tag>.iso --owner tuckermclean
+
+  Then cross-check the file you have against the digest inside that
+  attestation:
+
+      sha256sum themonolith-<tag>.iso
+
+  The sha256sum output must equal the digest the attestation carries,
+  which is also metadata.component.hashes[0] in that build's SBOM
+  (bom.cdx.json) — SBOM, SLSA subject, and ISO checksum are the same
+  value, so any one of the three cross-checks the other two.
+
+  This box cannot verify itself; verify the ISO you booted (or are about
+  to write to media) before you trust it. `gh attestation verify` needs
+  network access and a GitHub session (`gh auth login`) — do this from
+  another machine if this one is offline.

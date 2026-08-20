@@ -62,6 +62,7 @@ allowed_spdx:
   - GPL-2.0-only WITH Font-exception-2.0  # GPL-2 font exception (GRUB fonts)
   - GPL-2-with-font-exception             # Gentoo name for above
   - Bitstream-Vera  # Bitstream Vera font license (GRUB fonts)
+  - OFL-1.1         # SIL Open Font License 1.1 (media-fonts/terminus-font; OSI/FSF-approved permissive font license)
   - Toyoda         # Toyoda license used by sl (permissive)
   - netcat         # netcat license (permissive, Hobbit)
   - BSD-with-attribution  # BSD + attribution clause (libpcap)

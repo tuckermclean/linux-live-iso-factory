@@ -380,9 +380,9 @@ sync-portage: ensure-volume ensure-dirs
 	@echo "==> Fetching portage snapshot (pinned: $(BUILD_EPOCH)) via self-hosted mirror"
 	@mkdir -p $(SNAP_MIRROR)
 	SYNC_MIRROR_DIR=$(SNAP_MIRROR) BUILD_EPOCH=$(BUILD_EPOCH) sh scripts/sync-portage.sh fetch-only
-	@echo "==> emerge-webrsync from the local mirror"
-	$(DOCKER_RUN) $(SNAP_MOUNT) -e BUILD_EPOCH=$(BUILD_EPOCH) $(IMAGE_NAME) \
-		sh -c 'GENTOO_MIRRORS="file:///var/monolith-portage-mirror https://distfiles.gentoo.org" emerge-webrsync --revert=$(BUILD_EPOCH)'
+	@echo "==> emerge-webrsync from the PINNED local mirror (http, no upstream drift)"
+	$(DOCKER_RUN) $(SNAP_MOUNT) -e BUILD_EPOCH=$(BUILD_EPOCH) -e SYNC_MIRROR_DIR=/var/monolith-portage-mirror $(IMAGE_NAME) \
+		sh /scripts/sync-portage.sh webrsync-local
 
 # Build all packages: kernel, busybox, and userland (with parallel jobs)
 build-packages: ensure-volume ensure-dirs
