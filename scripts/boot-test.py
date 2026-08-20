@@ -744,6 +744,15 @@ def expect_milestone(child, text, timeout, description=None):
             f"QEMU exited before milestone {desc!r} was reached (unexpected EOF)."
         )
     log(f"  -> milestone reached: {desc!r}")
+    # Record the first real sign of life for the launch-flake discriminator in
+    # main(): reaching /init means SeaBIOS + kernel + initramfs all ran, so any
+    # later failure is a REAL boot/assertion failure, not a QEMU-startup flake.
+    # A failure BEFORE this ever fires (silent guest, no serial) is the flake
+    # pattern that a bounded relaunch legitimately papers over. `text` (not the
+    # cosmetic `desc`) is compared, so per-boot suffixes like " (boot 2)" still
+    # match the same underlying milestone string.
+    if text == MILESTONE_INIT_START:
+        child._reached_init = True
 
 
 def wait_for_shell(child, timeout=60):
@@ -1899,10 +1908,16 @@ def run_persist(child, args):
     results1 = []
     _persist_boot_to_shell(child, args)
 
-    results1.append(("boot 1: /overlay is the persist partition, not tmpfs",
+    results1.append(("boot 1: /overlay is the persist partition (ext4), not tmpfs",
                      *run_check(child, "overlay fstype",
-                                "awk '$2==\"/overlay\"{print $3}' /proc/mounts",
-                                regex_absent(r"^tmpfs$", re.MULTILINE))))
+                                # Pure-shell field read — the Monolith's busybox
+                                # is built WITHOUT the awk applet (CONFIG_AWK
+                                # unset; the console's command-not-found hint even
+                                # says "awk: not on the disc"), so the old
+                                # awk one-liner exited 127. /proc/mounts columns
+                                # are: dev mountpoint fstype opts dump pass.
+                                "while read -r _d _m _fs _r; do [ \"$_m\" = /overlay ] && echo \"$_fs\"; done < /proc/mounts",
+                                contains("ext4"))))
 
     marker = f"MONOLITH_PERSIST_MARK_{uuid.uuid4().hex[:8]}"
     # The command itself becomes the .bash_history line boot 2 looks for.
@@ -1935,10 +1950,13 @@ def run_persist(child, args):
         results2 = []
         _persist_boot_to_shell(child2, args, suffix=" (boot 2)")
 
-        results2.append(("boot 2: /overlay is STILL the persist partition",
+        results2.append(("boot 2: /overlay is STILL the persist partition (ext4)",
                          *run_check(child2, "overlay fstype (boot 2)",
-                                    "awk '$2==\"/overlay\"{print $3}' /proc/mounts",
-                                    regex_absent(r"^tmpfs$", re.MULTILINE))))
+                                    # Same pure-shell read as boot 1 (no awk on
+                                    # the disc); /overlay must remain the ext4
+                                    # MONOLITH_PERSIST partition across reboots.
+                                    "while read -r _d _m _fs _r; do [ \"$_m\" = /overlay ] && echo \"$_fs\"; done < /proc/mounts",
+                                    contains("ext4"))))
         results2.append((f"boot 2: '{marker}' survived the unclean poweroff in .bash_history",
                          *run_check(child2, "history grep",
                                     f"grep -qF {marker} /root/.bash_history && echo FOUND_{marker}",
@@ -2063,18 +2081,38 @@ def parse_args():
     return p.parse_args()
 
 
-def main():
-    args = parse_args()
-    if args.ram_mb is None:
-        args.ram_mb = MODE_DEFAULT_RAM[args.mode]
+# Total launch attempts before a persistently-silent guest is declared a real
+# failure rather than a transient flake. 3 = one real try plus two retries.
+STARTUP_FLAKE_MAX_ATTEMPTS = 3
 
-    log(f"mode={args.mode} iso={args.iso} ram={args.ram_mb}M kernel={args.kernel_version}")
 
-    import os
-    if not os.path.isfile(args.iso):
-        log(f"FATAL: ISO not found: {args.iso}")
-        sys.exit(2)
+def should_retry_launch(ok, reached_init, attempt, max_attempts):
+    """
+    Decide whether a failed boot-test attempt was a QEMU-startup flake worth
+    relaunching, versus a real failure that must be reported.
 
+    Pure decision logic (no I/O) so it can be reasoned about and unit-tested in
+    isolation. The discriminator is `reached_init`: if the guest ever reached
+    /init it booted through SeaBIOS + kernel + initramfs, so whatever failed
+    afterwards is a genuine boot/assertion failure and retrying it would only
+    mask regressions. Only a guest that stayed silent — never reaching /init,
+    the 'timeout on the very first milestone' signature of a QEMU-startup flake
+    on the CI host — is retried, and only while attempts remain.
+    """
+    if ok:
+        return False
+    if reached_init:
+        return False
+    return attempt < max_attempts
+
+
+def _run_once(args):
+    """
+    One full launch+run of the current mode. Returns (ok, reached_init).
+    Owns the QEMU child's lifecycle so a retry always starts from a clean slate.
+    reached_init reflects whether the guest got as far as /init (see
+    expect_milestone) — the signal should_retry_launch() keys on.
+    """
     child = None
     ok = False
     try:
@@ -2096,6 +2134,7 @@ def main():
         log(f"FATAL: pexpect error: {exc}")
         ok = False
     finally:
+        reached_init = bool(getattr(child, "_reached_init", False)) if child is not None else False
         if child is not None:
             if child.isalive():
                 log("Guest still alive at end of test — force-killing QEMU")
@@ -2103,8 +2142,43 @@ def main():
                     child.close(force=True)
                 except Exception:
                     pass
-            if args.log_file and child.logfile:
-                child.logfile.close()
+            if args.log_file and getattr(child, "logfile", None):
+                try:
+                    child.logfile.close()
+                except Exception:
+                    pass
+    return ok, reached_init
+
+
+def main():
+    args = parse_args()
+    if args.ram_mb is None:
+        args.ram_mb = MODE_DEFAULT_RAM[args.mode]
+
+    log(f"mode={args.mode} iso={args.iso} ram={args.ram_mb}M kernel={args.kernel_version}")
+
+    import os
+    if not os.path.isfile(args.iso):
+        log(f"FATAL: ISO not found: {args.iso}")
+        sys.exit(2)
+
+    ok = False
+    for attempt in range(1, STARTUP_FLAKE_MAX_ATTEMPTS + 1):
+        if attempt > 1:
+            log(f"=== Launch attempt {attempt}/{STARTUP_FLAKE_MAX_ATTEMPTS}: the guest "
+                f"never reached /init last time (no serial output — the QEMU-startup "
+                f"flake pattern), relaunching a fresh QEMU ===")
+        ok, reached_init = _run_once(args)
+        if ok:
+            break
+        if not should_retry_launch(ok, reached_init, attempt, STARTUP_FLAKE_MAX_ATTEMPTS):
+            if reached_init:
+                log("Failure occurred AFTER the guest reached /init — a real "
+                    "boot/assertion failure, not a startup flake. Not retrying.")
+            else:
+                log(f"Guest failed to reach /init on all {STARTUP_FLAKE_MAX_ATTEMPTS} "
+                    f"launches — no longer a transient flake; reporting as a real failure.")
+            break
 
     if ok:
         log(f"RESULT: PASS ({args.mode})")
