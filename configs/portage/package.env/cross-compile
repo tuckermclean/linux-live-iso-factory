@@ -41,3 +41,4 @@ net-dialup/ppp           ppp-no-plugins.conf
 # mutt: append -ltinfo so its bare -lncurses static link resolves against this
 # repo's tinfo-split ncurses (else configure reports "no curses library found")
 mail-client/mutt         mutt-tinfo.conf
+x11-apps/xlsfonts        xlsfonts-xcb.conf
