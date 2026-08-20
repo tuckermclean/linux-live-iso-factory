@@ -1979,16 +1979,6 @@ def run_persist(child, args):
     # is what put the line in the file.
     child.sendline("")
     time.sleep(1)
-
-    # --- TEMP DIAG: dump the interactive shell's history state so the boot-2
-    # serial reveals why /root/.bash_history isn't appearing (HISTFILE unset?
-    # PROMPT_COMMAND not wired? history disabled? history -a not creating it?).
-    child.sendline('echo HFDIAG hf=[$HISTFILE] flags=[$-] size=[$HISTSIZE] pc=[$PROMPT_COMMAND]')
-    time.sleep(1)
-    child.sendline('shopt -p histappend 2>&1; history -a 2>&1; ls -l "$HISTFILE" 2>&1; echo HFDIAG-END')
-    time.sleep(2)
-    # --- end DIAG ---
-
     run_check(child, "sync", "sync", exit_code_only())
 
     ok1 = report_results(results1)

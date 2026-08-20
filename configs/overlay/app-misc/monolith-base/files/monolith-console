@@ -11,6 +11,14 @@
 #
 # The boot-test harness's wait_for_shell() sends a newline to wake this stub
 # before it expects a live shell (see scripts/boot-test.py).
+#
+# Establish the root login environment before handing off. `agetty -n` auto-
+# logs-in root WITHOUT running login(1), so it never sets HOME/USER/LOGNAME
+# from /etc/passwd; bash then inherits HOME=/ from init, which sends $HISTFILE
+# and every ~ expansion to / instead of /root (e.g. persisted shell history
+# would land in /.bash_history). Set them here — the Monolith console is always
+# the single root user.
+export HOME=/root USER=root LOGNAME=root
 printf '\n[The Monolith] press Enter for a shell '
 read -r _
 exec /bin/bash
