@@ -474,6 +474,63 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  # Stele renders its own Acid2 conformance page to the framebuffer (one-shot
+  # `stele --headless --render-fb /usr/share/stele/acid2.html`, no X), screendumped
+  # and asserted non-black. See run_stele_acid2 in scripts/boot-test.py. The .ppm
+  # artifact is the headline browser demo.
+  stele-acid2:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
+
+      - name: Boot test — Stele renders Acid2 to the framebuffer
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode stele-acid2 \
+            --ram-mb 256 \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --gui-screendump output/stele-acid2-screendump.ppm \
+            --log-file output/boot-test-stele-acid2.log
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-stele-acid2-${{ github.run_id }}
+          path: output/boot-test-stele-acid2.log
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload Acid2 screendump
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-stele-acid2-screendump-${{ github.run_id }}
+          path: output/stele-acid2-screendump.ppm
+          retention-days: 14
+          if-no-files-found: warn
+
   # NIC-model matrix: BIOS/ISOLINUX boot with each QEMU NIC model in turn.
   # PCI models (pcnet/rtl8139/tulip/ne2k_pci) assert coldplug via modalias;
   # ne2k_isa has no modalias, so it asserts the `monolith-net probe` path

@@ -1719,6 +1719,67 @@ def run_gui(child, args):
     return ok
 
 
+def run_stele_acid2(child, args):
+    """
+    The headline browser demo: render Stele's own Acid2 conformance page and
+    screendump it. Boots the graphical vesafb framebuffer exactly like run_gui,
+    but instead of startx it runs Stele's ONE-SHOT headless framebuffer renderer
+    (src/backend/fb.rs: "paint a page and exit") against the acid2.html the
+    ebuild ships to /usr/share/stele/. `stele --headless --render-fb` paints
+    /dev/fb0 — the very VRAM QMP screendumps — and exits, leaving the rendered
+    page on the framebuffer for the dump. No X server, WM, or terminal involved,
+    and no network: Acid2 is self-contained (data: URIs), so it renders offline.
+
+    Gates on Stele exiting 0 and the screendump not being uniformly black; the
+    .ppm is uploaded as an artifact (the actual point of this mode).
+    """
+    select_isolinux_label(child, "serial vga=788")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    acid2 = "/usr/share/stele/acid2.html"
+    run_check(
+        child, "stele + acid2.html + graphical fb0 present (debug)",
+        f"command -v stele; ls -l {acid2} /dev/fb0 2>&1; "
+        "cat /sys/class/graphics/fb0/virtual_size /sys/class/graphics/fb0/bits_per_pixel 2>&1; true",
+        exit_code_only(), timeout=15,
+    )
+
+    log("Rendering acid2.html with Stele's one-shot headless framebuffer backend")
+    # One-shot paint-and-exit; laying out Acid2's CSS at -cpu 486 is not instant,
+    # so allow a generous window. RENDER_RC echoes stele's real exit code (the
+    # run_check marker's own $? would just be the trailing echo's).
+    render_ok = run_check(
+        child, "stele --headless --render-fb acid2.html",
+        f"stele --headless --render-fb {acid2}; echo RENDER_RC=$?",
+        contains("RENDER_RC=0"), timeout=180,
+    )
+
+    log("Taking a QEMU QMP screendump of the Acid2 render")
+    screendump_out = os.path.abspath(args.gui_screendump)
+    os.makedirs(os.path.dirname(screendump_out) or ".", exist_ok=True)
+    dump_ok, dump_detail = qemu_qmp_screendump(args.gui_monitor_sock, screendump_out)
+    if dump_ok:
+        not_black_ok, not_black_detail = ppm_not_black(screendump_out)
+    else:
+        not_black_ok, not_black_detail = False, f"screendump failed: {dump_detail}"
+
+    results = [
+        ("stele --headless --render-fb renders acid2.html (exit 0)", *render_ok),
+        ("framebuffer screendump of Acid2 is not uniformly black", not_black_ok, not_black_detail),
+    ]
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
 def run_nic(child, args):
     select_isolinux_label(child, "serial")
     for ms, desc in [
@@ -2040,6 +2101,7 @@ MODE_BUILDERS = {
     "nic": build_nic_cmd,
     "nat": build_nat_router_cmd,
     "gui": build_gui_cmd,
+    "stele-acid2": build_gui_cmd,  # same VGA-std + QMP-socket rig as gui
     "clock-epoch": build_clock_epoch_cmd,
     "clock-1996": build_clock_1996_cmd,
     "persist": build_persist_cmd,
@@ -2057,6 +2119,7 @@ MODE_RUNNERS = {
     "nic": run_nic,
     "nat": run_nat,
     "gui": run_gui,
+    "stele-acid2": run_stele_acid2,
     "clock-epoch": run_clock_epoch,
     "clock-1996": run_clock_1996,
     "persist": run_persist,
@@ -2074,6 +2137,7 @@ MODE_DEFAULT_RAM = {
     "nic": 256,
     "nat": 256,
     "gui": 128,
+    "stele-acid2": 256,  # headless render + image decode of Acid2 wants headroom
     "clock-epoch": 64,  # same bios/pc machine as "bios", no extra RAM pressure
     "clock-1996": 64,
     "persist": 128,  # BIOS/pc + one extra virtio-blk-pci disk; no networking needed
