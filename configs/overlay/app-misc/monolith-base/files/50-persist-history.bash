@@ -45,7 +45,13 @@ case "$-" in
             # partition that persists. `shopt -s histappend` + a
             # per-prompt `history -a` turns that into an incremental
             # append: the instant a prompt redraws, the just-run command
-            # is already on disk. Both are bash BUILTINS (no fork/exec),
+            # is already written to the persist history file — into the page
+            # cache, so the kernel's periodic journal commit, an umount, or an
+            # explicit `sync` is what lands it on the physical platter (a hard
+            # power cut in the sub-commit window can still lose the very last
+            # line; surviving that would need an fsync per prompt, a fork/exec
+            # cost this deliberately does not pay).
+            # Both are bash BUILTINS (no fork/exec),
             # so the added per-prompt cost is one small write to a file
             # already open — negligible even at -cpu 486. Gated on a REAL
             # persist mount: no point paying even that on tmpfs, and never

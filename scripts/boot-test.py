@@ -1930,10 +1930,12 @@ def run_persist(child, args):
       boot 1 (this `child`, already booting when we're called): confirm
       /overlay is the real persist partition (not tmpfs), run a distinctive
       `echo <marker>` command so it lands in bash history, give
-      20-persist.sh's per-prompt `history -a` one more prompt to fire on,
-      then kill QEMU with SIGKILL — deliberately UNCLEAN. A graceful
-      `poweroff` would flush history via bash's own on-exit save and prove
-      nothing about the incremental-append fix this mode exists to test.
+      50-persist-history.bash's per-prompt `history -a` one more prompt to
+      fire on, `sync` the appended line to the physical disk, then kill QEMU
+      with SIGKILL — deliberately UNCLEAN. A graceful `poweroff` would flush
+      history via bash's own on-exit save and prove nothing about the
+      incremental-append fix this mode exists to test; the explicit `sync`
+      supplies only the durability an OS flush would, not a clean bash exit.
 
       boot 2 (a fresh pexpect.spawn against the identical disk file, mirrors
       how run_nat spawns a second `client` process): confirm /overlay is
@@ -1964,13 +1966,24 @@ def run_persist(child, args):
                      *run_check(child, "marker command", f"echo {marker}", contains(marker))))
 
     # One more prompt cycle so 50-persist-history.bash's PROMPT_COMMAND
-    # `history -a` fires on the command above before the unclean kill below.
+    # `history -a` fires on the marker command, appending it to
+    # /root/.bash_history on the overlay. Then `sync`: `history -a` only writes
+    # into the page cache, and an unclean SIGKILL within a second would lose it
+    # before ext4's periodic journal commit ever runs — no persist system
+    # survives a power cut inside the sub-fsync window, and this feature
+    # deliberately avoids a fork/exec `sync` on every prompt (see
+    # 50-persist-history.bash). Flushing once here models the realistic
+    # durability boundary (data that reached the disk survives an unclean
+    # reboot), while the SIGKILL still denies bash its on-exit history save —
+    # so a surviving marker proves the incremental append, not a clean exit,
+    # is what put the line in the file.
     child.sendline("")
     time.sleep(1)
+    run_check(child, "sync", "sync", exit_code_only())
 
     ok1 = report_results(results1)
 
-    log("persist: killing QEMU uncleanly (SIGKILL, no poweroff) to prove history already hit disk")
+    log("persist: killing QEMU uncleanly (SIGKILL, no poweroff) to prove flushed history survives")
     try:
         child.close(force=True)
     except Exception:
