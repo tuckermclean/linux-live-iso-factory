@@ -441,26 +441,28 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             if [ -z "$PERSIST_DEV" ] && [ -e /dev/disk/by-label/MONOLITH_PERSIST ]; then
                 PERSIST_DEV="/dev/disk/by-label/MONOLITH_PERSIST"
             fi
-            # Read the ext2/3/4 volume label straight off the superblock of every
-            # candidate block device (findfs is NOT compiled into this
-            # initramfs's busybox, confirmed at runtime, so it's the only method
-            # we have). Hard-won from the boot-test serial:
+            # Find the MONOLITH_PERSIST filesystem by its ext label, using ONLY
+            # tools this initramfs's busybox actually ships. Hard-won from the
+            # boot-test serial + the busybox savedconfig:
+            #   * NO findfs (CONFIG_FINDFS is compiled but the shipped binpkg is
+            #     stale and lacks it) and NO dd (CONFIG_DD is unset) — every dd we
+            #     tried silently failed with "dd: not found". Confirmed present
+            #     and working at runtime: cat, tr, grep.
             #   * Enumerate nodes DIRECTLY from /dev (vd*/sd*/nvme*/mmcblk*/hd*),
-            #     not via /sys/block.
-            #   * Read with `cat`, NOT `dd`. busybox dd reads ZERO bytes off a
-            #     real block device in this initramfs — every form tried
-            #     (bs=1 skip=1144, bs=1024 skip=1, bs=2048 count=1 from offset 0)
-            #     came back empty, and the diagnostic proved it applies to EVERY
-            #     block node including the CD we booted from, so it's dd, not the
-            #     disk. `cat` does a plain read() loop that the kernel serves
-            #     fine; the downstream `dd bs=1 skip=1144 count=16` reads from the
-            #     PIPE (where bs=1/skip are legal) and closes it after 1160 bytes,
-            #     so cat stops early via SIGPIPE rather than slurping the disk.
+            #     NOT /sys/block, and NOT loop*/sr* — the squashfs on the loop
+            #     devices literally contains the string "MONOLITH_PERSIST" (this
+            #     very script), so scanning it would false-positive.
+            #   * `cat` streams the raw device (a plain read() the kernel serves);
+            #     `tr -d '\000'` drops the NULs so grep treats it as text (GNU grep
+            #     otherwise suppresses a match in binary without -a, and busybox
+            #     grep has no -a); `grep -q` exits at the first hit and SIGPIPEs
+            #     cat closed, so a matching disk is read only up to the label, not
+            #     slurped whole. A fresh persist disk carries the string only in
+            #     its (backup) superblock label, so a hit means the right disk.
             if [ -z "$PERSIST_DEV" ]; then
                 for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
                     [ -b "$dev" ] || continue
-                    lbl=$(cat "$dev" 2>/dev/null | dd bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
-                    if [ "$lbl" = "MONOLITH_PERSIST" ]; then
+                    if cat "$dev" 2>/dev/null | tr -d '\000' 2>/dev/null | grep -q MONOLITH_PERSIST 2>/dev/null; then
                         PERSIST_DEV="$dev"
                         break
                     fi
@@ -476,13 +478,13 @@ if [ "$OVERLAY_MODE" = "1" ]; then
         # next boot-test serial into direct evidence — which block nodes existed
         # and what label each superblock actually read — instead of a guess.
         if [ -z "$PERSIST_DEV" ]; then
-            msg "persist DIAG: findfs=[$(command -v findfs >/dev/null 2>&1 && findfs LABEL=MONOLITH_PERSIST 2>&1 || echo no-findfs-applet)]"
-            for dev in /dev/*; do
+            for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
                 [ -b "$dev" ] || continue
-                _dderr=$(dd if="$dev" bs=512 count=1 of=/dev/null 2>&1 | tr '\n' ';')
-                _catn=$(cat "$dev" 2>/dev/null | dd bs=1 count=2048 2>/dev/null | wc -c 2>/dev/null | tr -d ' ')
-                _catlbl=$(cat "$dev" 2>/dev/null | dd bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
-                msg "persist DIAG: $dev dd-err=[${_dderr}] cat-bytes=[${_catn}] cat-label=[${_catlbl}]"
+                if cat "$dev" 2>/dev/null | tr -d '\000' 2>/dev/null | grep -q MONOLITH_PERSIST 2>/dev/null; then
+                    msg "persist DIAG: $dev DID contain MONOLITH_PERSIST (but was not selected?!)"
+                else
+                    msg "persist DIAG: $dev scanned, no MONOLITH_PERSIST label"
+                fi
             done
         fi
 
