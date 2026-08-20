@@ -435,8 +435,29 @@ def build_nic_cmd(args):
 # .superpowers/sdd/2026-08-19-monolith-ux-pass/task-2-brief.md for the
 # INVARIANT this is built against: the trigger is demonstrated ignorance
 # (epoch / known RTC-reset dates), never date plausibility.
-CLOCK_EPOCH_RTC = "1970-01-01T00:00:00"   # the dead-RTC / no-battery sentinel
+# The dead-RTC / no-battery sentinel. Uses 2000-01-01 (the value a drained
+# CMOS cell most commonly resets a PC RTC to), NOT the Unix epoch: QEMU's
+# SeaBIOS + `-cpu 486` deterministically HANGS in early firmware with
+# `-rtc base=1970-01-01T00:00:00` (verified — the guest emitted zero serial
+# and never reached /init across 3 independent launches), which is an
+# emulator/firmware edge at time_t 0, not a Monolith behaviour worth pinning a
+# test to. 2000-01-01 boots reliably, is still 26 years adrift from the disc's
+# era, and is one of the RTC-reset sentinels monolith-time-check keys its
+# "demonstrated ignorance" trigger on — so the correction path under test is
+# exercised identically.
+CLOCK_EPOCH_RTC = "2000-01-01T00:00:00"   # dead-RTC / no-battery sentinel (CMOS reset value)
 CLOCK_1996_RTC = "1996-06-15T12:00:00"    # squarely inside the disc's own native era
+
+# Exit-0-safe reader for /overlay's filesystem type, used by the persist mode.
+# The Monolith's busybox has no awk applet, and a bare `while read` loop over
+# /proc/mounts exits non-zero (its last iteration's `[ $mnt != /overlay ]` test
+# fails), which run_check's validators treat as a command failure. Capturing
+# into a var and echoing a labelled token guarantees exit 0 and yields an
+# unambiguous "overlay_fstype=<fs>" line (empty if /overlay isn't mounted).
+OVERLAY_FSTYPE_CMD = (
+    '_fs=; while read -r _d _m _t _r; do [ "$_m" = /overlay ] && _fs=$_t; done '
+    '< /proc/mounts; echo "overlay_fstype=$_fs"'
+)
 
 # Host-side fixture HTTP server the guest reaches through QEMU's default
 # usermode networking gateway (10.0.2.2 -> the CI host; same address
@@ -1915,9 +1936,13 @@ def run_persist(child, args):
                                 # unset; the console's command-not-found hint even
                                 # says "awk: not on the disc"), so the old
                                 # awk one-liner exited 127. /proc/mounts columns
-                                # are: dev mountpoint fstype opts dump pass.
-                                "while read -r _d _m _fs _r; do [ \"$_m\" = /overlay ] && echo \"$_fs\"; done < /proc/mounts",
-                                contains("ext4"))))
+                                # are: dev mountpoint fstype opts dump pass. Capture
+                                # into a var and echo a labelled token so the check
+                                # ALWAYS exits 0 (a bare `while read` loop exits with
+                                # the last iteration's failed `[ != /overlay ]` test,
+                                # which run_check's contains() would read as failure).
+                                OVERLAY_FSTYPE_CMD,
+                                contains("overlay_fstype=ext4"))))
 
     marker = f"MONOLITH_PERSIST_MARK_{uuid.uuid4().hex[:8]}"
     # The command itself becomes the .bash_history line boot 2 looks for.
@@ -1952,11 +1977,11 @@ def run_persist(child, args):
 
         results2.append(("boot 2: /overlay is STILL the persist partition (ext4)",
                          *run_check(child2, "overlay fstype (boot 2)",
-                                    # Same pure-shell read as boot 1 (no awk on
+                                    # Same exit-0-safe read as boot 1 (no awk on
                                     # the disc); /overlay must remain the ext4
                                     # MONOLITH_PERSIST partition across reboots.
-                                    "while read -r _d _m _fs _r; do [ \"$_m\" = /overlay ] && echo \"$_fs\"; done < /proc/mounts",
-                                    contains("ext4"))))
+                                    OVERLAY_FSTYPE_CMD,
+                                    contains("overlay_fstype=ext4"))))
         results2.append((f"boot 2: '{marker}' survived the unclean poweroff in .bash_history",
                          *run_check(child2, "history grep",
                                     f"grep -qF {marker} /root/.bash_history && echo FOUND_{marker}",
