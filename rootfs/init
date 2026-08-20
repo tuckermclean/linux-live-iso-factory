@@ -448,16 +448,18 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             # way from the boot-test serial:
             #   * Enumerate nodes DIRECTLY from /dev (vd*/sd*/nvme*/mmcblk*/hd*),
             #     not via /sys/block.
-            #   * Read BLOCK-ALIGNED. `dd bs=1 skip=1144` returns nothing on a
-            #     real block device (byte-granular reads aren't allowed), even
-            #     though it works fine on a plain file — so pull block 1 (the
-            #     1024-byte superblock, where the ext label lives at offset 0x78)
-            #     in one aligned read, then byte-slice the 16-byte label out of
-            #     the PIPE, where bs=1 is fine.
+            #   * Read BLOCK-ALIGNED, FROM OFFSET 0, with NO device-side skip.
+            #     `dd bs=1 skip=1144` and even `dd bs=1024 skip=1` both read
+            #     NOTHING off a real block device here (byte-granular reads and
+            #     device-side seeks that a plain file tolerates do not survive
+            #     busybox dd on /dev/vda) — so read the first block-aligned 2 KiB
+            #     from the very start of the device in one go, then byte-slice
+            #     the 16-byte label (at 0x478 = 1144) out of the PIPE, where bs=1
+            #     and skip are fine.
             if [ -z "$PERSIST_DEV" ]; then
                 for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
                     [ -b "$dev" ] || continue
-                    lbl=$(dd if="$dev" bs=1024 skip=1 count=1 2>/dev/null | dd bs=1 skip=120 count=16 2>/dev/null | tr -d '\0')
+                    lbl=$(dd if="$dev" bs=2048 count=1 2>/dev/null | dd bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
                     if [ "$lbl" = "MONOLITH_PERSIST" ]; then
                         PERSIST_DEV="$dev"
                         break
@@ -477,7 +479,9 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             msg "persist DIAG: findfs=[$(command -v findfs >/dev/null 2>&1 && findfs LABEL=MONOLITH_PERSIST 2>&1 || echo no-findfs-applet)]"
             for dev in /dev/*; do
                 [ -b "$dev" ] || continue
-                msg "persist DIAG: block $dev label=[$(dd if="$dev" bs=1024 skip=1 count=1 2>/dev/null | dd bs=1 skip=120 count=16 2>/dev/null | tr -d '\0')]"
+                _n0=$(dd if="$dev" bs=2048 count=1 2>/dev/null | wc -c 2>/dev/null | tr -d ' ')
+                _lbl=$(dd if="$dev" bs=2048 count=1 2>/dev/null | dd bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
+                msg "persist DIAG: block $dev off0-bytes=${_n0} label=[${_lbl}]"
             done
         fi
 
