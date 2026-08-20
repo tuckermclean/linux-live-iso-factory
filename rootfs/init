@@ -444,22 +444,22 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             # Read the ext2/3/4 volume label straight off the superblock of every
             # candidate block device (findfs is NOT compiled into this
             # initramfs's busybox, confirmed at runtime, so it's the only method
-            # we have). Two things this has to get right, both learned the hard
-            # way from the boot-test serial:
+            # we have). Hard-won from the boot-test serial:
             #   * Enumerate nodes DIRECTLY from /dev (vd*/sd*/nvme*/mmcblk*/hd*),
             #     not via /sys/block.
-            #   * Read BLOCK-ALIGNED, FROM OFFSET 0, with NO device-side skip.
-            #     `dd bs=1 skip=1144` and even `dd bs=1024 skip=1` both read
-            #     NOTHING off a real block device here (byte-granular reads and
-            #     device-side seeks that a plain file tolerates do not survive
-            #     busybox dd on /dev/vda) — so read the first block-aligned 2 KiB
-            #     from the very start of the device in one go, then byte-slice
-            #     the 16-byte label (at 0x478 = 1144) out of the PIPE, where bs=1
-            #     and skip are fine.
+            #   * Read with `cat`, NOT `dd`. busybox dd reads ZERO bytes off a
+            #     real block device in this initramfs — every form tried
+            #     (bs=1 skip=1144, bs=1024 skip=1, bs=2048 count=1 from offset 0)
+            #     came back empty, and the diagnostic proved it applies to EVERY
+            #     block node including the CD we booted from, so it's dd, not the
+            #     disk. `cat` does a plain read() loop that the kernel serves
+            #     fine; the downstream `dd bs=1 skip=1144 count=16` reads from the
+            #     PIPE (where bs=1/skip are legal) and closes it after 1160 bytes,
+            #     so cat stops early via SIGPIPE rather than slurping the disk.
             if [ -z "$PERSIST_DEV" ]; then
                 for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
                     [ -b "$dev" ] || continue
-                    lbl=$(dd if="$dev" bs=2048 count=1 2>/dev/null | dd bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
+                    lbl=$(cat "$dev" 2>/dev/null | dd bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
                     if [ "$lbl" = "MONOLITH_PERSIST" ]; then
                         PERSIST_DEV="$dev"
                         break
@@ -479,9 +479,10 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             msg "persist DIAG: findfs=[$(command -v findfs >/dev/null 2>&1 && findfs LABEL=MONOLITH_PERSIST 2>&1 || echo no-findfs-applet)]"
             for dev in /dev/*; do
                 [ -b "$dev" ] || continue
-                _n0=$(dd if="$dev" bs=2048 count=1 2>/dev/null | wc -c 2>/dev/null | tr -d ' ')
-                _lbl=$(dd if="$dev" bs=2048 count=1 2>/dev/null | dd bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
-                msg "persist DIAG: block $dev off0-bytes=${_n0} label=[${_lbl}]"
+                _dderr=$(dd if="$dev" bs=512 count=1 of=/dev/null 2>&1 | tr '\n' ';')
+                _catn=$(cat "$dev" 2>/dev/null | dd bs=1 count=2048 2>/dev/null | wc -c 2>/dev/null | tr -d ' ')
+                _catlbl=$(cat "$dev" 2>/dev/null | dd bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
+                msg "persist DIAG: $dev dd-err=[${_dderr}] cat-bytes=[${_catn}] cat-label=[${_catlbl}]"
             done
         fi
 
