@@ -26,8 +26,18 @@ fi
 
 mkdir -p /tmp/.X11-unix
 
-# The X server, on the framebuffer, with ONLY the built-in fonts.
-Xfbdev :0 -fb /dev/fb0 -fp built-ins >/tmp/Xfbdev.log 2>&1 &
+# The X server, on the framebuffer, font path: our alias dir FIRST (it reclaims
+# `fixed`/`variable` for Terminus — font path order is the alias tiebreaker),
+# then the Terminus PCFs, then the libXfont `built-ins` LAST. built-ins stays
+# only to supply the `cursor` font the server needs to start (the compiled-in
+# 6x13 is NOT wanted — but `fixed` resolves via the monolith alias, listed
+# first, before it can ever reach built-ins). This keeps the disc bitmap-only:
+# no font-misc-misc / font-cursor-misc, no freetype. A wrong Terminus XLFD can't
+# ship — build-rootfs.sh verifies each aliased XLFD exists in terminus/fonts.dir
+# at image build.
+Xfbdev :0 -fb /dev/fb0 \
+    -fp /usr/share/fonts/monolith,/usr/share/fonts/terminus,built-ins \
+    >/tmp/Xfbdev.log 2>&1 &
 xpid=$!
 
 # Wait (up to ~10s) for the server to accept connections on :0.

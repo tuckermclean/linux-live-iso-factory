@@ -1701,6 +1701,12 @@ def run_gui(child, args):
         exit_code_only(), timeout=15,
     )
 
+    # No separate font probe on the disc (keeping it lean): dwm and st are built
+    # to name the full Terminus XLFD explicitly, and the Xfbdev server can only
+    # open a font that actually resolves from the disc font path — so a broken
+    # Terminus index/XLFD makes st/dwm exit immediately, which the pgrep check
+    # above already catches. server_up passing == Terminus loaded from disc.
+
     log("Taking a QEMU QMP screendump of the framebuffer")
     screendump_out = os.path.abspath(args.gui_screendump)
     os.makedirs(os.path.dirname(screendump_out) or ".", exist_ok=True)
@@ -1711,7 +1717,7 @@ def run_gui(child, args):
         not_black_ok, not_black_detail = False, f"screendump failed: {dump_detail}"
 
     results = [
-        ("startx brings up Xfbdev + dwm + st on the framebuffer", *server_up),
+        ("startx brings up Xfbdev + dwm + st (both naming Terminus) on the framebuffer", *server_up),
         ("framebuffer screendump is not uniformly black (dwm bar + terminal drawn)", not_black_ok, not_black_detail),
     ]
     ok = report_results(results)

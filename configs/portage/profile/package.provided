@@ -15,3 +15,13 @@
 # provided satisfies the dep without dragging in systemd-utils/Python and without
 # changing any installed file. See memory: tmpfiles-systemd-utils-python-trap.
 virtual/tmpfiles-0-r7
+
+# Terminus-as-default X font pass: font.eclass fonts RDEPEND x11-apps/mkfontscale
+# -> media-libs/freetype (scalable-font reader). This bitmap-only, read-only 486
+# disc never regenerates fonts at runtime (we generate fonts.dir at image build
+# from each PCF's FONT property, scripts/pcf-fontname.py), so provide the whole
+# scalable-font chain away to keep freetype OFF the squashfs. Versions track the
+# pinned tree; if a repin drifts them, freetype reappears in the build log.
+media-libs/freetype-2.14.3
+x11-apps/mkfontscale-1.2.4
+media-fonts/encodings-1.1.0

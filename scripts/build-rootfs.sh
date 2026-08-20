@@ -88,6 +88,82 @@ install_sysroot() {
             done
         fi
 
+        # X core fonts: index the bitmap font dirs and reclaim `fixed` for
+        # Terminus (GUI "Terminus by default" pass). The font ebuilds' own
+        # fonts.dir generation runs in pkg_postinst via mkfontscale, which never
+        # fires on a cross/ROOT install (the target sysroot has no mkfontscale),
+        # AND the builder image can't currently be rebuilt to add a host
+        # mkfontscale (its TOOLCHAIN_EPOCH portage snapshot was pruned upstream;
+        # see the Dockerfile). So we index the fonts ourselves by reading each
+        # PCF's own FONT property (scripts/pcf-fontname.py — an AUTHORITATIVE
+        # XLFD straight from the file, not a guess) and writing fonts.dir. Then
+        # ship our OWN alias dir mapping `fixed`/`variable`/bold/heading to
+        # Terminus XLFDs; startx lists it FIRST in the server's -fp path so it
+        # wins over font-misc-misc's fonts.alias (which claims `fixed` for the
+        # classic 6x13 — font path order is the alias tiebreaker).
+        local fontsroot="$ROOTFS_DIR/usr/share/fonts"
+        local script_dir pcfname
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        pcfname="${script_dir}/pcf-fontname.py"
+        if [ -d "$fontsroot" ] && [ -f "$pcfname" ]; then
+            log_info "Indexing X bitmap fonts (PCF FONT property) + Terminus alias..."
+            local fdir pcf xlfd n tmp
+            for fdir in "$fontsroot"/terminus; do
+                [ -d "$fdir" ] || continue
+                tmp="$fdir/.fonts.dir.tmp"; : > "$tmp"; n=0
+                for pcf in "$fdir"/*.pcf "$fdir"/*.pcf.gz; do
+                    [ -f "$pcf" ] || continue
+                    if xlfd="$(python3 "$pcfname" "$pcf" 2>/dev/null)" && [ -n "$xlfd" ]; then
+                        printf '%s %s\n' "$(basename "$pcf")" "$xlfd" >> "$tmp"
+                        n=$((n + 1))
+                    else
+                        log_warn "could not read FONT property from $pcf — skipping"
+                    fi
+                done
+                { printf '%d\n' "$n"; cat "$tmp"; } > "$fdir/fonts.dir"
+                rm -f "$tmp"
+                log_info "  indexed ${n} font(s) into $(basename "$fdir")/fonts.dir"
+            done
+
+            local aliasdir="$fontsroot/monolith"
+            mkdir -p "$aliasdir"
+            local ter16="-xos4-terminus-medium-r-normal--16-160-72-72-c-80-iso10646-1"
+            local ter16b="-xos4-terminus-bold-r-normal--16-160-72-72-c-80-iso10646-1"
+            local ter32="-xos4-terminus-medium-r-normal--32-320-72-72-c-160-iso10646-1"
+            {
+                printf 'fixed\t\t%s\n'      "$ter16"
+                printf 'variable\t%s\n'     "$ter16"
+                printf 'fixed-bold\t%s\n'   "$ter16b"
+                printf 'heading\t\t%s\n'    "$ter32"
+            } > "$aliasdir/fonts.alias"
+            # An alias-only dir still needs a fonts.dir (count 0) for the server's
+            # FontFile FPE to accept it as a valid font directory.
+            printf '0\n' > "$aliasdir/fonts.dir"
+
+            # LANDMINE GUARD: the server refuses to start if `fixed` doesn't
+            # resolve, and the alias is only as good as its XLFD strings. The
+            # index above wrote the AUTHORITATIVE XLFDs (each PCF's own FONT
+            # property) into terminus/fonts.dir — so verify every XLFD we alias
+            # to actually appears there. A wrong foundry/size/registry string
+            # then fails the BUILD, with the real XLFDs printed, not just the boot.
+            local terdir="$fontsroot/terminus/fonts.dir"
+            if [ ! -f "$terdir" ]; then
+                log_error "terminus/fonts.dir was not generated ($terdir) — is terminus-font[pcf] installed?"
+                exit 1
+            fi
+            for xlfd in "$ter16" "$ter16b" "$ter32"; do
+                if ! grep -qF -- "$xlfd" "$terdir"; then
+                    log_error "aliased Terminus XLFD absent from generated fonts.dir: $xlfd"
+                    log_error "actual terminus/fonts.dir (correct the alias XLFDs to match these):"
+                    cat "$terdir" >&2
+                    exit 1
+                fi
+            done
+            log_info "X fonts indexed; all aliased Terminus XLFDs verified present in fonts.dir"
+        else
+            log_warn "$fontsroot or $pcfname missing — X core fonts NOT indexed (GUI will fail to find 'fixed')"
+        fi
+
         # Copy bash skel files to root home (sourced by login/subshells)
         cp -a "$ROOTFS_DIR"/etc/skel/.bash* "$ROOTFS_DIR"/root/ 2>/dev/null || true
 
