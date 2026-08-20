@@ -441,16 +441,23 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             if [ -z "$PERSIST_DEV" ] && [ -e /dev/disk/by-label/MONOLITH_PERSIST ]; then
                 PERSIST_DEV="/dev/disk/by-label/MONOLITH_PERSIST"
             fi
-            # Fallback: read the ext2/3/4 volume label straight from the
-            # superblock (label at byte offset 0x478 = 1144, 16 bytes) of every
-            # candidate block device. Enumerate the nodes DIRECTLY from /dev
-            # (vd*/sd*/nvme*/mmcblk*/hd*) rather than via /sys/block, so we don't
-            # depend on sysfs listing the device — covers the documented ext4
-            # persist partition even when findfs is unavailable or blind to it.
+            # Read the ext2/3/4 volume label straight off the superblock of every
+            # candidate block device (findfs is NOT compiled into this
+            # initramfs's busybox, confirmed at runtime, so it's the only method
+            # we have). Two things this has to get right, both learned the hard
+            # way from the boot-test serial:
+            #   * Enumerate nodes DIRECTLY from /dev (vd*/sd*/nvme*/mmcblk*/hd*),
+            #     not via /sys/block.
+            #   * Read BLOCK-ALIGNED. `dd bs=1 skip=1144` returns nothing on a
+            #     real block device (byte-granular reads aren't allowed), even
+            #     though it works fine on a plain file — so pull block 1 (the
+            #     1024-byte superblock, where the ext label lives at offset 0x78)
+            #     in one aligned read, then byte-slice the 16-byte label out of
+            #     the PIPE, where bs=1 is fine.
             if [ -z "$PERSIST_DEV" ]; then
                 for dev in /dev/vd* /dev/sd* /dev/nvme*n* /dev/mmcblk* /dev/hd*; do
                     [ -b "$dev" ] || continue
-                    lbl=$(dd if="$dev" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')
+                    lbl=$(dd if="$dev" bs=1024 skip=1 count=1 2>/dev/null | dd bs=1 skip=120 count=16 2>/dev/null | tr -d '\0')
                     if [ "$lbl" = "MONOLITH_PERSIST" ]; then
                         PERSIST_DEV="$dev"
                         break
@@ -470,7 +477,7 @@ if [ "$OVERLAY_MODE" = "1" ]; then
             msg "persist DIAG: findfs=[$(command -v findfs >/dev/null 2>&1 && findfs LABEL=MONOLITH_PERSIST 2>&1 || echo no-findfs-applet)]"
             for dev in /dev/*; do
                 [ -b "$dev" ] || continue
-                msg "persist DIAG: block $dev label=[$(dd if="$dev" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\0')]"
+                msg "persist DIAG: block $dev label=[$(dd if="$dev" bs=1024 skip=1 count=1 2>/dev/null | dd bs=1 skip=120 count=16 2>/dev/null | tr -d '\0')]"
             done
         fi
 

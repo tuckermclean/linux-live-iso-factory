@@ -474,10 +474,22 @@ def build_clock_epoch_cmd(args):
     CLOCK_EPOCH_RTC when the caller didn't already pass one explicitly, so
     `--mode clock-epoch` is correct out of the box while still allowing an
     override for local experimentation.
+
+    The NIC is removed (`-nic none`). CI's QEMU guest has no route to the real
+    internet (only the host at 10.0.2.2 is reachable, and DNS doesn't resolve),
+    and the natural way to point monolith-time at a host fixture — a
+    `monolith_time_url=http://…` kernel arg typed at the ISOLINUX prompt —
+    deterministically hangs that boot loader. So rather than test a network
+    *correction* we can't make reliable, we test the DETECTION half
+    hermetically: with no time source at all, monolith-time-check still judges
+    the epoch clock ignorant (sets its flag) and nothing silently stomps the
+    clock. The fetch-and-set mechanics are covered by monolith-time.test.sh.
     """
     if not args.rtc_date:
         args.rtc_date = CLOCK_EPOCH_RTC
-    return build_bios_cmd(args)
+    cmd = build_bios_cmd(args)
+    cmd += ["-nic", "none"]
+    return cmd
 
 
 def build_clock_1996_cmd(args):
@@ -513,24 +525,22 @@ def epoch_close_to(target_epoch, tolerance):
 
 def run_clock_epoch(child, args):
     """
-    THE CLOCK LANDMINE, direction (a): a dead-RTC machine corrects itself over
-    the network. The automatic S45monolith-time hook (running during rcS, well
-    before this function ever gets a shell) must see a clock sitting at the
-    epoch sentinel, see eth0 up (S40network already ran), fetch a Date header,
-    and set the clock — all with zero interaction from this test. We only
-    observe the result once a shell is up: the clock reads ~now, and the
-    ignorance flag the login hint keys on is gone (the fetch succeeded, so the
-    machine now has an opinion).
+    THE CLOCK LANDMINE, direction (a): a dead-RTC machine is correctly JUDGED
+    ignorant. The automatic S45 monolith-time-check hook (running during rcS,
+    well before this function ever gets a shell) must see a clock sitting at the
+    epoch sentinel and raise the ignorance flag the login hint keys on — with
+    zero interaction from this test.
 
-    We deliberately DON'T override monolith_time_url here. The natural way to
-    inject a host fixture URL is a kernel arg typed at the ISOLINUX prompt, but
-    a long `monolith_time_url=http://…` label hangs the boot right after it's
-    typed (SeaBIOS/ISOLINUX come up fine, then stall — a plain `serial` label,
-    or short appends like `vga=788`/`toram`, boot without issue). So we type the
-    same bare `serial` label the other nine boot modes use and let monolith-time
-    hit its default endpoint (http://example.com/) over QEMU's usermode NAT —
-    the very real-internet path run_clock_1996's docstring relies on. The dead
-    clock still gets corrected to ~now; that's the behaviour under test.
+    This deliberately tests DETECTION, not network correction. CI's QEMU guest
+    can't reach a real time source, and injecting a host-fixture URL hangs the
+    ISOLINUX prompt (see build_clock_epoch_cmd, which also removes the NIC so
+    the outcome is deterministic). So we boot the bare `serial` label the other
+    modes use and assert the hermetic, network-independent half: the epoch clock
+    is flagged ignorant, and — with nothing to correct from — is left untouched
+    at 1970 rather than silently stomped. This is the exact mirror of
+    run_clock_1996 (plausible clock -> NOT flagged, left at 1996); together they
+    prove monolith-time-check's sentinel discrimination. The fetch-and-set-clock
+    half is covered by scripts/tests/monolith-time.test.sh.
     """
     select_isolinux_label(child, "serial")
     for ms, desc in [
@@ -544,17 +554,13 @@ def run_clock_epoch(child, args):
     wait_for_shell(child)
 
     results = []
-    # A one-hour tolerance absorbs however long boot + the QEMU launch took,
-    # plus the upstream server's Date granularity — it's nowhere near loose
-    # enough to also match "still 1970" or "some plausible past decade", so
-    # it still proves the correction actually happened.
     results.append((
-        "clock corrected to ~now via monolith-time (S45 boot hook)",
-        *run_check(child, "date +%s", "date +%s", epoch_close_to(int(time.time()), tolerance=3600)),
+        "dead clock detected as ignorant (S45 raised the flag)",
+        *run_check(child, "flag present", "test -e /run/monolith-clock-ignorant", exit_code_only()),
     ))
     results.append((
-        "ignorance flag absent after a successful correction",
-        *run_check(child, "flag absent", "test ! -e /run/monolith-clock-ignorant", exit_code_only()),
+        "epoch clock left untouched — no phantom correction without a time source",
+        *run_check(child, "date +%Y", "date +%Y", contains("1970")),
     ))
 
     ok = report_results(results)
