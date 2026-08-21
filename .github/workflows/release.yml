@@ -223,7 +223,32 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
+          # A SemVer pre-release tag carries a hyphen suffix (v0.1.0-rc1,
+          # -beta.2, -alpha): always --prerelease. For "Latest": mark a
+          # pre-release Latest ONLY while no final (non-prerelease) release
+          # exists yet — so the first RCs ARE the newest thing users see, but
+          # once a real vX.Y.Z ships THAT becomes Latest and later pre-releases
+          # stay off it. A final vX.Y.Z (no hyphen) always becomes Latest.
+          RELEASE_FLAGS=()
+          case "${TAG#v}" in
+            *-*)
+              RELEASE_FLAGS+=(--prerelease)
+              FINALS=$(gh release list --exclude-drafts --json isPrerelease \
+                         --jq '[.[] | select(.isPrerelease==false)] | length' 2>/dev/null || echo 0)
+              if [ "${FINALS:-0}" -eq 0 ]; then
+                RELEASE_FLAGS+=(--latest)
+                echo "==> ${TAG}: pre-release, and no final release exists yet — publishing as prerelease AND Latest"
+              else
+                RELEASE_FLAGS+=(--latest=false)
+                echo "==> ${TAG}: pre-release, a final release already exists — prerelease, NOT Latest"
+              fi
+              ;;
+            *)
+              echo "==> ${TAG}: final release — publishing as Latest"
+              ;;
+          esac
           gh release create "${TAG}" \
+            "${RELEASE_FLAGS[@]}" \
             --title "The Monolith ${TAG}" \
             --notes-file release-notes.md \
             release-assets/themonolith-*.iso \

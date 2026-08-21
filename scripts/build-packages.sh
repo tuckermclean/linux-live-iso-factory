@@ -212,11 +212,23 @@ echo "==> Building ${#ATOMS[@]} packages with ${JOBS} parallel jobs"
 # Uses the cross-emerge wrapper created by crossdev
 EMERGE_CMD="${CROSS_TARGET}-emerge"
 
+# Release / clean-room builds compile EVERY package from source: set
+# MONOLITH_USEPKG=n to drop --usepkg, so no cached binary package can enter the
+# ISO artifact you're about to sign and publish (still --buildpkg, so PKGDIR is
+# populated for extract-packages.sh). Default 'y' reuses the binpkg cache on
+# iteration builds for speed. The release workflow (tag builds) sets it to n and
+# also skips the GHCR cache pull.
+USEPKG_FLAG="--usepkg"
+if [ "${MONOLITH_USEPKG:-y}" = "n" ]; then
+    USEPKG_FLAG=""
+    echo "==> MONOLITH_USEPKG=n: building ALL packages FROM SOURCE (binpkg cache NOT used)"
+fi
+
 # Combined log for the parallel build
 LOGFILE="${LOGS_DIR}/emerge-parallel.log"
 
 if [ $VERBOSE -eq 1 ]; then
-    echo "  Running: ${EMERGE_CMD} --jobs=${JOBS} --load-average=${LOAD_AVG} --keep-going --buildpkg --usepkg ${ATOMS[*]}"
+    echo "  Running: ${EMERGE_CMD} --jobs=${JOBS} --load-average=${LOAD_AVG} --keep-going --buildpkg ${USEPKG_FLAG} ${ATOMS[*]}"
 fi
 
 # Build all packages in one emerge call with parallel jobs
@@ -232,7 +244,7 @@ if ${EMERGE_CMD} \
     --load-average=${LOAD_AVG} \
     --keep-going \
     --buildpkg \
-    --usepkg \
+    ${USEPKG_FLAG} \
     --verbose \
     "${ATOMS[@]}" \
     2>&1 | tee "${LOGFILE}"; then

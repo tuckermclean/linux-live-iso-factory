@@ -69,7 +69,11 @@ S3_BUCKET ?= themonolith
 # Parallelism settings (passed to container)
 JOBS ?= $(shell nproc)
 LOAD_AVG ?= $(shell nproc)
-PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG)
+# MONOLITH_USEPKG=n builds every package FROM SOURCE (drops emerge --usepkg) —
+# used for release/clean-room builds so no cached binpkg enters the signed ISO.
+# Default y reuses the binpkg cache for fast iteration builds.
+MONOLITH_USEPKG ?= y
+PARALLEL_ENV := -e JOBS=$(JOBS) -e LOAD_AVG=$(LOAD_AVG) -e MONOLITH_USEPKG=$(MONOLITH_USEPKG)
 
 # Named volumes for persistent build state
 BUILD_VOLUME    := monolith-build

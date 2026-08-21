@@ -262,21 +262,33 @@ jobs:
       # first run, or a brand-new BUILD_EPOCH) leaves output/packages/ empty
       # and the build just compiles from source, same as an S3 miss did
       # before. See scripts/binpkg-store.sh.
+      # Tag (release) builds are clean-room: they SKIP the binpkg cache entirely
+      # (this pull + the savedconfig purge below) and compile every package from
+      # source (MONOLITH_USEPKG=n in the Build step), so no cached binary package
+      # can enter the signed/published ISO. Master/PR builds keep the cache for
+      # speed.
       - name: Pull binary package cache from GHCR
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: bash scripts/binpkg-store.sh pull "$GHCR_OWNER" "$BUILD_EPOCH" output/packages
 
       - name: Purge stale savedconfig binpkgs
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         # Delete any savedconfig-governed binpkg (e.g. busybox) whose config has
         # changed since it was cached, so the build recompiles it from source.
         # Portage's binpkg reuse ignores savedconfig contents, so without this a
         # config edit is silently a no-op. Runs AFTER the GHCR pull above so it
         # acts on the freshly-unpacked local store. See scripts/savedconfig-cache.sh.
+        # Moot on tag builds (nothing pulled, everything from source).
         run: bash scripts/savedconfig-cache.sh check output/packages
 
       - name: Build packages
+        # Tag builds compile everything from source (no --usepkg); all other
+        # triggers reuse the pulled binpkg cache.
+        env:
+          MONOLITH_USEPKG: ${{ startsWith(github.ref, 'refs/tags/') && 'n' || 'y' }}
         run: |
           while true; do echo "=== $(date) ==="; df -h; free -h; echo "---"; sleep 60; done &
-          make build-packages JOBS=2 LOAD_AVG=2
+          make build-packages JOBS=2 LOAD_AVG=2 MONOLITH_USEPKG="$MONOLITH_USEPKG"
 
       # On a package build failure, upload the per-package build logs.
       # scripts/build-packages.sh copies each failed package's

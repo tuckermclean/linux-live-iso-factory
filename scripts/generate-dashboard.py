@@ -50,7 +50,8 @@ def main():
         cve_db = s.get("cve_db") or {}
         entries.append({
             "tag":          tag,
-            "date":         s.get("timestamp", "")[:10],   # YYYY-MM-DD
+            "timestamp":    s.get("timestamp", ""),         # full ISO 8601, for sorting
+            "date":         s.get("timestamp", "")[:10],   # YYYY-MM-DD (display)
             "packages":     s.get("package_count", 0),
             "unmappedCPEs": s.get("unmapped_cpe_count", 0),
             "excludedCPEs": s.get("excluded_cpe_count", 0),
@@ -74,8 +75,14 @@ def main():
             "cvePolicyPath":  (s.get("cve_policy") or {}).get("path", ""),
         })
 
-    # Sort newest first by tag (YYYYMMDD-hash lexsort works correctly).
-    entries.sort(key=lambda e: e["tag"], reverse=True)
+    # Sort newest first by the actual build TIMESTAMP — NOT the tag. Tag lexsort
+    # (the old approach) silently breaks whenever BUILD_EPOCH is pinned: every
+    # build then shares the YYYYMMDD prefix and the sort collapses to the random
+    # git short-sha, so an arbitrary old build lands at [0] and the dashboard
+    # mislabels it "LATEST". A tag ("0.1.0-rc1") also wouldn't lexsort against
+    # "20260811-<sha>" sensibly. The ISO-8601 timestamp is the source of truth;
+    # tag is the stable tiebreaker for the rare same-instant case.
+    entries.sort(key=lambda e: (e["timestamp"], e["tag"]), reverse=True)
 
     # Compute CPE delta: how the unmapped CPE count changed vs the prior build.
     for i, e in enumerate(entries):
