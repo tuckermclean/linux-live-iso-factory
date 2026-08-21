@@ -48,7 +48,7 @@ function topbar() {
       i.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && i.value.trim()) { location.hash = `#/build/${i.value.trim()}`; i.value = ""; }
       });
-      return h("div", { class: "search" }, [h("span", { class: "mono tiny mutedm" }, "▸"), i, h("span", { class: "kbd" }, "/")]);
+      return h("div", { class: "search" }, [h("span", { class: "mono tiny mutedm" }, "▸"), i]);
     })(),
     h("button", { class: "iconbtn", title: "Toggle theme", onclick: toggleTheme, id: "theme-btn" }, "◐"),
   ]);
@@ -118,8 +118,8 @@ function rowSel(label, opts, active, onPick) {
 
 window.addEventListener("keydown", (e) => {
   if (e.target.matches("input, textarea")) return;
-  if (e.key === "/") { e.preventDefault(); document.getElementById("global-search")?.focus(); }
-  if (e.key === "g") { location.hash = "#/"; }
+  // No global `/` (focus-search) or `g` (go-home) shortcuts — they hijacked
+  // ordinary keystrokes and made the page painful to use. Theme toggle stays.
   if (e.key === "t") toggleTheme();
 });
 
