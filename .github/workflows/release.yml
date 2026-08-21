@@ -223,7 +223,17 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
+          # A SemVer pre-release tag carries a hyphen suffix (v0.1.0-rc1,
+          # -beta.2, -alpha). Publish those as a GitHub prerelease and DON'T
+          # mark them "Latest" — only a final vX.Y.Z (no hyphen) becomes Latest.
+          RELEASE_FLAGS=()
+          case "${TAG#v}" in
+            *-*) RELEASE_FLAGS+=(--prerelease --latest=false)
+                 echo "==> ${TAG} is a pre-release — publishing as prerelease (not Latest)" ;;
+            *)   echo "==> ${TAG} is a final release — publishing as Latest" ;;
+          esac
           gh release create "${TAG}" \
+            "${RELEASE_FLAGS[@]}" \
             --title "The Monolith ${TAG}" \
             --notes-file release-notes.md \
             release-assets/themonolith-*.iso \
