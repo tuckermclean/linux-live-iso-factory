@@ -6,7 +6,7 @@
 # Updated: 2026-08-05T03:50:14-00:00
 
 sys-kernel/monolith-kernel:6.12.80-r6:0
-app-misc/monolith-base:0.1.0-r4:0
+app-misc/monolith-base:0.1.0-r6:0
 # GUI (SP-GUI G1): the TinyX Xfbdev server (x11-base/monolith-xserver) + the v1
 # libXfont it links (::gentoo ships only the incompatible libXfont2), both from
 # the monolith overlay. See configs/overlay/x11-base/monolith-xserver and

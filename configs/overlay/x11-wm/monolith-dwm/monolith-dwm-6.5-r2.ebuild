@@ -33,15 +33,19 @@ PATCHES=( "${FILESDIR}/dwm-6.5-core-fonts.patch" )
 
 src_prepare() {
 	default
-	# Point dwm's bar font (and the dmenu spawn cmd's -fn) at the builtin
-	# "fixed" — the libXfont 6x13 the Xfbdev server already carries. The stock
-	# config names "monospace:size=10", a fontconfig string this de-Xft build
-	# cannot parse. dwm auto-generates config.h from config.def.h at build.
+	# Name Terminus EXPLICITLY (full iso10646-1 XLFD) for dwm's bar and the dmenu
+	# spawn's -fn — flagship clients must be deterministic, not dependent on
+	# whatever `fixed` currently resolves to. media-fonts/terminus-font[pcf]
+	# provides it; the server finds it via the disc -fp path (monolith-base's
+	# startx). The stock config names "monospace:size=10" (a fontconfig string
+	# this de-Xft build can't parse). dwm regenerates config.h from config.def.h.
+	# -r2 busts -r1's binpkg (which named the builtin "fixed").
+	local terminus="-xos4-Terminus-Medium-R-Normal--16-160-72-72-C-80-ISO10646-1"
 	sed -i \
-		-e 's|^static const char \*fonts\[\][[:space:]]*=.*|static const char *fonts[] = { "fixed" };|' \
-		-e 's|^static const char dmenufont\[\][[:space:]]*=.*|static const char dmenufont[]       = "fixed";|' \
-		config.def.h || die "failed to repoint dwm fonts to the builtin 'fixed'"
-	grep -q '{ "fixed" }' config.def.h || die "fonts sed did not take"
+		-e "s|^static const char \*fonts\[\][[:space:]]*=.*|static const char *fonts[] = { \"${terminus}\" };|" \
+		-e "s|^static const char dmenufont\[\][[:space:]]*=.*|static const char dmenufont[]       = \"${terminus}\";|" \
+		config.def.h || die "failed to repoint dwm fonts to Terminus"
+	grep -qF "{ \"${terminus}\" }" config.def.h || die "fonts sed did not take"
 }
 
 src_compile() {
