@@ -244,27 +244,22 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           # A SemVer pre-release tag carries a hyphen suffix (v0.1.0-rc1,
-          # -beta.2, -alpha): always --prerelease. For "Latest": mark a
-          # pre-release Latest ONLY while no final (non-prerelease) release
-          # exists yet — so the first RCs ARE the newest thing users see, but
-          # once a real vX.Y.Z ships THAT becomes Latest and later pre-releases
-          # stay off it. A final vX.Y.Z (no hyphen) always becomes Latest.
+          # -beta.2, -alpha): mark it --prerelease and NEVER Latest. GitHub's
+          # API rejects a prerelease being "Latest" ("Latest release cannot be
+          # draft or prerelease", HTTP 422), so pass --latest=false explicitly
+          # rather than let gh try to auto-promote it. Surfacing the newest
+          # build to users is the DASHBOARD's job (generate-dashboard.py sorts
+          # by build timestamp, so the RC's build shows as LATEST there); the
+          # GitHub "Latest" badge only ever rides a final vX.Y.Z release, which
+          # gh marks Latest by default.
           RELEASE_FLAGS=()
           case "${TAG#v}" in
             *-*)
-              RELEASE_FLAGS+=(--prerelease)
-              FINALS=$(gh release list --exclude-drafts --json isPrerelease \
-                         --jq '[.[] | select(.isPrerelease==false)] | length' 2>/dev/null || echo 0)
-              if [ "${FINALS:-0}" -eq 0 ]; then
-                RELEASE_FLAGS+=(--latest)
-                echo "==> ${TAG}: pre-release, and no final release exists yet — publishing as prerelease AND Latest"
-              else
-                RELEASE_FLAGS+=(--latest=false)
-                echo "==> ${TAG}: pre-release, a final release already exists — prerelease, NOT Latest"
-              fi
+              RELEASE_FLAGS+=(--prerelease --latest=false)
+              echo "==> ${TAG}: pre-release — publishing as prerelease, NOT Latest (GitHub forbids a prerelease being Latest; the dashboard surfaces the newest build)"
               ;;
             *)
-              echo "==> ${TAG}: final release — publishing as Latest"
+              echo "==> ${TAG}: final release — publishing as Latest (gh default)"
               ;;
           esac
           gh release create "${TAG}" \
