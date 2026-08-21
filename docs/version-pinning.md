@@ -279,13 +279,18 @@ would create merge conflicts across three branches for no functional gain.
 practical goal (exactly one build definition, reused as-is, always current)
 without touching the file at all.
 
-**Update:** `build.yml` now exposes `workflow_call` (added by the release
-workflow, `.github/workflows/release.yml` — see `docs/releasing.md`), so the
-ideal end state described above is now possible. `pin-bump.yml` has not
-been migrated to use it yet — it still dispatches-and-polls as described
-here. That migration is a reasonable follow-up but is out of scope for the
-release workflow that added the trigger; the dispatch-and-poll approach
-above remains correct and doesn't need to change urgently.
+**Update:** `build.yml` briefly exposed a `workflow_call` trigger (added so
+`release.yml` could reuse it), but it was **removed** — calling `build.yml`
+from another workflow broke Sigstore attestation: GitHub binds the signing
+certificate to the *entry* workflow, so `actions/attest@v2` failed to persist
+with `values do not match: build.yml != release.yml`. `build.yml` now triggers
+directly on release tags and `release.yml` publishes after it via
+`workflow_run` (see `docs/releasing.md`). So the `workflow_call`-reusable
+"ideal end state" described above is **not** available for anything that needs
+to attest/sign under its own identity. `pin-bump.yml` doesn't sign — it only
+validates — so it *could* dispatch `build.yml` however it likes; it still
+dispatches-and-polls as described here, and that approach remains correct and
+doesn't need to change.
 
 ### Wait budget
 

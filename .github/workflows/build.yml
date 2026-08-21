@@ -1,18 +1,24 @@
 name: Build
 
-# NOTE on tag pushes: this workflow used to also trigger directly on `push:
-# tags: ['*']`. That's now handled by .github/workflows/release.yml instead,
-# which calls this workflow via `workflow_call` for tags matching `v*.*.*`.
-# Keeping a tag trigger here too would mean every release tag kicks off TWO
-# independent full builds (one direct, one via release.yml) racing to write
-# the same S3 keys and each producing its own attestation/SLSA signature for
-# what should be a single, unambiguous release artifact. `workflow_call`
-# makes this workflow reusable as a library — release.yml is the ONLY tag
-# entry point now; this file is the ONLY definition of how a build+attest
-# happens.
+# NOTE on tag pushes: this workflow triggers DIRECTLY on `push: tags:
+# ['v*.*.*']` and produces the release build + SLSA attestation itself. It
+# MUST be the OIDC entry point for a release: GitHub's attestation store binds
+# the Sigstore certificate to the *entry* workflow, so when this build ran as a
+# `workflow_call` reusable library under release.yml, `actions/attest` failed
+# to persist with "Invalid Argument - values do not match: build.yml !=
+# release.yml" (the cert's SAN was build.yml, but the persist API validated the
+# caller, release.yml). Signing only succeeds when the workflow that runs the
+# job is also the workflow that triggered it — i.e. build.yml on its own tag.
+#
+# There is still exactly ONE build per release and ONE definition of
+# build+attest (this file). release.yml no longer calls this workflow; it fires
+# AFTER this build completes, via `workflow_run`, and does publish-only work
+# (download the already-attested ISO from S3, verify the digest chain, cut the
+# GitHub Release). See release.yml's header and docs/releasing.md.
 on:
   push:
     branches: [master]
+    tags: ['v*.*.*']
   # Full build as a PR check, but ONLY when the PR carries the 'full-ci' label
   # (gated in the `changes` job below). This keeps the expensive Gentoo build
   # off every push while still letting a maintainer demand end-to-end proof on
@@ -21,15 +27,6 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, labeled]
   workflow_dispatch:
-  workflow_call:
-    outputs:
-      build-version:
-        description: >-
-          Resolved BUILD_VERSION for this run — the tag with its leading 'v'
-          stripped (tag builds) or '<epoch>-<short-sha>' (all other triggers).
-          Same value used for S3 object keys, the ISO filename, and
-          attestation-summary.json's build_tag.
-        value: ${{ jobs.build.outputs.build-version }}
   schedule:
     - cron: '0 3 * * 1'
 
@@ -39,8 +36,8 @@ permissions:
 
 # Cancel a superseded run for the SAME pull request when a new commit is pushed,
 # so rapid pushes to a 'full-ci'-labeled PR don't stack expensive builds. Non-PR
-# events (push to master, schedule, workflow_dispatch, and workflow_call from
-# release.yml) get a unique per-run group, so they never cancel one another.
+# events (push to master, tag pushes, schedule, and workflow_dispatch) get a
+# unique per-run group, so they never cancel one another.
 concurrency:
   group: >-
     build-${{ github.event_name == 'pull_request'

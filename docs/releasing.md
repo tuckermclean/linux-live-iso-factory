@@ -59,50 +59,70 @@ git SHA are recorded in that release's SBOM (`metadata.component` +
 doesn't rebuild anything with different inputs, it publishes a build that
 went through the identical pipeline.
 
-## How `release.yml` reuses `build.yml`
+## How `build.yml` builds and `release.yml` publishes
 
 `.github/workflows/build.yml` is the single source of truth for "how to
-build and attest The Monolith" — it now exposes a `workflow_call` trigger
-(alongside its existing `push`/`workflow_dispatch`/`schedule` triggers), and
-`release.yml` invokes the **entire file** as one reusable unit:
+build and attest The Monolith." It triggers **directly** on a release tag
+(`push: tags: ['v*.*.*']`, alongside its `push: branches`, `workflow_dispatch`,
+and `schedule` triggers) and runs the whole `changes → build-image → build →
+boot-test → attestation` chain itself — the identical pipeline a
+push-to-master build runs, including the CVE gate and the boot-test gate.
+
+`release.yml` does **not** build. It fires *after* a Build run finishes, via
+`workflow_run`, and its single `publish` job does only what's specific to a
+release: download the artifacts `build.yml` already produced and attested,
+cross-check the ISO's hash, assemble release notes, and call `gh release
+create`.
 
 ```yaml
+# release.yml
+on:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+
 jobs:
-  build:
-    uses: ./.github/workflows/build.yml
-    secrets: inherit
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
 ```
 
-This was chosen over dispatch-and-poll (the approach
-`.github/workflows/pin-bump.yml` uses and documents its own reasoning for in
-`docs/version-pinning.md`, from back when `build.yml` was being edited by
-several branches in parallel at once) because that hazard is gone now — this
-is the only branch touching `build.yml` — and `workflow_call` gives a single
-literal build definition with typed outputs instead of a polling loop:
+**Why `build.yml` owns the tag trigger (and `release.yml` no longer calls
+it).** `release.yml` used to invoke `build.yml` as a `workflow_call` reusable
+unit, so there was one build definition and one build per tag. But signing
+broke on that path: GitHub binds a Sigstore attestation to the workflow that
+*entered* the run, and `actions/attest@v2` failed to persist with `Invalid
+Argument - values do not match: build.yml != release.yml` — the certificate's
+SAN was `build.yml` (the job that ran) but the persist API validated
+`release.yml` (the entry point). Attestation only persists when the running
+workflow and the entry workflow are the same file. So `build.yml` now triggers
+on the tag itself (entry == job == `build.yml`, SAN matches, signing
+succeeds), and `release.yml` waits for that build via `workflow_run` and
+publishes. This is structurally impossible to catch on a PR or master build —
+those enter through `build.yml` directly, so the mismatch only ever appears on
+a real tag.
 
-- **Zero duplicated build logic.** `release.yml` does not reimplement
+This keeps the two properties the `workflow_call` design was chosen for:
+
+- **Zero duplicated build logic.** `release.yml` still does not reimplement
   `make build-packages` / `make build-rootfs` / `make iso` / `make
-  attestation` anywhere. It calls the workflow that already does, and reads
-  back results.
-- **Every existing gate applies for free.** The `changes`, `build-image`,
-  `build`, `boot-test`, and `attestation` jobs inside `build.yml` all run
-  exactly as they do for a push-to-master build — including the CVE
-  gate (Pillar 3 of `scripts/attestation.sh`, `configs/attestation/cve-policy.yaml`)
-  and the boot-test gate (`.github/workflows/boot-test.yml`, called from
-  *inside* `build.yml`, per the `needs:`-can't-cross-files note at the top
-  of that file). If any of them fail, the whole `workflow_call` reports
-  failure, `release.yml`'s `publish` job never runs, and nothing gets
-  published.
-- **No duplicate tag-triggered builds.** `build.yml` used to also trigger
-  directly on `push: tags: ['*']`; that trigger was removed (see the NOTE
-  at the top of `build.yml`) so a release tag doesn't kick off two
-  independent builds racing to write the same S3 keys. `release.yml`
-  (`push: tags: v*.*.*`) is now the only tag entry point.
+  attestation` anywhere. `build.yml` remains the only definition;
+  `release.yml` reads back its results.
+- **One build per release, every gate applies.** A release tag starts exactly
+  one Build run (`build.yml` no longer has a `workflow_call` entry point, so
+  there's no second racing build). If any job in it (`build`, `boot-test`,
+  `attestation`, and the CVE/license/unowned gates inside `attestation`)
+  fails, the Build run's `conclusion` is not `success`, the `workflow_run`
+  `if:` gate is false, and `release.yml`'s `publish` job never runs — nothing
+  gets published.
 
-`release.yml`'s own `publish` job (after `build.yml` succeeds) only does
-what's specific to a *release*: download the artifacts `build.yml` already
-produced, cross-check the ISO's hash, assemble release notes, and call `gh
-release create`.
+`workflow_run` fires for *every* Build completion (master pushes, `full-ci`
+PRs, the schedule), so the `publish` job's `if:` narrows it to successful
+v-tag pushes; every other Build completion produces a skipped Release run.
+Before publishing, `publish` re-verifies `head_branch` against the actual tag
+— it must point at the exact commit the Build built — and refuses otherwise.
 
 ## The digest-chain invariant, traced
 
@@ -110,7 +130,7 @@ release create`.
 `metadata.component.hashes[0].content` == the SLSA attestation's subject
 digest. Concretely, for a release:
 
-1. Inside the reused `build.yml` run, the `build` job produces
+1. Inside the tag's `build.yml` run, the `build` job produces
    `output/themonolith-<version>.iso` (`make iso`) and uploads it to S3.
 2. The `attestation` job's `make attestation` step invokes
    `scripts/attestation.sh`, which computes `ISO_SHA256=$(sha256sum
@@ -160,20 +180,23 @@ correctly.
 
 ## Required secrets and permissions
 
-`release.yml` needs nothing beyond what `build.yml` already requires, plus
-`contents: write` to create the GitHub Release:
+Build + attest happens entirely in the tag's `build.yml` run, which already
+carries every permission it needs (`packages: write` at the workflow level for
+GHCR; `id-token: write` + `attestations: write` on its own `attestation` job
+for Sigstore signing). `release.yml` only creates the GitHub Release, so
+`contents: write` is the only permission it needs:
 
 | Secret | Used for |
 |---|---|
-| `AWS_ACCESS_KEY_ID`, `AWS_ACCESS_KEY_SECRET`, `AWS_REGION` | Same AWS credentials `build.yml`/`Makefile` already use for all S3 I/O |
-| `S3_BUCKET` | Bucket name (no credentials) — same variable `build.yml` forwards into the builder container for the SBOM's S3 `distribution` reference and used here to locate/download the built artifacts and to build the dashboard link in the release notes |
-| `GITHUB_TOKEN` (automatic) | `gh release create`, and (inside the reused `build.yml`) GHCR login + `actions/attest@v2` |
+| `AWS_ACCESS_KEY_ID`, `AWS_ACCESS_KEY_SECRET`, `AWS_REGION` | Same AWS credentials `build.yml`/`Makefile` already use for all S3 I/O — `release.yml`'s `publish` job uses them to download the built artifacts |
+| `S3_BUCKET` | Bucket name (no credentials) — same variable `build.yml` forwards into the builder container for the SBOM's S3 `distribution` reference; used here to locate/download the built artifacts and to build the dashboard link in the release notes |
+| `GITHUB_TOKEN` (automatic) | `gh release create` (in `release.yml`); GHCR login + `actions/attest@v2` (in `build.yml`) |
 
 | Permission | Scope | Why |
 |---|---|---|
 | `contents: write` | `release.yml` top level + `publish` job | Create the GitHub Release and upload assets |
-| `packages: write` | `release.yml` top level (passed through to `build.yml`'s `build-image` job) | Push the builder image to GHCR if it changed |
-| `id-token: write`, `attestations: write` | `release.yml` top level (passed through to `build.yml`'s `attestation` job) | Sign SLSA provenance via Sigstore/GitHub OIDC (`actions/attest@v2`) |
+| `packages: write` | `build.yml` top level | Push the builder image to GHCR if it changed |
+| `id-token: write`, `attestations: write` | `build.yml`'s `attestation` job | Sign SLSA provenance via Sigstore/GitHub OIDC (`actions/attest@v2`) |
 
 No new secrets were introduced by this workflow — it reuses exactly the
 four already configured for `build.yml`.
@@ -188,20 +211,27 @@ Once the version to release is decided (see the scheme above):
    ```sh
    git tag v0.1.0
    ```
-3. **Push the tag** (this is the only thing that triggers `release.yml` —
-   pushing commits to `master` alone does not):
+3. **Push the tag** (this starts the **Build** workflow on the tag; once that
+   Build succeeds, `release.yml` publishes automatically via `workflow_run`.
+   Pushing commits to `master` alone does not cut a release):
    ```sh
    git push origin v0.1.0
    ```
-4. **Watch the run:**
+4. **Watch the Build run** (this is where all the work — and any gate failure —
+   happens):
    ```sh
    gh run watch --repo tuckermclean/linux-live-iso-factory \
      $(gh run list --repo tuckermclean/linux-live-iso-factory \
-         --workflow=release.yml --branch v0.1.0 --limit 1 --json databaseId --jq '.[0].databaseId')
+         --workflow=build.yml --branch v0.1.0 --limit 1 --json databaseId --jq '.[0].databaseId')
    ```
-   or via the Actions tab. Expect the same wall-clock time as a normal full
-   build (the `build.yml` call does all the same work), plus a few minutes
-   for boot-test and the publish step.
+   Expect the same wall-clock time as a normal full build plus boot-test. When
+   it succeeds, the **Release** workflow runs automatically and cuts the GitHub
+   Release in a minute or two — find it under the Release workflow (its run is
+   attributed to `master`, not the tag, because `workflow_run` runs on the
+   default branch):
+   ```sh
+   gh run list --repo tuckermclean/linux-live-iso-factory --workflow=release.yml --limit 3
+   ```
 5. **Verify the published release:**
    ```sh
    gh release view v0.1.0 --repo tuckermclean/linux-live-iso-factory
