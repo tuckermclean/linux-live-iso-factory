@@ -29,8 +29,14 @@ Violating these wastes his time. When in doubt, ask "would this run on a 486?"
   `x11-apps/mkfontscale` → `media-libs/freetype` — is rejected. Break the chain with
   `package.provided`, do not accept the dep.
 - **Don't add back things we deliberately removed.** He will notice and be annoyed.
-- **The dead-CMOS clock sentinel is `2000-01-01`, not 1970** — *"Y2K kills our project's origin
-  myth."* `monolith-time-check`'s sentinel logic recognizes it.
+- **The clock-epoch origin sentinel is `1970-01-01` (the Unix epoch) — NOT Y2K.** We fought for
+  1970 and 1970 won: `CLOCK_EPOCH_RTC = "1970-01-01T00:00:00"` in `boot-test.py`, "the truest image
+  of a machine whose clock never started." A commit once moved it to 2000-01-01, but that was a
+  **misdiagnosis** (the `clock-epoch` test was hanging on a long `monolith_time_url=…` ISOLINUX boot
+  label, not the RTC) and was reverted — *"Y2K is too late; it occurs AFTER the origin myth in the
+  story."* Separately, the runtime `monolith-time-check` recognizes 1970 / 1980 / 2000 as dead-clock
+  "ignorance" sentinels (`SENTINELS="0 315532800 946684800"`) because real hardware resets to any of
+  them — that's detection breadth, not the origin.
 
 He built an honest, elaborate supply-chain pipeline (SLSA provenance, a digest-chain invariant,
 a CVE gate). Releases should come *through* that pipeline and be verifiable. He dislikes UI cruft
