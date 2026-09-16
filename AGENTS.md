@@ -46,12 +46,9 @@ a CVE gate). Releases should come *through* that pipeline and be verifiable. He 
 
 ## How to work with him
 
-- **Standing autonomy grant:** *"as long as it goes with the plan, the tests are meaningful and
-  green, you can merge."* On a green CI run for work that fits the agreed direction, merging to
-  `master` is authorized without re-asking.
-- **Exception — workflow-file / release-machinery changes** (`.github/workflows/*`, the
-  release/signing path): he prefers to read first. Open a PR, explain clearly, let him merge.
-  He often merges quickly and then says "continue."
+- Treat `.github/workflows/*` and the release / signing path as **high-stakes** — surface and
+  explain such changes clearly rather than making them quietly. How and when work gets integrated
+  is Tucker's call, established per task; don't assume it.
 - **Pushing workflow files needs a `workflow`-scoped PAT.** The default `gh` token has only
   `gist, read:org, repo`, which GitHub rejects for `.github/workflows/*` pushes. Use a PAT
   **transiently** (inline `git -c credential.helper=…` or an env-scoped `GH_TOKEN`), never written
@@ -183,8 +180,8 @@ Symptom → cause → fix. These cost real debugging time; don't rediscover them
 
 *Verify against `git log` and `gh` before trusting — this is a point-in-time snapshot.*
 
-- **`master` = `e20a252`.** The release pipeline is complete and correct end-to-end after three
-  merged PRs: **#54** (from-source tag builds + dashboard timestamp sort), **#55** (decouple
+- **`master` = `e20a252`.** The release pipeline is complete and correct end-to-end. The relevant
+  changes landed as **#54** (from-source tag builds + dashboard timestamp sort), **#55** (decouple
   attest/publish via `workflow_run`), **#56** (prereleases never "Latest").
 - **`v0.1.0-rc1` is published** — prerelease, attestation verifies green, shows as LATEST on the
   dashboard. It was published from the verified S3 artifact (the recovery pattern above); the *next*
