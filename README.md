@@ -213,6 +213,7 @@ Everything runs through Docker; `make help` prints the full target list. This ma
 |---|---|
 | `build-image` | Build the builder image (Gentoo stage3 + crossdev toolchain), pulling from `REGISTRY` first if set |
 | `push-image` / `pull-image` | Push/pull the builder image to/from a registry |
+| `restore-cache` | Reproduce CI's cache setup locally: `pull-image` + `sync-portage` + `aws s3 sync` of the binpkgs for the current `BUILD_EPOCH`. Needs both `REGISTRY` and `S3_BUCKET` set (`REGISTRY=ghcr.io/user S3_BUCKET=my-bucket make restore-cache`) |
 | `shell` | Drop into a container shell |
 
 **Packages**
@@ -257,7 +258,7 @@ Everything runs through Docker; `make help` prints the full target list. This ma
 | `list-packages` | Print `configs/portage/world` |
 | `show-failed` | Show packages that failed the last build |
 
-(A few CI-internal targets — `print-registry-tag`, `restore-cache`, `regen-manifest` — exist in the `Makefile` but are not meant for day-to-day use; `make help` lists the user-facing set.)
+(A couple of CI-internal targets — `print-registry-tag` and `regen-manifest` — exist in the `Makefile` but are not meant for day-to-day use; `make help` lists the user-facing set.)
 
 **Maintenance:** `clean`, `clean-build`, `clean-all`
 
