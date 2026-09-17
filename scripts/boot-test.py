@@ -841,6 +841,23 @@ def wait_for_shell(child, timeout=60):
     raise BootTestError(f"Shell never became interactive within {timeout}s.")
 
 
+def capture_output(child, cmd, timeout=30):
+    """
+    Run `cmd` in the guest shell and return its (exit_code, raw_output),
+    without any validator applied. Shares run_check's sentinel-marker
+    plumbing; use this instead of run_check when a caller needs the actual
+    value back (e.g. a line count to diff against), not just a pass/fail
+    verdict. Raises pexpect.TIMEOUT/EOF on failure — callers that want the
+    run_check never-raises behavior should go through run_check instead.
+    """
+    marker = f"MONOLITH_CHECK_{uuid.uuid4().hex[:8]}"
+    child.sendline(f"{cmd}; echo {marker}:$?")
+    child.expect(re.escape(marker) + r":(\d+)", timeout=timeout)
+    exit_code = int(child.match.group(1))
+    output = child.before or ""
+    return exit_code, output
+
+
 def run_check(child, name, cmd, validator, timeout=30):
     """
     Run `cmd` in the guest shell, wrapped with a unique sentinel that carries
@@ -849,17 +866,13 @@ def run_check(child, name, cmd, validator, timeout=30):
     Returns (ok: bool, detail: str). Never raises — callers collect results
     from every check so one failure doesn't hide the rest.
     """
-    marker = f"MONOLITH_CHECK_{uuid.uuid4().hex[:8]}"
-    child.sendline(f"{cmd}; echo {marker}:$?")
     try:
-        child.expect(re.escape(marker) + r":(\d+)", timeout=timeout)
+        exit_code, output = capture_output(child, cmd, timeout=timeout)
     except pexpect.TIMEOUT:
         return False, f"timed out after {timeout}s waiting for command to complete"
     except pexpect.EOF:
         return False, "QEMU exited unexpectedly while running this check"
 
-    exit_code = int(child.match.group(1))
-    output = child.before or ""
     try:
         ok, detail = validator(exit_code, output)
     except Exception as exc:  # validator bug shouldn't crash the whole suite
@@ -1239,6 +1252,54 @@ def smoke_nic_model_is_module(child, model):
 VGA_MODEL_MODULE = {
     "cirrus": r"^cirrusfb\b",
 }
+
+# DCX-48: representative subset of the 27 legacy fbdev Tier-2 modules,
+# hand-loaded via modprobe on a plain -vga std boot (no matching PCI device
+# for any of them, so this is a "does it explode" check, not a coldplug
+# proof — that's what VGA_MODEL_MODULE/run_vga is for). vga16fb is
+# deliberately excluded: QA observed it now coldplugs unconditionally on
+# this exact -vga std boot path (vga16fb + vgastate appear in `lsmod` with
+# no console ownership — ~28KB resident, no functional change), so
+# hand-loading it here would prove nothing new and this assertion must not
+# assume it is unloaded.
+FBDEV_MODPROBE_MODULES = ["tdfxfb", "sm712fb", "matroxfb_base", "s3fb", "lxfb"]
+
+
+def modprobe_clean_or_crashed():
+    """
+    Validator for hand-loading a legacy fbdev driver with no matching
+    hardware present. Any exit code is acceptable on its own -- modprobe
+    succeeding (registers the driver, nothing to bind to) and modprobe
+    failing with a quiet "no such device"/"not found" message are both
+    fine outcomes. The only thing that fails THIS check is a crash
+    signature appearing in the command's own output; the kernel-wide
+    tainted/dmesg assertions after the whole batch (see run_fbdev_modprobe)
+    are the real gate for anything that panics asynchronously.
+    """
+    def _v(exit_code, output):
+        crash = re.search(r"Oops|Kernel panic|BUG:", output)
+        if crash:
+            return False, f"crash signature in modprobe output: {output.strip()[-500:]}"
+        return True, f"exit {exit_code}: {output.strip()[-200:] or '(no output)'}"
+    return _v
+
+
+def exact_value(expected):
+    """
+    Like `contains`, but requires the trimmed output to equal `expected`
+    exactly -- needed for /proc/sys/kernel/tainted, where `contains("0")`
+    would wrongly pass a tainted value like "4096" that merely contains a
+    "0" digit.
+    """
+    def _v(exit_code, output):
+        if exit_code != 0:
+            return False, f"exit code {exit_code}, output: {output.strip()[-500:]}"
+        got = output.strip().splitlines()[-1].strip() if output.strip() else ""
+        if got != expected:
+            return False, f"expected {expected!r}, got {got!r} (full output: {output.strip()[-500:]})"
+        return True, "ok"
+    return _v
+
 
 def smoke_vga_model_is_module(child, model):
     """
@@ -1888,6 +1949,73 @@ def run_vga(child, args):
     return ok
 
 
+def run_fbdev_modprobe(child, args):
+    """
+    DCX-48: permanent CI coverage for the manual QA step DCX-47 could not
+    reproduce (no local QEMU in that agent's workspace). Boots plain
+    BIOS/ISOLINUX (-vga std, same as run_bios), hand-modprobes a
+    representative subset of the 27 legacy fbdev Tier-2 modules
+    (FBDEV_MODPROBE_MODULES) that have no matching hardware on this boot
+    path, and asserts the batch didn't crash the kernel: each modprobe
+    exits cleanly (0 or a benign failure, never an oops/panic in its own
+    output — see modprobe_clean_or_crashed), the kernel is untainted
+    afterwards, and dmesg picked up no Oops/BUG:/WARNING: lines that
+    weren't already present before the batch started. The dmesg diff (not
+    a full-log scan) is what pins the assertion to "introduced by the
+    modprobes" rather than flagging an unrelated pre-existing boot message.
+    """
+    _boot_isolinux_to_shell(child, args)
+
+    results = []
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, args.kernel_version)))
+
+    baseline_exit, baseline_out = capture_output(child, "dmesg | wc -l")
+    baseline_lines = int(baseline_out.strip().splitlines()[-1]) if baseline_exit == 0 and baseline_out.strip() else 0
+
+    for module in FBDEV_MODPROBE_MODULES:
+        results.append((
+            f"modprobe {module} completes without a crash signature",
+            *run_check(child, f"modprobe {module}", f"modprobe {module}", modprobe_clean_or_crashed()),
+        ))
+
+    results.append((
+        "kernel not tainted after fbdev modprobes",
+        *run_check(child, "kernel tainted", "cat /proc/sys/kernel/tainted", exact_value("0")),
+    ))
+
+    # Print the full dmesg tail into the serial transcript (child.logfile
+    # captures this automatically as it streams by) so a failure above is
+    # diagnosable from the uploaded log without re-running anything.
+    run_check(child, "print dmesg tail for diagnostics", "dmesg | tail -100", exit_code_only())
+
+    # Slice the diff in the GUEST (`tail -n +N`), not on the host: capture_output
+    # returns the echoed command line ahead of the command's own output, so
+    # indexing host-side splitlines() by the baseline count is off by one and
+    # would drag the last pre-batch dmesg line into the "new" window. Letting
+    # tail do it means the window is exactly the lines dmesg grew by, and the
+    # only host-side text left is the echoed `dmesg | tail ...` line itself,
+    # which cannot match a crash signature.
+    tail_from = baseline_lines + 1
+    diff_exit, diff_out = capture_output(child, f"dmesg | tail -n +{tail_from}")
+    if diff_exit != 0:
+        results.append((
+            "dmesg has no Oops/BUG:/WARNING: introduced by the fbdev modprobes",
+            False,
+            f"could not re-read dmesg to diff it (exit {diff_exit}): {diff_out.strip()[-300:]}",
+        ))
+    else:
+        crash_match = re.search(r"Oops|BUG:|WARNING:", diff_out)
+        results.append((
+            "dmesg has no Oops/BUG:/WARNING: introduced by the fbdev modprobes",
+            crash_match is None,
+            "ok" if crash_match is None else f"found {crash_match.group(0)!r} in dmesg output since the batch started",
+        ))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
 def _boot_isolinux_to_shell(child, args):
     select_isolinux_label(child, "serial")
     for ms, desc in [
@@ -2183,6 +2311,7 @@ MODE_BUILDERS = {
     "nicless": build_nicless_cmd,
     "nic": build_nic_cmd,
     "vga": build_vga_cmd,
+    "fbdev-modprobe": build_bios_cmd,
     "nat": build_nat_router_cmd,
     "gui": build_gui_cmd,
     "stele-acid2": build_gui_cmd,  # same VGA-std + QMP-socket rig as gui
@@ -2202,6 +2331,7 @@ MODE_RUNNERS = {
     "nicless": run_nicless,
     "nic": run_nic,
     "vga": run_vga,
+    "fbdev-modprobe": run_fbdev_modprobe,
     "nat": run_nat,
     "gui": run_gui,
     "stele-acid2": run_stele_acid2,
@@ -2221,6 +2351,7 @@ MODE_DEFAULT_RAM = {
     "nicless": 64,  # mirrors bios: same machine type, no extra RAM pressure
     "nic": 256,
     "vga": 64,  # mirrors bios/nic: same machine type, no extra RAM pressure
+    "fbdev-modprobe": 64,  # mirrors bios: same machine type, no extra RAM pressure
     "nat": 256,
     "gui": 128,
     "stele-acid2": 256,  # headless render + image decode of Acid2 wants headroom
