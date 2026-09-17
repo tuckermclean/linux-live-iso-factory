@@ -657,6 +657,54 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  # DCX-48: hand-modprobe a representative subset of the 27 legacy fbdev
+  # Tier-2 modules on a plain -vga std BIOS/ISOLINUX boot (no matching PCI
+  # device for any of them — this is a "does it explode" spot-check, not a
+  # coldplug proof) and assert the kernel comes out untainted with no new
+  # Oops/BUG:/WARNING: in dmesg. See FBDEV_MODPROBE_MODULES / run_fbdev_modprobe
+  # in scripts/boot-test.py.
+  fbdev-modprobe:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
+
+      - name: Boot test — hand-load legacy fbdev modules (tdfxfb, sm712fb, matroxfb_base, s3fb, lxfb)
+        run: |
+          python3 scripts/boot-test.py \
+            --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+            --mode fbdev-modprobe \
+            --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+            --log-file "output/boot-test-fbdev-modprobe.log"
+
+      - name: Upload serial console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-fbdev-modprobe-${{ github.run_id }}
+          path: output/boot-test-fbdev-modprobe.log
+          retention-days: 14
+          if-no-files-found: warn
+
   # Two-node NAT boot test: a router guest (monolith-router on eth0=WAN/user,
   # eth1=LAN/socket) and a client guest on the same LAN socket segment. The
   # client curls a host http.server THROUGH the router's masquerade — proving
