@@ -593,6 +593,70 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  # VGA-model matrix: BIOS/ISOLINUX boot with a real PCI graphics device
+  # attached (-vga cirrus, a Cirrus Logic GD5446 with a real modalias),
+  # asserting the legacy fbdev Tier-2 driver (cirrusfb) coldplugs the same
+  # way the NIC matrix above proves for network drivers. See VGA_MODEL_MODULE
+  # / run_vga in scripts/boot-test.py and
+  # docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md.
+  vga-models:
+    needs: expected-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install pexpect
+        run: pip install pexpect
+
+      - name: Restore ISO from in-run cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/themonolith-${{ inputs.build-version }}.iso
+          key: ci-artifacts-${{ github.run_id }}-iso
+          fail-on-cache-miss: true
+
+      - name: Boot test — VGA models (sequential)
+        run: |
+          set -u
+          FAILED=""
+          for m in cirrus; do
+            echo "::group::VGA model $m"
+            if python3 scripts/boot-test.py \
+                 --iso "output/themonolith-${{ inputs.build-version }}.iso" \
+                 --mode vga --vga-model "$m" \
+                 --kernel-version "${{ needs.expected-kernel.outputs.version }}" \
+                 --log-file "output/boot-test-vga-$m.log"; then
+              echo "==> VGA model $m: PASS"
+            else
+              echo "::error::VGA model $m: FAILED"
+              FAILED="$FAILED $m"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$FAILED" ]; then
+            echo "::error::VGA model boot test(s) failed:$FAILED"
+            exit 1
+          fi
+          echo "==> All VGA models passed"
+
+      - name: Upload serial console logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-test-vga-${{ github.run_id }}
+          path: output/boot-test-vga-*.log
+          retention-days: 14
+          if-no-files-found: warn
+
   # Two-node NAT boot test: a router guest (monolith-router on eth0=WAN/user,
   # eth1=LAN/socket) and a client guest on the same LAN socket segment. The
   # client curls a host http.server THROUGH the router's masquerade — proving
