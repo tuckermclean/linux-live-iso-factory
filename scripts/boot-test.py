@@ -1988,14 +1988,28 @@ def run_fbdev_modprobe(child, args):
     # diagnosable from the uploaded log without re-running anything.
     run_check(child, "print dmesg tail for diagnostics", "dmesg | tail -100", exit_code_only())
 
-    full_exit, full_out = capture_output(child, "dmesg")
-    new_lines = full_out.strip("\r\n").splitlines()[baseline_lines:] if full_exit == 0 else []
-    crash_match = re.search(r"Oops|BUG:|WARNING:", "\n".join(new_lines))
-    results.append((
-        "dmesg has no Oops/BUG:/WARNING: introduced by the fbdev modprobes",
-        crash_match is None,
-        "ok" if crash_match is None else f"found {crash_match.group(0)!r} in dmesg output since the batch started",
-    ))
+    # Slice the diff in the GUEST (`tail -n +N`), not on the host: capture_output
+    # returns the echoed command line ahead of the command's own output, so
+    # indexing host-side splitlines() by the baseline count is off by one and
+    # would drag the last pre-batch dmesg line into the "new" window. Letting
+    # tail do it means the window is exactly the lines dmesg grew by, and the
+    # only host-side text left is the echoed `dmesg | tail ...` line itself,
+    # which cannot match a crash signature.
+    tail_from = baseline_lines + 1
+    diff_exit, diff_out = capture_output(child, f"dmesg | tail -n +{tail_from}")
+    if diff_exit != 0:
+        results.append((
+            "dmesg has no Oops/BUG:/WARNING: introduced by the fbdev modprobes",
+            False,
+            f"could not re-read dmesg to diff it (exit {diff_exit}): {diff_out.strip()[-300:]}",
+        ))
+    else:
+        crash_match = re.search(r"Oops|BUG:|WARNING:", diff_out)
+        results.append((
+            "dmesg has no Oops/BUG:/WARNING: introduced by the fbdev modprobes",
+            crash_match is None,
+            "ok" if crash_match is None else f"found {crash_match.group(0)!r} in dmesg output since the batch started",
+        ))
 
     ok = report_results(results)
     poweroff_and_wait(child)
