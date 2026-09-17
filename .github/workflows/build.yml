@@ -342,6 +342,65 @@ jobs:
           fi
           echo "==> All ${#MODULES[@]} NIC modules present under ${MODDIR}"
 
+      # Build/ship assertion for the legacy fbdev `=m` Tier-2 drivers (design
+      # doc docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md). The
+      # cirrusfb boot test only proves one of the 27 new modules actually
+      # coldplugs; this step is the authoritative catch for a symbol silently
+      # dropped by the kernel's `olddefconfig` (e.g. an unmet chip
+      # sub-option), and it enforces the firmware doctrine: none of these 27
+      # drivers may declare a runtime firmware blob.
+      - name: Assert legacy fbdev kernel modules built and shipped
+        run: |
+          set -euo pipefail
+          KVER=$(grep '^sys-kernel/monolith-kernel:' configs/portage/versions.lock | cut -d: -f2 | sed -E 's/-r[0-9]+$//')
+          LOCALVERSION=$(grep '^CONFIG_LOCALVERSION=' configs/kernel.config | sed -E 's/^CONFIG_LOCALVERSION="(.*)"$/\1/')
+          MODDIR="output/sysroot/lib/modules/${KVER}${LOCALVERSION}"
+          echo "==> Checking for legacy fbdev .ko modules under ${MODDIR}"
+          if [ ! -d "$MODDIR" ]; then
+            echo "::error::Module directory not found: $MODDIR"
+            exit 1
+          fi
+          if ! command -v modinfo >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq kmod
+          fi
+          # All 27 .ko names for the 24 Tier-2 fbdev symbols + 3 Geode drivers
+          # (configs/kernel.config), resolved from the per-driver Makefiles at
+          # v6.12.80 — note matroxfb_base (not matroxfb), neofb (not
+          # neomagicfb), sstfb (for FB_VOODOO1).
+          MODULES=(
+            cirrusfb pm2fb pm3fb cyber2000fb vga16fb hgafb
+            nvidiafb rivafb i740fb matroxfb_base radeonfb aty128fb atyfb
+            s3fb savagefb sisfb neofb kyrofb tdfxfb sstfb vt8623fb
+            tridentfb arkfb sm712fb lxfb gxfb gx1fb
+          )
+          MISSING=()
+          FOUND_PATHS=()
+          for m in "${MODULES[@]}"; do
+            path=$(find "$MODDIR" -name "${m}.ko*" -print -quit)
+            if [ -z "$path" ]; then
+              MISSING+=("$m")
+            else
+              FOUND_PATHS+=("$path")
+            fi
+          done
+          if [ "${#MISSING[@]}" -ne 0 ]; then
+            echo "::error::Missing legacy fbdev kernel modules under ${MODDIR}: ${MISSING[*]}"
+            exit 1
+          fi
+          echo "==> All ${#MODULES[@]} legacy fbdev modules present under ${MODDIR}"
+          FIRMWARE_HITS=()
+          for path in "${FOUND_PATHS[@]}"; do
+            fw=$(modinfo -F firmware "$path" 2>/dev/null || true)
+            if [ -n "$fw" ]; then
+              FIRMWARE_HITS+=("$(basename "$path"): $fw")
+            fi
+          done
+          if [ "${#FIRMWARE_HITS[@]}" -ne 0 ]; then
+            echo "::error::Legacy fbdev modules declaring firmware (violates the no-blob doctrine): ${FIRMWARE_HITS[*]}"
+            exit 1
+          fi
+          echo "==> No firmware requirements declared across ${#MODULES[@]} legacy fbdev modules"
+
       - name: Take ownership of the binpkg tree
         if: always()
         # `make build-packages` runs IN-CONTAINER as root, so output/packages is
