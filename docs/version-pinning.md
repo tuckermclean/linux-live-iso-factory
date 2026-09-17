@@ -108,7 +108,7 @@ this document explains them, it doesn't define them.
 ### 1. `Dockerfile` — `ARG TOOLCHAIN_EPOCH` + `ARG BUILD_EPOCH` / `ENV SOURCE_DATE_EPOCH`
 
 ```dockerfile
-ARG TOOLCHAIN_EPOCH=20260811
+ARG TOOLCHAIN_EPOCH=20260810   # weekly stage3 cadence — usually lags BUILD_EPOCH
 ARG BUILD_EPOCH=20260811
 FROM gentoo/stage3:amd64-openrc-${TOOLCHAIN_EPOCH} AS base-tools
 ...

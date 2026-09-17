@@ -9,7 +9,7 @@
 **Dashboard (build history, SBOMs, CVE status):** https://themonolith.s3.amazonaws.com/
 **Repo:** https://github.com/tuckermclean/linux-live-iso-factory
 
-No tagged GitHub Release exists yet — nightly/on-push builds are published to the S3 bucket above (`themonolith.iso` = latest, `themonolith-<tag>.iso` = pinned per build) and are what's referenced throughout this README.
+The first tagged release is `v0.1.0-rc1`, published as a GitHub **prerelease** (see [`docs/releasing.md`](docs/releasing.md) for the versioning scheme and the RC/prerelease rules). Alongside any tagged release, every nightly/on-push build is published to the S3 bucket above (`themonolith.iso` = latest, `themonolith-<tag>.iso` = pinned per build) and is what's referenced throughout this README.
 
 ---
 
@@ -68,7 +68,7 @@ Attestation artifacts for every build are public at `https://themonolith.s3.amaz
 
 ### Package set
 
-The [world file](configs/portage/world) lists 71 top-level Gentoo packages, cross-compiled for `i486-linux-musl` and installed as `.gpkg.tar` binary packages. Pulling in their dependencies, the most recent published build attests **102 packages** total (see the [dashboard](https://themonolith.s3.amazonaws.com/) for the live count — it changes as packages are added/removed).
+The [world file](configs/portage/world) lists 99 top-level atoms, cross-compiled for `i486-linux-musl` and installed as `.gpkg.tar` binary packages. A handful are custom `monolith-*` overlay ebuilds (kernel, base rootfs helpers, perl, sqlite) plus the Rust-built `rl144` game, the `stele` browser, and the TinyX GUI stack — the rest come from the pinned Gentoo tree. Pulling in dependencies raises the total; see the [dashboard](https://themonolith.s3.amazonaws.com/) for the live attested package count, which changes as packages are added or removed.
 
 <details>
 <summary>Full package list (from <code>configs/portage/world</code>)</summary>
@@ -76,6 +76,7 @@ The [world file](configs/portage/world) lists 71 top-level Gentoo packages, cros
 | Category | Packages |
 |---|---|
 | Kernel / init | `sys-kernel/monolith-kernel`, `sys-apps/sysvinit` |
+| Rootfs helpers | `app-misc/monolith-base` (owns the hand-authored `/etc`, init scripts, `monolith-net`/`monolith-router`/lazy-console shell, guestbook fixture — formerly installed by `build-rootfs.sh`) |
 | Initrd | `sys-apps/busybox` (savedconfig, static, initrd only) |
 | Shells | `app-shells/bash`, `app-shells/dash`, `app-shells/zsh`, `app-shells/bash-completion` |
 | Core GNU userland | `sys-apps/coreutils`, `sys-apps/util-linux`, `sys-apps/findutils`, `sys-apps/grep`, `sys-apps/sed`, `sys-apps/gawk`, `sys-apps/diffutils`, `app-arch/tar`, `app-text/tree` |
@@ -83,33 +84,41 @@ The [world file](configs/portage/world) lists 71 top-level Gentoo packages, cros
 | File utilities | `sys-apps/file`, `sys-apps/less` |
 | Editors | `app-editors/vim`, `app-editors/nano` |
 | Man pages | `sys-apps/man-pages`, `app-text/mandoc` |
-| Dev tools | `sys-devel/binutils`, `dev-build/make`, `dev-debug/strace`, `sys-devel/patch` |
-| Scripting | `dev-lang/lua` |
-| Compression | `app-arch/xz-utils`, `app-arch/bzip2`, `app-arch/gzip`, `app-arch/zip`, `app-arch/unzip` |
-| Networking (config) | `sys-apps/iproute2`, `sys-apps/net-tools`, `net-misc/iputils`, `net-misc/dhcpcd` |
+| Dev tools | `sys-devel/binutils`, `dev-build/make`, `dev-debug/strace`, `sys-devel/patch`, `dev-debug/gdb` (target-native, ptrace-based) |
+| Scripting | `dev-lang/lua`, `dev-lang/monolith-perl` (static, `-Uusedl`, CGI.pm 4.10 rider; no CPAN/XS loading) |
+| Databases | `dev-db/monolith-sqlite` (static CLI + `libsqlite3.a`, from the amalgamation) |
+| Compression | `app-arch/xz-utils`, `app-arch/bzip2`, `app-arch/gzip`, `app-arch/zip`, `app-arch/unzip`, `app-arch/cpio` |
+| Networking (config) | `sys-apps/iproute2`, `sys-apps/net-tools`, `net-misc/iputils`, `net-misc/dhcpcd`, `sys-apps/ethtool` |
+| Firewall / DHCP-DNS | `net-firewall/nftables`, `net-dns/dnsmasq` (see `monolith-router`, SP2/SP3) |
+| Dial-up / WAN | `net-dialup/ppp` (pppd + chat; loadable plugins disabled — all-static) |
 | Remote access | `net-misc/dropbear` |
-| Network clients | `net-misc/curl`, `net-misc/wget`, `net-misc/whois`, `net-analyzer/netcat`, `net-analyzer/traceroute`, `www-client/lynx` |
-| Network analysis | `net-misc/socat`, `net-analyzer/iftop`, `net-analyzer/tcpdump` |
+| Network clients | `net-misc/curl`, `net-misc/wget`, `net-misc/whois`, `net-analyzer/netcat`, `net-analyzer/traceroute`, `www-client/lynx`, `mail-client/mutt`, `net-irc/irssi` |
+| Network analysis | `net-misc/socat`, `net-analyzer/iftop`, `net-analyzer/tcpdump`, `net-analyzer/mtr`, `net-misc/iperf:3` |
 | Terminal / users | `app-misc/tmux`, `sys-apps/shadow` |
-| System utilities | `sys-process/procps`, `sys-process/htop`, `sys-process/lsof`, `app-admin/sysklogd` |
+| System utilities | `sys-process/procps`, `sys-process/htop`, `sys-process/lsof`, `sys-process/psmisc`, `app-admin/sysklogd`, `sys-apps/pv`, `<sys-fs/ncdu-2` |
+| Module tools | `sys-apps/kmod` (modprobe/lsmod/depmod in the booted rootfs) |
 | Filesystem tools | `sys-fs/e2fsprogs`, `sys-fs/dosfstools`, `sys-fs/squashfs-tools` |
 | File search / sync | `net-misc/rsync`, `sys-apps/the_silver_searcher` |
 | Hardware info | `sys-apps/smartmontools`, `sys-apps/hdparm`, `sys-apps/dmidecode` |
+| Console font / keymaps | `sys-apps/kbd` (setfont/loadkeys), `media-fonts/terminus-font` |
 | Mouse support | `sys-libs/gpm` |
-| Amusements | `games-misc/bsd-games`, `app-misc/figlet`, `app-misc/cmatrix`, `app-misc/sl`, `games-roguelike/nethack` |
+| GUI / X (bitmap-only, no freetype) | `x11-base/monolith-xserver` (TinyX Xfbdev), `x11-base/xorg-proto`, `x11-libs/libxcb`, `x11-libs/libX11`, `x11-libs/libXext`, `x11-terms/monolith-st`, `x11-wm/monolith-dwm` |
+| Browser | `www-client/stele` (Rust, no JavaScript; framebuffer + X11 backends) |
+| Amusements | `games-misc/bsd-games`, `app-misc/figlet`, `app-misc/cmatrix`, `app-misc/sl`, `games-roguelike/rl144` (Rust roguelike), `=games-roguelike/nethack-3.6.7-r1` |
 
 </details>
 
-Notably **not** included, and why: `sys-devel/gdb` (i486+musl cross-build not worth the effort — use `strace`), `www-client/w3m` (build failure — use `lynx`), `net-analyzer/nmap` and `sys-apps/man-db` (pull in a Python dependency chain not worth the ISO-size cost), `sys-devel/gcc` (no native compiler on the live system, to keep the ISO small), and `net-misc/ppp` (kernel PPP support is built in via `CONFIG_PPP_ASYNC`/`CONFIG_SLIP`, but the userspace `pppd` binary isn't — SLIP over serial works out of the box, full PPP does not).
+Notably **not** included, and why: `www-client/w3m` (build failure — use `lynx` or `stele`), `net-analyzer/nmap` and `sys-apps/man-db` (pull in a Python dependency chain not worth the ISO-size cost), and `sys-devel/gcc` (no native compiler on the live system, to keep the ISO small). `bc` and `jq` are wanted but currently blocked on a masked `libxml2` cross-build (see the note in `configs/portage/world`).
 
 ### Core components
 
 | Component | Version | Source |
 |---|---|---|
-| Linux kernel | 6.12.80 | `configs/portage/versions.lock` |
+| Linux kernel | 6.12.80-r6 (`monolith-kernel`) | `configs/portage/versions.lock` |
 | musl libc (cross target) | 1.2.6 | `configs/portage/crossdev.lock` |
-| Cross GCC | 15.2.1_p20260214 | `configs/portage/crossdev.lock` |
-| binutils | 2.46.0 | `configs/portage/versions.lock` |
+| Cross GCC | 15.3.1_p20260717 | `configs/portage/crossdev.lock` |
+| binutils | 2.46.1 | `configs/portage/versions.lock` |
+| perl (static, `-Uusedl`) | 5.42.0-r5 (`monolith-perl`) | `configs/portage/versions.lock` |
 | BusyBox (initrd only) | 1.36.1-r4 | `configs/portage/versions.lock` |
 | SYSLINUX / GRUB | resolved from the pinned Portage snapshot (`BUILD_EPOCH`) at build time, not separately pinned | `Dockerfile` |
 
@@ -132,16 +141,17 @@ Linking is static-first (`USE="static static-libs"` in `configs/portage/make.con
 
 | Label | Effect |
 |---|---|
-| `linux` | Normal boot, text console (default) |
-| `fb` | Framebuffer, 1024x768 |
-| `fb800` | Framebuffer, 800x600 |
-| `fb640` | Framebuffer, 640x480 (safest on old hardware) |
-| `vga` | Prompt interactively for a video mode |
+| `linux` | Normal boot, text console |
+| `fb` | Framebuffer, 1024x768 (`vga=791`) |
+| `fb800` | Framebuffer, 800x600 (`vga=788`) — **default**, 30s timeout |
+| `fb640` | Framebuffer, 640x480 (`vga=785`, safest on old hardware) |
+| `vga` | Prompt interactively for a video mode (`vga=ask`) |
 | `serial` | Serial console, `ttyS0` at 115200n8 |
 | `debug` | Verbose boot output |
+| `persist` | Boot with the `MONOLITH_PERSIST` persistence partition |
 | `rescue` | Drop straight to a rescue shell |
 
-`toram` (copy the SquashFS into RAM so the boot media can be ejected) is a kernel parameter, not its own ISOLINUX label — append it manually, e.g. `linux toram`. GRUB's UEFI menu does have a dedicated **toram** entry alongside normal/framebuffer/serial/debug/rescue ones (`scripts/build-iso.sh`).
+`toram` (copy the SquashFS into RAM so the boot media can be ejected) is a kernel parameter, not its own ISOLINUX label — append it manually, e.g. `linux toram`. GRUB's UEFI menu does have a dedicated **toram** entry, alongside normal/framebuffer/serial/debug/rescue/**persistent** ones (`scripts/build-iso.sh`).
 
 To boot from a real root filesystem instead of the live overlay, append `root=`:
 
@@ -176,6 +186,24 @@ A `scripts/nightly-cve-monitor.py` script exists to re-scan every historical bui
 
 ---
 
+## Dashboard
+
+The [dashboard](https://themonolith.s3.amazonaws.com/) is a dependency-free static single-page app (`web/`) — vanilla ES modules, hash-routed, no framework or bundler. It fetches build/attestation JSON live from the public S3 bucket. Its views:
+
+| Route | View |
+|---|---|
+| `#/` | Landing page |
+| `#/boot` | In-browser i486 boot demo (v86 WebAssembly emulator) |
+| `#/downloads` | ISO downloads |
+| `#/builds` | Build history / attestation index (labeled "Attestation" in the nav) |
+| `#/build/<tag>` | Per-build deep dive: SBOM, CVEs, licenses, unowned files, provenance, builder, verify |
+| `#/compare/<a>/<b>` | Two-build side-by-side comparison |
+| `#/package/<name>` | A package's history across builds |
+
+The only keyboard shortcut is `t` (toggle theme); the old global `g`/`/` shortcuts were removed (`web/app/router.js`). `make dashboard` runs `scripts/generate-dashboard.py` to aggregate every build's `attestation-summary.json` into a timestamp-sorted `builds-index.json` (plus `latest-build.json`) and copies the `web/` assets into `output/web/`; publishing to S3 is a separate step.
+
+---
+
 ## Build instructions
 
 Everything runs through Docker; `make help` prints the full target list. This machine builds nothing itself — verify targets against `Makefile` before relying on this table.
@@ -185,6 +213,7 @@ Everything runs through Docker; `make help` prints the full target list. This ma
 |---|---|
 | `build-image` | Build the builder image (Gentoo stage3 + crossdev toolchain), pulling from `REGISTRY` first if set |
 | `push-image` / `pull-image` | Push/pull the builder image to/from a registry |
+| `restore-cache` | Reproduce CI's cache setup locally: `pull-image` + `sync-portage` + `aws s3 sync` of the binpkgs for the current `BUILD_EPOCH`. Needs both `REGISTRY` and `S3_BUCKET` set (`REGISTRY=ghcr.io/user S3_BUCKET=my-bucket make restore-cache`) |
 | `shell` | Drop into a container shell |
 
 **Packages**
@@ -225,8 +254,11 @@ Everything runs through Docker; `make help` prints the full target list. This ma
 | `update-versions` | Refresh `versions.lock` |
 | `update-build-pins` | Refresh `BUILD_EPOCH`/stage3 date in the `Dockerfile` |
 | `update-all` | Both of the above |
+| `bump-pins` | Bump `BUILD_EPOCH` correctly: pins → rebuild image → `versions.lock` |
 | `list-packages` | Print `configs/portage/world` |
 | `show-failed` | Show packages that failed the last build |
+
+(A couple of CI-internal targets — `print-registry-tag` and `regen-manifest` — exist in the `Makefile` but are not meant for day-to-day use; `make help` lists the user-facing set.)
 
 **Maintenance:** `clean`, `clean-build`, `clean-all`
 
@@ -247,7 +279,7 @@ make test              # boot in QEMU
 
 ## Networking
 
-BusyBox in the initrd provides `ip`, `ifconfig`, `route`, `udhcpc`, `ping`, `traceroute`, `netstat`, `arp`, `nc`, `wget`, `telnet`, and `slattach`. The full rootfs additionally has `sys-apps/iproute2`, `net-tools`, `dhcpcd`, `curl`, `wget`, `whois`, `netcat`, `traceroute`, `socat`, `iftop`, and `tcpdump` from Portage.
+BusyBox in the initrd provides `ip`, `ifconfig`, `route`, `udhcpc`, `ping`, `traceroute`, `netstat`, `arp`, `nc`, `wget`, `telnet`, and `slattach`. The full rootfs additionally has `iproute2`, `net-tools`, `ethtool`, `dhcpcd`, `curl`, `wget`, `whois`, `netcat`, `traceroute`, `mtr`, `iperf3`, `socat`, `iftop`, and `tcpdump` from Portage, plus `nftables` + `dnsmasq` (firewall/NAT and LAN DHCP/DNS, wired up by `monolith-router`) and `ppp` (`pppd` + `chat`) for serial/PPPoE WAN links.
 
 ```bash
 ip link                       # list interfaces
@@ -256,11 +288,28 @@ dhcpcd eth0                   # DHCP (or: udhcpc -i eth0 in the initrd)
 ip addr add 192.168.1.100/24 dev eth0
 ip route add default via 192.168.1.1
 
-# SLIP over a serial line (pppd is not built — see "What's inside" above)
+# SLIP over a serial line (kernel CONFIG_SLIP)
 slattach -l -p slip /dev/ttyS0
+
+# PPP over serial / PPPoE (pppd + chat are built; loadable plugins disabled)
+pppd /dev/ttyS0 115200 noauth
 ```
 
 Dropbear SSH is available — start it with `dropbear` after networking is up. `/etc/init.d/S20keygen` generates RSA and ECDSA host keys on first boot if they don't exist yet.
+
+---
+
+## Graphical environment (X)
+
+The disc ships a minimal, **bitmap-only** X stack — no freetype, fontconfig, or Xft anywhere (see the design doctrines in [`AGENTS.md`](AGENTS.md)):
+
+- **`x11-base/monolith-xserver`** — a static TinyX/kdrive `Xfbdev` server that renders straight to the Linux framebuffer (`vesafb`), zero dlopen. It links a vendored v1 `x11-libs/libXfont` (the `::gentoo` tree ships only the incompatible libXfont2).
+- **`x11-terms/monolith-st`** and **`x11-wm/monolith-dwm`** — the suckless terminal and dynamic window manager, both patched off Xft/fontconfig onto core X11 bitmap fonts. `dwm`'s default `Mod+Shift+Return` spawns `st`.
+- **`media-fonts/terminus-font`** is the default X font; `fonts.dir` is generated from each PCF's `FONT` property by `scripts/pcf-fontname.py`, and a `fonts.alias` maps `fixed`/`variable` to Terminus.
+
+`startx` brings up `dwm` managing an `st` terminal. The X client libraries (`libX11`, `libxcb`, `libXext`, `xorg-proto`) are cross-built static; each client statically bakes its own `libX11`.
+
+**Stele** (`www-client/stele`) is a from-scratch document-web browser written in Rust — one static binary, **no JavaScript by construction**. It has both a direct-framebuffer backend (`/dev/fb0`, with a compiled-in bitmap font — needs neither X nor fonts on the disc) and an X11 backend. It is actively developed and repinned each build (see the pin in `configs/portage/versions.lock` and `configs/overlay/www-client/stele`).
 
 ---
 
@@ -284,7 +333,18 @@ qemu-system-i386 -cdrom output/themonolith-<tag>.iso -m 64M   # graphical output
 sudo dd if=output/themonolith-<tag>.iso of=/dev/sdX bs=4M status=progress   # write to USB
 ```
 
-There is no automated boot validation (no expect/pexpect smoke test) yet — `make test`/`test-uefi` just launch QEMU for manual inspection.
+`make test`/`test-uefi` just launch QEMU for manual inspection. The automated
+checks live elsewhere:
+
+- **Boot validation** — `scripts/boot-test.py` is a pexpect-driven QEMU harness
+  that proves the ISO boots to a usable shell (not merely that `xorriso` didn't
+  crash). CI runs it via `.github/workflows/boot-test.yml` across `bios`, `uefi`,
+  and `toram` modes plus per-storage-controller module variants (`ahci`, `nvme`,
+  `usb`, `virtio`) and a `nicless` negative control.
+- **Shell unit tests** — `scripts/tests/*.sh` are standalone POSIX-sh tests that
+  stub out hardware/root, so each runs anywhere: `sh scripts/tests/monolith-net.test.sh`.
+  `.github/workflows/pr-validate.yml` runs the whole suite (alongside `bash -n`,
+  `py_compile`, YAML well-formedness, `actionlint`, and `shellcheck`) on every PR.
 
 ---
 

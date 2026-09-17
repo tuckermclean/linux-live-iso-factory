@@ -35,6 +35,19 @@ independently of any of the above — a routine weekly pin bump doesn't
 usually warrant even a patch tag — **not every build gets a version tag,
 and that's by design.**
 
+### Prerelease / RC tags
+
+A tag carrying a `-rcN` or `-betaN` suffix (e.g. `v0.1.0-rc1`) is published as
+a GitHub **prerelease**: `release.yml` calls `gh release create --prerelease
+--latest=false`. GitHub's API forbids a prerelease from also holding the
+"Latest" badge (`HTTP 422: Latest release cannot be draft or prerelease`), so
+the `--latest=false` is mandatory, not cosmetic. A final `vX.Y.Z` tag with no
+suffix becomes GitHub's "Latest". The dashboard's own "LATEST" marker is
+independent of GitHub's badge — `scripts/generate-dashboard.py` sorts builds by
+attestation timestamp, so a prerelease can show as newest on the dashboard
+while not being GitHub's Latest release. The first tag cut through this
+pipeline was `v0.1.0-rc1` (a prerelease).
+
 ### Nightly / on-push builds vs. tagged releases
 
 Every push to `master`, the weekly schedule, and manual dispatch runs
