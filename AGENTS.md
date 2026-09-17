@@ -140,6 +140,15 @@ Symptom → cause → fix. These cost real debugging time; don't rediscover them
   `eth1` held a failed-DHCP `169.254` link-local. (Instrument both sides of a boundary early.)
 - **kernel module tiers:** three-tier (Tier 0/1/2) driver split balancing the 486 vs modern UEFI
   boxes — full writeup in `docs/kernel-tiers.md`.
+- **DDC sub-option → `CONFIG_I2C=y` trap:** `FB_DDC` is a `tristate`, but `select` raises its target
+  to *at least* the selecting symbol's value — so a `bool` sub-option at its Kconfig default `y`
+  (`FB_RADEON_I2C`, `FB_3DFX_I2C`, `FB_CYBER2000_DDC`) forces `FB_DDC=y`, which `select`s
+  `CONFIG_I2C=y`: a whole subsystem built into `bzImage` from one unexamined driver sub-option, with
+  no error or warning. Caught while enabling the legacy fbdev Tier-2 set (24 `=m` framebuffer
+  drivers) — see `docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md` §Sub-options. Fix: force
+  the `default y` DDC bools off explicitly rather than trusting `olddefconfig`'s default, and assert
+  `CONFIG_I2C != y` in a config test so a future kernel bump that flips a default can't reopen it
+  silently.
 
 **CI / release**
 - **`actions/attest` can't persist from a reusable workflow:** GitHub binds the Sigstore cert SAN

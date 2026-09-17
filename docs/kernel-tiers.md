@@ -168,6 +168,63 @@ Phase 1 moved these out of the monolith and into Tier 2:
 | `CONFIG_MOUSE_PS2` | `=y` | `=m` | PS/2 mouse |
 | `CONFIG_INPUT_EVDEV` | *unset* | `=m` | evdev input nodes |
 
+### Legacy fbdev drivers (`=m`)
+
+Twenty-seven `.ko` modules, one native framebuffer driver per vintage PCI/ISA
+graphics chipset — layered **over** the generic `FB_VESA`/`FB_EFI` console
+Tier 0 already provides, not a replacement for it. A machine without one of
+these chips pays nothing; a machine with one gets its native mode list and
+timings instead of a generic VBE mode once the driver coldplugs. Full
+rationale, sub-option traps, and exclusion list:
+`docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md`.
+
+| Symbol | `=m` | Driver |
+|--------|------|--------|
+| `CONFIG_FB_CIRRUS` | `=m` | Cirrus Logic GD-543x/544x/5480 |
+| `CONFIG_FB_PM2` | `=m` | 3DLabs Permedia 2/2V |
+| `CONFIG_FB_PM3` | `=m` | 3DLabs Permedia 3 |
+| `CONFIG_FB_CYBER2000` | `=m` | Integraphics CyberPro 20x0/5000 |
+| `CONFIG_FB_VGA16` | `=m` | Plain VGA, 16-colour planar |
+| `CONFIG_FB_HGA` | `=m` | Hercules mono |
+| `CONFIG_FB_NVIDIA` | `=m` | nVidia TNT and newer |
+| `CONFIG_FB_RIVA` | `=m` | nVidia Riva 128 / early GeForce |
+| `CONFIG_FB_I740` | `=m` | Intel740 |
+| `CONFIG_FB_MATROX` | `=m` | Matrox Millennium/Mystique/G100–G550 |
+| `CONFIG_FB_RADEON` | `=m` | ATI Radeon |
+| `CONFIG_FB_ATY128` | `=m` | ATI Rage 128 |
+| `CONFIG_FB_ATY` | `=m` | ATI Mach64 |
+| `CONFIG_FB_S3` | `=m` | S3 Trio / Virge |
+| `CONFIG_FB_SAVAGE` | `=m` | S3 Savage |
+| `CONFIG_FB_SIS` | `=m` | SiS 300/315/330/340, XGI |
+| `CONFIG_FB_NEOMAGIC` | `=m` | NeoMagic (90s laptops) |
+| `CONFIG_FB_KYRO` | `=m` | IMG Kyro / STG4000 |
+| `CONFIG_FB_3DFX` | `=m` | 3Dfx Banshee / Voodoo3 / VSA-100 |
+| `CONFIG_FB_VOODOO1` | `=m` | 3Dfx Voodoo Graphics / Voodoo2 |
+| `CONFIG_FB_VT8623` | `=m` | VIA CastleRock (Apollo CLE266) |
+| `CONFIG_FB_TRIDENT` | `=m` | Trident TGUI / Blade / CyberBlade |
+| `CONFIG_FB_ARK` | `=m` | ARK Logic 2000PV |
+| `CONFIG_FB_SM712` | `=m` | Silicon Motion SM712 |
+| `CONFIG_FB_GEODE_LX` | `=m` | AMD Geode LX (behind the `FB_GEODE=y` menu gate) |
+| `CONFIG_FB_GEODE_GX` | `=m` | AMD Geode GX (behind the `FB_GEODE=y` menu gate) |
+| `CONFIG_FB_GEODE_GX1` | `=m` | AMD Geode GX1 (behind the `FB_GEODE=y` menu gate) |
+
+`CONFIG_FB_GEODE=y` is the one non-`=m` symbol in this set. It is a `bool`
+menu gate with no object file of its own (`obj-$(CONFIG_FB_GEODE) += geode/`
+just enters the subdirectory), so it adds nothing to `bzImage` — the three
+Geode drivers behind it stay `=m` like everything else here.
+
+`CONFIG_FB_ASILIANT` and `CONFIG_FB_IMSTT` are named here because they will
+keep being proposed for this set and keep being wrong: both are `bool`,
+`depends on (FB = y)` — there is no `=m` form to fall back to, so the *only*
+way to enable either is a Tier-0 decision made on its own merits. This change
+does not make that argument, and re-proposing them as Tier 2 is a
+misunderstanding of the Kconfig, not a judgment call.
+
+`CONFIG_FB_TILEBLITTING=y` is the one deliberate `bzImage` growth from this
+change: a small core blitting helper `select`ed by four of the drivers above
+(`FB_S3`, `FB_ARK`, `FB_VT8623`, `FB_MATROX`), too small to modularize on its
+own. Everything else in this set is `=m`.
+
 ## How the tiers prove themselves
 
 - **The refund is real** — flipping the NICs and mouse to `=m` shrinks
