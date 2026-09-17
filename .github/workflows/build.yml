@@ -401,8 +401,11 @@ jobs:
           FIRMWARE_HITS=()
           for path in "${FOUND_PATHS[@]}"; do
             fw_err=$(mktemp)
-            fw=$(modinfo -F firmware "$path" 2>"$fw_err")
-            status=$?
+            if fw=$(modinfo -F firmware "$path" 2>"$fw_err"); then
+              status=0
+            else
+              status=$?
+            fi
             if [ "$status" -ne 0 ]; then
               echo "::error::modinfo failed on ${path} (exit ${status}): $(cat "$fw_err")"
               rm -f "$fw_err"
