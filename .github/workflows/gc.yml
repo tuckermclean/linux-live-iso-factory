@@ -3,7 +3,7 @@ on:
   schedule: [{ cron: '0 4 * * 0' }]   # Sundays 04:00 UTC
   workflow_dispatch:
     inputs:
-      apply: { description: "Actually delete (else dry-run)", type: boolean, default: false }
+      apply: { description: "Actually delete (else dry-run). Note: the weekly schedule always applies.", type: boolean, default: false }
 jobs:
   gc:
     runs-on: ubuntu-latest
@@ -19,11 +19,15 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
       - name: Determine current epoch
         run: echo "KEEP_EPOCH=$(grep '^ARG BUILD_EPOCH=' Dockerfile | cut -d= -f2)" >> "$GITHUB_ENV"
-      - name: GC (dry-run unless apply=true)
+      # Apply on the weekly schedule; manual dispatch stays dry-run unless apply=true.
+      # s3-gc.sh has an abort guard (refuses to delete if the keep-list matches 0
+      # objects), so an unattended scheduled apply cannot mass-delete on a mis-set
+      # bucket/epoch.
+      - name: GC (applies on schedule; dry-run on manual dispatch unless apply=true)
         env:
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
-        run: sh scripts/s3-gc.sh ${{ (github.event_name == 'workflow_dispatch' && inputs.apply) && '--apply' || '' }}
-      - name: GHCR GC (dry-run unless apply=true)
+        run: sh scripts/s3-gc.sh ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.apply)) && '--apply' || '' }}
+      - name: GHCR GC (applies on schedule; dry-run on manual dispatch unless apply=true)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: sh scripts/ghcr-gc.sh ${{ (github.event_name == 'workflow_dispatch' && inputs.apply) && '--apply' || '' }}
+        run: sh scripts/ghcr-gc.sh ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.apply)) && '--apply' || '' }}
