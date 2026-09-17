@@ -427,6 +427,23 @@ def build_nic_cmd(args):
     return cmd
 
 
+def build_vga_cmd(args):
+    """
+    BIOS/ISOLINUX on the i440fx `pc` machine, identical to build_bios_cmd
+    except for an explicit `-vga <model>` in place of QEMU's default VGA
+    device. To the legacy fbdev Tier-2 drivers (design doc
+    docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md) this is what
+    build_nic_cmd's `-net nic,model=...` is to the NIC-model matrix: a real
+    PCI device with a real modalias for the initrd's coldplug mechanism to
+    match against.
+    """
+    if not args.vga_model:
+        raise BootTestError("--mode vga requires --vga-model")
+    cmd = build_bios_cmd(args)
+    cmd += ["-vga", args.vga_model]
+    return cmd
+
+
 # THE CLOCK LANDMINE (Monolith UX Pass Task 2): boot with the guest RTC
 # seeded to a specific instant via QEMU's `-rtc base=<ISO date>` (documented
 # by QEMU as interpreted in UTC), then prove the automatic
@@ -1212,6 +1229,34 @@ def smoke_nic_model_is_module(child, model):
         regex_matches(pattern, re.MULTILINE),
     )
 
+
+# VGA-model matrix: like NIC_MODEL_MODULE, but for the legacy fbdev Tier-2
+# drivers. `-vga cirrus` is a real PCI Cirrus Logic GD5446 with a real
+# modalias, so `cirrusfb` in `lsmod` proves the coldplug mechanism matched a
+# graphics device, not just a network one. Only one entry today (see the
+# design spec's "one positive coldplug is the right number" call) but shaped
+# to grow the way NIC_MODEL_MODULE did.
+VGA_MODEL_MODULE = {
+    "cirrus": r"^cirrusfb\b",
+}
+
+def smoke_vga_model_is_module(child, model):
+    """
+    Assert the module is RESIDENT, not that it owns /dev/fb0. With `vga=788`
+    on the kernel command line, vesafb claims fb0 first and cirrusfb's probe
+    calls remove_conflicting_pci_framebuffers — it may win or lose that
+    handover. Either way pexpect's serial console is undisturbed (the
+    console here is serial, not the framebuffer), and residency in `lsmod`
+    is what proves modalias coldplug delivered the driver at all. If
+    cirrusfb loads and then fails probe, that is still a pass; the module
+    never appearing in `lsmod` is the real failure.
+    """
+    pattern = VGA_MODEL_MODULE[model]
+    return run_check(
+        child, f"{model} VGA driver is loaded as a module (coldplug)", "lsmod",
+        regex_matches(pattern, re.MULTILINE),
+    )
+
 def smoke_isa_probe(child, results):
     """
     ne2k_isa has no modalias, so coldplug must NOT have loaded `ne`. Then
@@ -1811,6 +1856,38 @@ def run_nic(child, args):
     return ok
 
 
+def run_vga(child, args):
+    """
+    Legacy fbdev Tier-2 coldplug proof (design doc
+    docs/superpowers/specs/2026-09-17-legacy-fbdev-design.md). Structurally
+    identical to run_nic's reduced smoke suite — kernel version + overlay
+    mount plus the one device-specific coldplug check — but for a graphics
+    device instead of a NIC. "serial vga=788" is the same ISOLINUX append
+    run_gui uses; it does not change what we assert here (module residency
+    in lsmod, not framebuffer ownership) but keeps this job's boot path
+    identical to the other BIOS-console jobs in the matrix.
+    """
+    select_isolinux_label(child, "serial vga=788")
+    for ms, desc in [
+        (MILESTONE_INIT_START, "initramfs /init started"),
+        (MILESTONE_OVERLAY_READY, "squashfs+overlay mounted"),
+        (MILESTONE_EXEC_INIT, "pivot_root complete, executing /sbin/init"),
+        (MILESTONE_RCS_START, "sysvinit rcS started"),
+        (MILESTONE_RCS_COMPLETE, "sysvinit rcS completed"),
+    ]:
+        expect_milestone(child, ms, args.boot_timeout, desc)
+    wait_for_shell(child)
+
+    results = []
+    results.append((f"{args.vga_model} coldplug", *smoke_vga_model_is_module(child, args.vga_model)))
+    results.append(("uname -r matches expected kernel", *smoke_kernel_version(child, args.kernel_version)))
+    results.append(("overlay root is mounted", *smoke_overlay_mount(child)))
+
+    ok = report_results(results)
+    poweroff_and_wait(child)
+    return ok
+
+
 def _boot_isolinux_to_shell(child, args):
     select_isolinux_label(child, "serial")
     for ms, desc in [
@@ -2105,6 +2182,7 @@ MODE_BUILDERS = {
     "virtio": build_virtio_cmd,
     "nicless": build_nicless_cmd,
     "nic": build_nic_cmd,
+    "vga": build_vga_cmd,
     "nat": build_nat_router_cmd,
     "gui": build_gui_cmd,
     "stele-acid2": build_gui_cmd,  # same VGA-std + QMP-socket rig as gui
@@ -2123,6 +2201,7 @@ MODE_RUNNERS = {
     "virtio": run_virtio,
     "nicless": run_nicless,
     "nic": run_nic,
+    "vga": run_vga,
     "nat": run_nat,
     "gui": run_gui,
     "stele-acid2": run_stele_acid2,
@@ -2141,6 +2220,7 @@ MODE_DEFAULT_RAM = {
     "virtio": 512,
     "nicless": 64,  # mirrors bios: same machine type, no extra RAM pressure
     "nic": 256,
+    "vga": 64,  # mirrors bios/nic: same machine type, no extra RAM pressure
     "nat": 256,
     "gui": 128,
     "stele-acid2": 256,  # headless render + image decode of Acid2 wants headroom
@@ -2182,6 +2262,9 @@ def parse_args():
     p.add_argument("--nic-model", default=None,
                    choices=["pcnet", "rtl8139", "tulip", "ne2k_pci", "ne2k_isa"],
                    help="QEMU NIC model for --mode nic (pcnet|rtl8139|tulip|ne2k_pci|ne2k_isa)")
+    p.add_argument("--vga-model", default=None,
+                   choices=sorted(VGA_MODEL_MODULE),
+                   help="QEMU VGA model for --mode vga (cirrus)")
     p.add_argument(
         "--gui-screendump", default="output/gui-screendump.ppm",
         help="Host-side path QEMU's HMP 'screendump' writes the framebuffer PPM to (gui mode only)",
