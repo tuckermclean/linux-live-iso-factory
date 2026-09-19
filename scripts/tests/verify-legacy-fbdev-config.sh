@@ -34,10 +34,12 @@ for s in $want_off; do
     grep -q "^# CONFIG_$s is not set$" "$cfg" || { echo "FAIL: CONFIG_$s must be '# CONFIG_$s is not set'"; fails=$((fails+1)); }
 done
 
-# The actual invariant the five DDC lines above exist to protect: I2C must
-# stay modular (=m, pulled in only when i740fb/tridentfb load) or absent, and
-# must never be promoted to a built-in.
-grep -q "^CONFIG_I2C=y$" "$cfg" && { echo "FAIL: CONFIG_I2C must not be =y (DDC trap escalated I2C into bzImage)"; fails=$((fails+1)); }
+# The actual invariant the five DDC lines above exist to protect — I2C must
+# never be promoted to a built-in — is checked against the *resolved*
+# post-olddefconfig .config in the build job (scripts/verify-resolved-i2c-off.sh),
+# not here: configs/kernel.config has no CONFIG_I2C line at all (by design, we
+# don't hand-write symbols olddefconfig derives), so a grep against it can
+# never fire.
 
 # Mechanism-excluded and scope-excluded symbols must stay off. FB_ASILIANT and
 # FB_IMSTT are bool-only (depends on FB = y) — there is no =m form, so the

@@ -302,6 +302,16 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      # configs/kernel.config is bind-mounted at /configs (CONFIGS_MOUNT in
+      # Makefile); the monolith-kernel ebuild's src_install copies the final
+      # post-olddefconfig .config back to it, so by this point in the job the
+      # checked-out file on the runner has been overwritten with the
+      # *resolved* config. This is the CI step that can actually catch a
+      # Kconfig default flip escalating CONFIG_I2C — see
+      # scripts/verify-resolved-i2c-off.sh.
+      - name: Assert resolved kernel config did not escalate CONFIG_I2C
+        run: sh scripts/verify-resolved-i2c-off.sh configs/kernel.config
+
       # Build/ship assertion for the sp1-nic-zoo `=m` NIC drivers (design doc
       # §7). The boot-test NIC-model matrix only proves 6 of the 21 new
       # symbols actually work (the ones QEMU can emulate); this step is the
@@ -390,7 +400,18 @@ jobs:
           echo "==> All ${#MODULES[@]} legacy fbdev modules present under ${MODDIR}"
           FIRMWARE_HITS=()
           for path in "${FOUND_PATHS[@]}"; do
-            fw=$(modinfo -F firmware "$path" 2>/dev/null || true)
+            fw_err=$(mktemp)
+            if fw=$(modinfo -F firmware "$path" 2>"$fw_err"); then
+              status=0
+            else
+              status=$?
+            fi
+            if [ "$status" -ne 0 ]; then
+              echo "::error::modinfo failed on ${path} (exit ${status}): $(cat "$fw_err")"
+              rm -f "$fw_err"
+              exit 1
+            fi
+            rm -f "$fw_err"
             if [ -n "$fw" ]; then
               FIRMWARE_HITS+=("$(basename "$path"): $fw")
             fi
