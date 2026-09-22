@@ -60,8 +60,26 @@ src_install() {
 	rm -f "${D}/lib/modules/${krel}/build" "${D}/lib/modules/${krel}/source"
 	depmod -b "${D}" "${krel}"
 
-	# Save final config back to /configs
-	cp .config "${CONFIGS_DIR}/kernel.config" || true
+	# Ship the resolved (post-olddefconfig) .config as package content, gzipped
+	# (486-minimalism — raw .config is ~100-250 KiB of dead weight on the ISO;
+	# gzip -9 gets it down to kernel.org's own config.gz convention size).
+	# Because it rides inside the binpkg's CONTENTS, it is installed identically
+	# whether monolith-kernel is built from source or pulled from the binpkg
+	# cache — unlike the old configs/kernel.config copy-back below, which is a
+	# no-op on a cache hit because src_install never runs. This is what makes
+	# scripts/verify-resolved-i2c-off.sh a real assertion on both CI paths
+	# instead of a vacuous pass on the common cache-hit path (DCX-99).
+	insinto /usr/share/monolith-kernel
+	gzip -9c .config > "${T}/resolved-kernel.config.gz" || die "Failed to gzip resolved kernel config"
+	doins "${T}/resolved-kernel.config.gz"
+
+	# Save final config back to /configs for local `make kernel-config`
+	# convenience. On a binpkg cache hit this copy never runs (src_install is
+	# skipped), which is why scripts/build-packages.sh separately re-derives
+	# this same file from the package artifact above on every run — that copy,
+	# not this one, is what CI actually asserts against.
+	# A failure here used to be silently swallowed (`|| true`); make it loud.
+	cp .config "${CONFIGS_DIR}/kernel.config" || die "Failed to copy resolved kernel config back to ${CONFIGS_DIR}/kernel.config"
 }
 
 pkg_config() {
