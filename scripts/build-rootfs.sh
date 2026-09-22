@@ -66,7 +66,10 @@ install_sysroot() {
     local sysroot="${OUTPUT_DIR}/sysroot"
     if [ -d "$sysroot" ] && [ "$(ls -A "$sysroot" 2>/dev/null)" ]; then
         log_info "Installing Gentoo sysroot packages..."
-        rsync -a "$sysroot/" "$ROOTFS_DIR/"
+        # /usr/share/monolith-kernel/ carries only the resolved-config proof
+        # artifact used by scripts/verify-resolved-i2c-off.sh in CI (DCX-99);
+        # the booted system never needs it (486-minimalism).
+        rsync -a --exclude=/usr/share/monolith-kernel/ "$sysroot/" "$ROOTFS_DIR/"
         local sysroot_files=$(find "$sysroot" -type f | wc -l)
         log_info "Sysroot overlay applied (${sysroot_files} files)"
 

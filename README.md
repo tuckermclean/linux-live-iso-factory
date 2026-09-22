@@ -114,7 +114,7 @@ Notably **not** included, and why: `www-client/w3m` (build failure — use `lynx
 
 | Component | Version | Source |
 |---|---|---|
-| Linux kernel | 6.12.80-r7 (`monolith-kernel`) | `configs/portage/versions.lock` |
+| Linux kernel | 6.12.80-r8 (`monolith-kernel`) | `configs/portage/versions.lock` |
 | musl libc (cross target) | 1.2.6 | `configs/portage/crossdev.lock` |
 | Cross GCC | 15.3.1_p20260717 | `configs/portage/crossdev.lock` |
 | binutils | 2.46.1 | `configs/portage/versions.lock` |
