@@ -108,6 +108,10 @@ Symptom → cause → fix. These cost real debugging time; don't rediscover them
   `. scripts/agent-git-env.sh` (or, inline, `export GIT_CONFIG_COUNT=2`). Verify with `git status`
   printing a branch name. **Do not conclude "there is no checkout here" and redo work from
   scratch** — that misdiagnosis burned six consecutive implementation passes on DCX-99.
+- **"fatal: empty ident name (for <>) not allowed" when committing.** The workspace exports
+  `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_*` as *empty strings*, and an empty env
+  identity outranks even `git -c user.name=... commit`. Unset the empty ones first — that is what
+  `agent_git_clear_empty_identity` in `scripts/agent-git-env.sh` is for.
 - **The workspace is a fresh shallow single-branch clone every run.** `.git/shallow` is present and
   only `master` is fetched, so branches and commits you created in a previous run are *gone* — the
   shared workspace shares files, not git history. Deepen with

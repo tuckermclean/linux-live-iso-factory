@@ -51,3 +51,14 @@ if [ "$found" = no ]; then
 	GIT_CONFIG_COUNT=$((GIT_CONFIG_COUNT + 1))
 	export GIT_CONFIG_COUNT
 fi
+
+# 3. Call `agent_git_clear_empty_identity` before committing. Empty
+#    GIT_AUTHOR_*/GIT_COMMITTER_* values outrank `git -c user.name=...` and
+#    produce "fatal: empty ident name (for <>) not allowed". This is a function
+#    rather than unconditional, so sourcing the script never mutates a caller's
+#    deliberately-set identity.
+agent_git_clear_empty_identity() {
+	for v in GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL; do
+		eval "[ -z \"\${$v-}\" ] && unset $v"
+	done
+}
