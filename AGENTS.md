@@ -96,6 +96,30 @@ and `docs/superpowers/specs/` for design specs.
 
 Symptom → cause → fix. These cost real debugging time; don't rediscover them.
 
+**Agent workspace / git traps**
+- **"detected dubious ownership" → the checkout is fine, your git env is not.** `/workspace` is
+  owned by `root` while agent runs execute as uid 1000, so git refuses the repo unless
+  `safe.directory` is set. The workspace *does* export `GIT_CONFIG_KEY_0=safe.directory` /
+  `GIT_CONFIG_VALUE_0=*`, but it exports **`GIT_CONFIG_COUNT` empty** — and git only reads
+  `GIT_CONFIG_KEY_n`/`VALUE_n` for `n < GIT_CONFIG_COUNT`, so every pair is silently ignored.
+  Every git command then dies, and the error's own suggested remedy
+  (`git config --global --add safe.directory`) *also* fails, because `GIT_CONFIG_GLOBAL` and
+  `GIT_CONFIG_SYSTEM` are both pinned to `/dev/null`. Fix, first thing in any run that touches git:
+  `. scripts/agent-git-env.sh` (or, inline, `export GIT_CONFIG_COUNT=2`). Verify with `git status`
+  printing a branch name. **Do not conclude "there is no checkout here" and redo work from
+  scratch** — that misdiagnosis burned six consecutive implementation passes on DCX-99.
+- **The workspace is a fresh shallow single-branch clone every run.** `.git/shallow` is present and
+  only `master` is fetched, so branches and commits you created in a previous run are *gone* — the
+  shared workspace shares files, not git history. Deepen with
+  `git fetch --unshallow origin` (or `git fetch origin <branch>`) when you need history, and see
+  the handoff rule below before ending a run.
+- **Hand off code as a patch, not as a local branch.** Agents other than the Release Engineer have
+  no push path (the managed credential broker reports `broker_transport_unavailable`, so even the
+  `git` shim falls back to unmanaged credentials). Since local branches do not survive the run,
+  a branch alone is not a handoff. Before you end a run, attach the work to the issue:
+  `git format-patch origin/master --stdout > /tmp/dcx-NN.patch` and upload it as an issue
+  attachment. The next agent replays it with `git am`.
+
 **Packaging / dependency traps**
 - **freetype trap:** `font.eclass` RDEPENDs `mkfontscale` which RDEPENDs `freetype`. Adding any
   bitmap-font package can silently pull freetype in. Fix: `package.provided` the
