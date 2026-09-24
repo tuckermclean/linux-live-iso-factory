@@ -13,3 +13,8 @@ __pycache__
 
 # macOS
 .DS_Store
+
+# Stray format-patch / diff artifacts at the repo root (overlay patches under
+# configs/overlay/**/files/ are tracked and unaffected by this root-only glob)
+/*.patch
+/*.diff
